@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal, Self
 
 import numpy as np
 
+from bracketlearn.base import BaseEstimator
 from bracketlearn.protocols import Calibrator, Lifter
 
 if TYPE_CHECKING:
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class GlobalResidual:
+class GlobalResidual(BaseEstimator):
     """Fits one σ from OOF residuals. Produces parametric normal."""
 
     family: Literal["normal"] = "normal"      # student_t reserved for v0.2
@@ -88,7 +89,7 @@ class GlobalResidual:
 
 
 @dataclass
-class Isotonic:
+class Isotonic(BaseEstimator):
     """Isotonic calibration on bracket probabilities.
 
     Mirrors prediction_market_weather/ml/trainers/emos_calibrated.py:
@@ -180,7 +181,7 @@ def _bracket_probs_from_dist(
 
 
 @dataclass
-class ConformalCalibrate:
+class ConformalCalibrate(BaseEstimator):
     """Conformalised Quantile Regression (Romano et al. 2019).
 
     Calibrator (Dist → Dist) for quantile-backed forecasts. For each τ,

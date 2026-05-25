@@ -49,14 +49,25 @@ pipeline = ForecastPipeline(
 
 result = pipeline.fit_predict(X, y, ids=ids, timestamps=ts)
 
-# Distribution-level metrics.
+# Distribution-level metrics on OOF predictions.
 print(result.to_table(y, metrics=["crps", "log_score", "pit"]))
 
 # Bracket-contract metrics.
 ladder = BracketLadder(edges=edges)
 print(result.to_table(y, metrics=["log_loss_bracket", "brier_bracket"],
                       ladder=ladder))
+
+# Predict on truly unseen data using each stage's full-train refit.
+new_dists = pipeline.predict(X_new, ids=new_ids, timestamps=new_ts)
+print(new_dists["qreg"].params)
 ```
+
+## sklearn contract
+
+Every forecaster, lifter, and calibrator inherits from `BaseEstimator` and
+supports `get_params` / `set_params` / `clone()`. The pipeline clones each
+stage's forecaster before every fold's fit, so the user-supplied
+instances are never mutated and can be safely reused across pipelines.
 
 ## Concepts
 

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
 
+from bracketlearn.base import BaseEstimator
 from bracketlearn.protocols import Calibrator, Lifter, PointForecaster
 
 if TYPE_CHECKING:
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-class LiftedForecaster:
+class LiftedForecaster(BaseEstimator):
     """PointForecaster + Lifter, exposed as a DistForecaster.
 
     fit signature: fit(X, y, *, base_oof: PointForecast).
@@ -86,7 +87,7 @@ class LiftedForecaster:
 # ---------------------------------------------------------------------------
 
 
-class CalibratedForecaster:
+class CalibratedForecaster(BaseEstimator):
     """Wraps a DistForecaster with a Calibrator. Pipeline fits the calibrator
     on a held-out tail of each training fold (see ForecastPipeline).
 

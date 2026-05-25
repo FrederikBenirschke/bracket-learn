@@ -25,6 +25,7 @@ from typing import Any, Self
 
 import numpy as np
 
+from bracketlearn.base import BaseEstimator
 from bracketlearn.forecast import DistributionForecast, PointForecast, ProvenanceMeta
 
 
@@ -34,7 +35,7 @@ from bracketlearn.forecast import DistributionForecast, PointForecast, Provenanc
 
 
 @dataclass
-class SklearnPoint:
+class SklearnPoint(BaseEstimator):
     """Adapter: any object with sklearn's fit(X, y) + predict(X) is a
     PointForecaster.
 
@@ -109,7 +110,7 @@ class SklearnPoint:
 
 
 @dataclass
-class EMOS:
+class EMOS(BaseEstimator):
     """Minimal EMOS:
         μ̂(x) = a + b·x_mean(features),
         σ̂²(x) = c + d·var(features)  (clipped to [eps, ∞))
@@ -196,7 +197,7 @@ class EMOS:
 
 
 @dataclass
-class Stacking:
+class Stacking(BaseEstimator):
     """Meta-learner. Features = upstream forecasters' OOF μ (and optionally σ).
 
     Linear regression of y on stacked upstream μ vectors. Output σ is a
@@ -293,7 +294,7 @@ class Stacking:
 
 
 @dataclass
-class NGBoostNormal:
+class NGBoostNormal(BaseEstimator):
     """Native parametric-normal DistForecaster backed by NGBoost.
 
     Mirrors prediction_market_weather/ml/trainers/ngboost_normal.py: boosts
@@ -376,7 +377,7 @@ class NGBoostNormal:
 
 
 @dataclass
-class MixtureNormals:
+class MixtureNormals(BaseEstimator):
     """Per-vendor Gaussian mixture.
 
         p(y | x) = (1/K) Σ_v N(y; x_v, σ_v²)
@@ -540,7 +541,7 @@ def _isotonic_repair_row(qvals: np.ndarray) -> np.ndarray:
 
 
 @dataclass
-class QuantileReg:
+class QuantileReg(BaseEstimator):
     """Per-τ LightGBM quantile-regression heads.
 
     Mirrors prediction_market_weather/ml/trainers/quantile_reg.py: fits one
@@ -632,7 +633,7 @@ class QuantileReg:
 
 
 @dataclass
-class QuantileForest:
+class QuantileForest(BaseEstimator):
     """Quantile Regression Forest (Meinshausen 2006).
 
     Mirrors prediction_market_weather/ml/trainers/quantile_forest.py: fits
@@ -714,7 +715,7 @@ class QuantileForest:
 
 
 @dataclass
-class CumulativeBinary:
+class CumulativeBinary(BaseEstimator):
     """Single LightGBM binary classifier on augmented features.
 
     Mirrors prediction_market_weather/ml/trainers/cumulative_binary.py: fits
@@ -845,7 +846,7 @@ class CumulativeBinary:
 
 
 @dataclass
-class TailSpecialist:
+class TailSpecialist(BaseEstimator):
     """Gaussian body (from upstream EMOS μ̂/σ̂) + LightGBM tail classifiers.
 
     Mirrors prediction_market_weather/ml/trainers/tail_specialist.py. depends_on
@@ -979,7 +980,7 @@ class TailSpecialist:
 
 
 @dataclass
-class OnlineAggregator:
+class OnlineAggregator(BaseEstimator):
     """AdaHedge over forecast experts (columns of X).
 
     Mirrors prediction_market_weather/ml/trainers/online_aggregator.py:
@@ -1136,7 +1137,7 @@ class OnlineAggregator:
 
 
 @dataclass
-class RNNHourly:
+class RNNHourly(BaseEstimator):
     """Tiny GRU on a (24, C) hourly tensor → residual-corrected point forecast.
 
     Mirrors prediction_market_weather/ml/trainers/rnn_hourly.py: GRU reads

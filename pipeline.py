@@ -37,6 +37,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
+from bracketlearn.base import clone
 from bracketlearn.forecast import (
     DistributionForecast,
     PointForecast,
@@ -237,6 +238,7 @@ class ForecastPipeline:
         n_folds: int = 5,
         embargo: int = 0,
         calibration_fraction: float = 0.2,
+        refit_on_full: bool = True,
     ):
         if cv != "expanding-window":
             raise NotImplementedError("v0.1: only 'expanding-window'")
@@ -244,8 +246,12 @@ class ForecastPipeline:
         self.n_folds = n_folds
         self.embargo = embargo
         self.calibration_fraction = calibration_fraction
+        self.refit_on_full = refit_on_full
         self._stages: list[_Stage] = []
         self._names: set[str] = set()
+        # Set by fit_predict when refit_on_full=True; consumed by .predict().
+        self._fitted_stages: dict[str, Any] = {}
+        self._fitted_calibrators: dict[str, Any] = {}
         for name, forecaster in (steps or []):
             self._register(name, forecaster)
 
@@ -313,8 +319,11 @@ class ForecastPipeline:
                     feature_matrix_hash=feature_hash,
                     created_at=datetime.now(),
                 )
+                # Clone-per-fold: never mutate the user's instance, and
+                # guarantee no fitted-state bleed between folds.
+                fold_forecaster = clone(stage.forecaster)
                 dist_train, dist_test = self._fit_stage_on_fold(
-                    stage, Xo, yo, ids_o, ts_o, train_idx, test_idx,
+                    fold_forecaster, Xo, yo, ids_o, ts_o, train_idx, test_idx,
                     deps_for_fit=deps_for_fit, deps_for_pred=deps_for_pred,
                     prov=prov,
                 )
@@ -343,7 +352,133 @@ class ForecastPipeline:
                 timestamps=timestamps,
                 provenance=prov,
             )
+
+        # Refit each stage on the full training data → canonical models for
+        # .predict() on truly unseen rows. Stored on self for later use.
+        # This is sklearn's standard pattern: CV produces OOF metrics, the
+        # final-model fit produces the artefact that scores new data.
+        if self.refit_on_full:
+            self._fit_canonical_models(Xo, yo, ids_o, ts_o)
+
         return PipelineResult(forecasts=out)
+
+    def _fit_canonical_models(
+        self,
+        X: np.ndarray, y: np.ndarray, ids: np.ndarray, ts: np.ndarray,
+    ) -> None:
+        """Fit each stage on the *full* training data, storing the result on
+        ``self._fitted_stages`` for later use by ``predict()``.
+
+        Calibrators are fit on a held-out tail of the full training data,
+        matching the per-fold calibration logic. Downstream stages with
+        ``depends_on`` receive the upstream stage's in-sample dist on the
+        full training data.
+        """
+        from bracketlearn.composite import CalibratedForecaster, LiftedForecaster
+
+        self._fitted_stages = {}
+        self._fitted_calibrators = {}
+        canonical_dists: dict[str, DistributionForecast] = {}
+        N = X.shape[0]
+        train_idx = np.arange(N)
+
+        for stage in self._stages:
+            deps = {d: canonical_dists[d] for d in stage.depends_on}
+            f = clone(stage.forecaster)
+            calibrator: Calibrator | None = None
+            inner = f
+            if isinstance(f, CalibratedForecaster):
+                calibrator = f.calibrator
+                inner = f.forecaster
+
+            # Fit calibrator on a tail of full train (mirrors fold logic).
+            if calibrator is not None:
+                calib_n = max(2, int(N * self.calibration_fraction))
+                tr_minus = train_idx[:-calib_n]
+                calib_idx = train_idx[-calib_n:]
+                if len(tr_minus) >= 2:
+                    _, cal_dist = self._fit_inner(
+                        inner, X, y, ids, ts, tr_minus, calib_idx, deps, deps,
+                    )
+                    calibrator.fit(cal_dist, y[calib_idx])
+                else:
+                    calibrator = None
+
+            # Refit inner on the full train and record its in-sample dist for
+            # downstream deps. Self-predict on the same N rows so the deps
+            # row-alignment invariant (deps_oof[name].params['mu'].shape[0] == N)
+            # holds for whatever downstream Stacking expects.
+            dist_train_full = self._refit_and_predict_full(
+                inner, X, y, ids, ts, deps,
+            )
+            if calibrator is not None:
+                dist_train_full = calibrator.transform(dist_train_full)
+                self._fitted_calibrators[stage.name] = calibrator
+            self._fitted_stages[stage.name] = inner
+            canonical_dists[stage.name] = dist_train_full
+
+    def _refit_and_predict_full(
+        self,
+        f: Any,
+        X: np.ndarray, y: np.ndarray, ids: np.ndarray, ts: np.ndarray,
+        deps: dict[str, DistributionForecast],
+    ) -> DistributionForecast:
+        """Refit ``f`` on full (X, y); return its in-sample predict_dist."""
+        from bracketlearn.composite import LiftedForecaster
+
+        if isinstance(f, LiftedForecaster):
+            half = X.shape[0] // 2
+            f.base.fit(X[:half], y[:half])
+            base_pt_oof = f.base.predict(X[half:], ids=ids[half:], timestamps=ts[half:])
+            f.base.fit(X, y)
+            if f.lifter.requires_X:
+                f.lifter.fit(base_pt_oof, y[half:], X=X[half:])
+            else:
+                f.lifter.fit(base_pt_oof, y[half:])
+            return f.predict_dist(X, ids=ids, timestamps=ts)
+        if deps:
+            f.fit(X, y, deps_oof=deps)
+            return _predict_with_deps(f, X, ids, ts, deps)
+        f.fit(X, y)
+        return f.predict_dist(X, ids=ids, timestamps=ts)
+
+    def predict(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+    ) -> dict[str, DistributionForecast]:
+        """Predict on unseen X using the canonical (full-train) models.
+
+        Returns ``{stage_name: DistributionForecast}``. Requires
+        ``refit_on_full=True`` at construction (the default) and a prior
+        ``fit_predict()`` call.
+        """
+        from bracketlearn.composite import LiftedForecaster
+
+        if not self._fitted_stages:
+            raise RuntimeError(
+                "predict() requires a prior fit_predict() with refit_on_full=True"
+            )
+        X = np.asarray(X)
+        ids = np.asarray(ids)
+        timestamps = np.asarray(timestamps)
+        out: dict[str, DistributionForecast] = {}
+        for stage in self._stages:
+            f = self._fitted_stages[stage.name]
+            deps = {d: out[d] for d in stage.depends_on}
+            if isinstance(f, LiftedForecaster):
+                dist = f.predict_dist(X, ids=ids, timestamps=timestamps)
+            elif deps:
+                dist = _predict_with_deps(f, X, ids, timestamps, deps)
+            else:
+                dist = f.predict_dist(X, ids=ids, timestamps=timestamps)
+            cal = self._fitted_calibrators.get(stage.name)
+            if cal is not None:
+                dist = cal.transform(dist)
+            out[stage.name] = dist
+        return out
 
     # ---------------------------------------------------------- fold helpers
 
@@ -367,7 +502,7 @@ class ForecastPipeline:
 
     def _fit_stage_on_fold(
         self,
-        stage: _Stage,
+        f: Any,
         X: np.ndarray, y: np.ndarray, ids: np.ndarray, ts: np.ndarray,
         train_idx: np.ndarray, test_idx: np.ndarray,
         *,
@@ -375,10 +510,12 @@ class ForecastPipeline:
         deps_for_pred: dict[str, DistributionForecast],
         prov: ProvenanceMeta,
     ) -> tuple[DistributionForecast, DistributionForecast]:
-        """Fit stage on train_idx; return (dist_on_train, dist_on_test)."""
-        from bracketlearn.composite import CalibratedForecaster, LiftedForecaster
+        """Fit ``f`` on train_idx; return (dist_on_train, dist_on_test).
 
-        f = stage.forecaster
+        ``f`` should already be a clone — the pipeline never mutates the
+        user-supplied forecaster instance.
+        """
+        from bracketlearn.composite import CalibratedForecaster, LiftedForecaster
         X_tr, y_tr = X[train_idx], y[train_idx]
         X_te = X[test_idx]
         ids_tr, ts_tr = ids[train_idx], ts[train_idx]
