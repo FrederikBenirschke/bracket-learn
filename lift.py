@@ -178,19 +178,24 @@ class Conformal:
 
 @dataclass
 class Isotonic:
-    """Isotonic CDF calibration on a fixed quantile grid.
+    """Isotonic calibration on bracket probabilities.
 
-    Operates only on parametric-normal backings in v0.1: converts to a fixed
-    quantile grid, fits isotonic on (predicted CDF tau → empirical CDF on y),
-    and shifts the implied normal's mean+sigma via moment matching of the
-    recalibrated CDF. Simpler v0.1 fallback: leave the dist unchanged but
-    record provenance — provides the Calibrator hook for the e2e demo.
+    Mirrors prediction_market_weather/ml/trainers/emos_calibrated.py:
 
-    Full implementation deferred; in v0.1 this is a typed pass-through with
-    fit-side bookkeeping (good enough to exercise the pipeline calibration
-    fold without being a no-op forever).
+    1. Discretise the dist onto `edges` via dist.cdf(edges).
+    2. Flatten to long-form (p_pred, y_hit) pairs across (rows × brackets).
+    3. Fit sklearn.IsotonicRegression on (p_pred, y_hit) with [0, 1] clipping.
+    4. transform(): apply isotonic to bracket probs, renormalise per row,
+       return a bracket-backed DistributionForecast.
+
+    Calibrated output is bracket-backed regardless of input backing — the
+    isotonic correction is meaningful only relative to the chosen ladder.
+
+    `edges` is required (Rule #0.5: no default ladder).
     """
 
+    edges: np.ndarray
+    iso_: Any = field(default=None, init=False)
     fitted_: bool = field(default=False, init=False)
     n_calib_: int | None = field(default=None, init=False)
 
@@ -199,7 +204,26 @@ class Isotonic:
         dist_oof: "DistributionForecast",
         y: np.ndarray,
     ) -> Self:
-        self.n_calib_ = int(np.asarray(y).shape[0])
+        from sklearn.isotonic import IsotonicRegression
+
+        from bracketlearn.forecast import Backing, DistributionForecast
+
+        y = np.asarray(y, dtype=float)
+        edges = np.asarray(self.edges, dtype=float)
+        B = edges.shape[0] - 1
+        # Per-row bracket probs from the dist's CDF.
+        probs = _bracket_probs_from_dist(dist_oof, edges)        # (N, B)
+        # Realized bin per row.
+        bin_idx = np.searchsorted(edges, y, side="right") - 1
+        bin_idx = np.clip(bin_idx, 0, B - 1)
+        # One-hot the realized bins.
+        onehot = np.zeros_like(probs)
+        onehot[np.arange(probs.shape[0]), bin_idx] = 1.0
+        p_long = probs.reshape(-1)
+        y_long = onehot.reshape(-1)
+        self.iso_ = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
+        self.iso_.fit(p_long, y_long)
+        self.n_calib_ = int(y.shape[0])
         self.fitted_ = True
         return self
 
@@ -209,35 +233,39 @@ class Isotonic:
     ) -> "DistributionForecast":
         if not self.fitted_:
             raise RuntimeError("Isotonic.transform called before fit")
-        # v0.1: identity transform; provenance records the calibrator was
-        # applied so downstream auditors see it.
-        from bracketlearn.forecast import (
-            DistributionForecast,
-            ProvenanceMeta,
-            Backing,
-            ParametricFamily,
-        )
+        from bracketlearn.forecast import DistributionForecast, ProvenanceMeta
 
+        edges = np.asarray(self.edges, dtype=float)
+        probs = _bracket_probs_from_dist(dist, edges)
+        cal = self.iso_.predict(probs.reshape(-1)).reshape(probs.shape)
+        row_sum = cal.sum(axis=1, keepdims=True)
+        row_sum = np.where(row_sum > 0, row_sum, 1.0)
+        cal = cal / row_sum
         new_prov = ProvenanceMeta(
             **{**dist.provenance.__dict__,
                "conversion_chain": dist.provenance.conversion_chain + ("Isotonic",),
                "created_at": datetime.now()},
         )
-        return DistributionForecast(
-            backing=dist.backing,
-            family=dist.family,
-            params=dist.params,
-            taus=dist.taus,
-            qvals=dist.qvals,
-            members=dist.members,
-            edges=dist.edges,
-            probs=dist.probs,
-            ids=dist.ids,
-            timestamps=dist.timestamps,
+        return DistributionForecast.from_brackets(
+            edges=edges, probs=cal,
+            ids=dist.ids, timestamps=dist.timestamps,
             provenance=new_prov,
-            tail_policy=dist.tail_policy,
-            tail_support=dist.tail_support,
         )
+
+
+def _bracket_probs_from_dist(
+    dist: "DistributionForecast", edges: np.ndarray,
+) -> np.ndarray:
+    """Per-row bracket probabilities from any dist that supports cdf()."""
+    cdf_hi = dist.cdf(edges[1:])
+    cdf_lo = dist.cdf(edges[:-1])
+    probs = cdf_hi - cdf_lo
+    # Numerical clip — Σ may drift slightly from 1 for parametric backings
+    # because we're discretising an unbounded distribution.
+    probs = np.clip(probs, 0.0, 1.0)
+    row_sum = probs.sum(axis=1, keepdims=True)
+    row_sum = np.where(row_sum > 0, row_sum, 1.0)
+    return probs / row_sum
 
 
 @dataclass

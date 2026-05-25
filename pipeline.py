@@ -122,14 +122,27 @@ class PipelineResult:
                 f"metrics {needs_ladder & set(metrics)} require ladder=..."
             )
 
+        from bracketlearn.forecast import Backing, ParametricFamily
+
         for name, dist in self.forecasts.items():
             y_oof = y[dist.ids.astype(int)]
             row: dict[str, float] = {"n_oof": int(dist.ids.shape[0])}
             for m in metrics:
                 if m == "crps":
-                    row["crps"] = float(scoremod.crps_gaussian(dist, y_oof).mean())
+                    if dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.NORMAL:
+                        row["crps"] = float(scoremod.crps_gaussian(dist, y_oof).mean())
+                    elif dist.backing == Backing.BRACKET:
+                        row["crps"] = float(scoremod.crps_bracket(dist, y_oof).mean())
+                    else:
+                        # Mixture: no closed-form CRPS; skip.
+                        row["crps"] = float("nan")
                 elif m == "log_score":
-                    row["log_score"] = float(scoremod.log_score_gaussian(dist, y_oof).mean())
+                    if dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.NORMAL:
+                        row["log_score"] = float(scoremod.log_score_gaussian(dist, y_oof).mean())
+                    elif dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.MIXTURE_NORMAL:
+                        row["log_score"] = float(scoremod.log_score_mixture_normal(dist, y_oof).mean())
+                    else:
+                        row["log_score"] = float("nan")
                 elif m in ("pit", "pit_mean"):
                     pits = scoremod.pit(dist, y_oof)
                     row["pit_mean"] = float(pits.mean())
@@ -273,8 +286,10 @@ class ForecastPipeline:
 
         folds = self._expanding_folds(N)
 
-        oof_mu = {s.name: np.full(N, np.nan) for s in self._stages}
-        oof_sigma = {s.name: np.full(N, np.nan) for s in self._stages}
+        # Per stage, accumulate (orig_row_index, fold_dist) pairs across folds.
+        per_stage_folds: dict[str, list[tuple[np.ndarray, DistributionForecast]]] = {
+            s.name: [] for s in self._stages
+        }
 
         for fold_idx, (train_idx, test_idx) in enumerate(folds):
             fold_train_dist: dict[str, DistributionForecast] = {}
@@ -301,35 +316,12 @@ class ForecastPipeline:
                 )
                 fold_train_dist[stage.name] = dist_train
                 fold_test_dist[stage.name] = dist_test
-                if dist_test.backing.value != "parametric":
-                    raise NotImplementedError(
-                        f"v0.1 pipeline supports only parametric-normal OOF; got {dist_test.backing}"
-                    )
-                # Note: ids_o[test_idx] are the *original* row indices because
-                # ids was constructed as np.arange in the demo. For real data,
-                # the user's ids may not equal row indices — we record the
-                # *sorted-row position* (test_idx itself) for OOF scoring,
-                # by mapping back to original via the `order` permutation.
+                # ids_o is sorted; map back to original row index via `order`.
                 orig_rows = order[test_idx]
-                oof_mu[stage.name][orig_rows] = dist_test.params["mu"]
-                oof_sigma[stage.name][orig_rows] = dist_test.params["sigma"]
+                per_stage_folds[stage.name].append((orig_rows, dist_test))
 
         out: dict[str, DistributionForecast] = {}
         for stage in self._stages:
-            mu = oof_mu[stage.name]
-            sigma = oof_sigma[stage.name]
-            valid = ~np.isnan(mu)
-            if not valid.all():
-                mu_v = mu[valid]
-                sigma_v = sigma[valid]
-                # ids of valid rows = the original row index, so y[ids] aligns.
-                ids_out = np.where(valid)[0]
-                ts_out = timestamps[valid]
-            else:
-                mu_v = mu
-                sigma_v = sigma
-                ids_out = np.arange(N)
-                ts_out = timestamps
             prov = ProvenanceMeta(
                 forecaster_name=stage.name,
                 forecaster_version="0.1",
@@ -342,8 +334,10 @@ class ForecastPipeline:
                 created_at=datetime.now(),
                 sigma_source="native",
             )
-            out[stage.name] = DistributionForecast.from_normal(
-                mu_v, sigma_v, ids=ids_out, timestamps=ts_out, provenance=prov,
+            out[stage.name] = _stitch_folds(
+                per_stage_folds[stage.name],
+                timestamps=timestamps,
+                provenance=prov,
             )
         return PipelineResult(forecasts=out)
 
@@ -503,6 +497,69 @@ def _predict_with_deps(
         return forecaster.predict_dist(X, ids=ids, timestamps=ts, deps_oof=deps_oof)
     except TypeError:
         return forecaster.predict_dist(X, ids=ids, timestamps=ts)
+
+
+def _stitch_folds(
+    folds: list[tuple[np.ndarray, DistributionForecast]],
+    *,
+    timestamps: np.ndarray,
+    provenance: ProvenanceMeta,
+) -> DistributionForecast:
+    """Concatenate per-fold OOF dists into one whole-data OOF dist.
+
+    All folds must share backing/family (and edges for bracket, K for mixture).
+    Output ids are the original row indices so y[ids] recovers the realized
+    targets for OOF scoring.
+    """
+    from bracketlearn.forecast import Backing, ParametricFamily
+
+    if not folds:
+        raise RuntimeError("no folds to stitch — pipeline emitted nothing")
+    backings = {d.backing for _, d in folds}
+    if len(backings) > 1:
+        raise NotImplementedError(f"mixed backings across folds: {backings}")
+    backing = next(iter(backings))
+
+    all_rows = np.concatenate([rows for rows, _ in folds])
+    all_ts = timestamps[all_rows]
+    # Sort by original row index so downstream y[ids] aligns trivially.
+    order = np.argsort(all_rows, kind="stable")
+    ids_sorted = all_rows[order]
+    ts_sorted = all_ts[order]
+
+    if backing == Backing.PARAMETRIC:
+        families = {d.family for _, d in folds}
+        if len(families) > 1:
+            raise NotImplementedError(f"mixed parametric families: {families}")
+        family = next(iter(families))
+        if family == ParametricFamily.NORMAL:
+            mu = np.concatenate([d.params["mu"] for _, d in folds])[order]
+            sigma = np.concatenate([d.params["sigma"] for _, d in folds])[order]
+            return DistributionForecast.from_normal(
+                mu, sigma, ids=ids_sorted, timestamps=ts_sorted, provenance=provenance,
+            )
+        if family == ParametricFamily.MIXTURE_NORMAL:
+            weights = np.concatenate([d.params["weights"] for _, d in folds], axis=0)[order]
+            mus = np.concatenate([d.params["mus"] for _, d in folds], axis=0)[order]
+            sigmas = np.concatenate([d.params["sigmas"] for _, d in folds], axis=0)[order]
+            return DistributionForecast.from_mixture_normal(
+                weights=weights, mus=mus, sigmas=sigmas,
+                ids=ids_sorted, timestamps=ts_sorted, provenance=provenance,
+            )
+        raise NotImplementedError(f"stitching not implemented for parametric family {family}")
+
+    if backing == Backing.BRACKET:
+        edges_set = {tuple(d.edges.tolist()) for _, d in folds}
+        if len(edges_set) > 1:
+            raise NotImplementedError("bracket folds with different edges cannot be stitched")
+        edges = folds[0][1].edges
+        probs = np.concatenate([d.probs for _, d in folds], axis=0)[order]
+        return DistributionForecast.from_brackets(
+            edges=edges, probs=probs,
+            ids=ids_sorted, timestamps=ts_sorted, provenance=provenance,
+        )
+
+    raise NotImplementedError(f"stitching not implemented for backing {backing}")
 
 
 def _set_provenance(dist: DistributionForecast, prov: ProvenanceMeta) -> DistributionForecast:

@@ -1,11 +1,20 @@
-"""Three v0.1 trainers exercising the framework's three main code paths.
+"""v0.1 trainers covering the framework's main protocol shapes.
 
-- Ridge       — PointForecaster, wrapped via LiftedForecaster + GlobalResidual.
-- EMOS        — DistForecaster (native parametric normal).
-- Stacking    — DistForecaster with depends_on; combines upstream OOF.
+Core building blocks:
+- SklearnPoint    — wrap any sklearn-style regressor as a PointForecaster.
+- EMOS            — native parametric-normal DistForecaster.
+- Stacking        — DistForecaster with depends_on (linear meta-learner).
+- NGBoostNormal   — non-linear EMOS via NGBoost; native parametric normal.
+- MixtureNormals  — per-vendor Gaussian mixture; native parametric mixture.
 
-These are intentionally simple; they exist to prove the framework holds
-end-to-end, not to be best-in-class predictors.
+Convenience builders pre-wrap common combinations:
+- ridge()           — RidgeCV + GlobalResidual via LiftedForecaster.
+- market_ols()      — OLS + GlobalResidual.
+- emos_calibrated() — EMOS + Isotonic via CalibratedForecaster (needs edges).
+
+These trainers exist to prove the framework holds across protocol shapes;
+they mirror the algorithmic essence of the equivalents in
+prediction_market_weather/ml/trainers/ but without the parquet/registry I/O.
 """
 
 from __future__ import annotations
@@ -276,3 +285,240 @@ class Stacking:
             mu, sigma, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
             provenance=prov,
         )
+
+
+# ---------------------------------------------------------------------------
+# NGBoostNormal — non-linear EMOS. μ̂ and σ̂ both boosted as f(X).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class NGBoostNormal:
+    """Native parametric-normal DistForecaster backed by NGBoost.
+
+    Mirrors prediction_market_weather/ml/trainers/ngboost_normal.py: boosts
+    (μ̂, σ̂) as non-linear functions of the full feature vector so
+    dispersion can be regime-conditional.
+
+    sigma_floor clamps σ̂ above a minimum (NGBoost can collapse σ̂ → 0 on
+    overfit folds; the floor mirrors the original trainer's SIGMA_FLOOR).
+    """
+
+    n_estimators: int = 400
+    learning_rate: float = 0.01
+    minibatch_frac: float = 0.5
+    natural_gradient: bool = True
+    sigma_floor: float = 0.5
+    random_seed: int | None = None
+    name: str = "NGBoostNormal"
+    depends_on: tuple[str, ...] = ()
+    model_: Any = field(default=None, init=False)
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        sample_weight: np.ndarray | None = None,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> Self:
+        from ngboost import NGBRegressor
+        from ngboost.distns import Normal
+
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        self.model_ = NGBRegressor(
+            Dist=Normal,
+            n_estimators=self.n_estimators,
+            learning_rate=self.learning_rate,
+            minibatch_frac=self.minibatch_frac,
+            natural_gradient=self.natural_gradient,
+            random_state=self.random_seed,
+            verbose=False,
+        )
+        self.model_.fit(X, y)
+        return self
+
+    def predict_dist(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+    ) -> DistributionForecast:
+        if self.model_ is None:
+            raise RuntimeError("NGBoostNormal.predict_dist called before fit")
+        X = np.asarray(X, dtype=float)
+        dist = self.model_.pred_dist(X)
+        mu = np.asarray(dist.loc, dtype=float)
+        sigma = np.maximum(np.asarray(dist.scale, dtype=float), self.sigma_floor)
+        prov = ProvenanceMeta(
+            forecaster_name=self.name,
+            forecaster_version="0.1",
+            fit_window=(datetime(2024, 1, 1), datetime.now()),
+            fold_idx=None,
+            calibration_set_hash=None,
+            random_seed=self.random_seed,
+            code_sha="dev",
+            feature_matrix_hash="-",
+            created_at=datetime.now(),
+            sigma_source="native",
+        )
+        return DistributionForecast.from_normal(
+            mu, sigma, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
+            provenance=prov,
+        )
+
+
+# ---------------------------------------------------------------------------
+# MixtureNormals — one Gaussian component per "vendor" (column of X).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MixtureNormals:
+    """Per-vendor Gaussian mixture.
+
+        p(y | x) = (1/K) Σ_v N(y; x_v, σ_v²)
+
+    where x_v is the v-th column of X (vendor's point forecast) and σ_v is
+    that vendor's train-slice RMSE against y. Equal weights over the K
+    columns of X.
+
+    Mirrors prediction_market_weather/ml/trainers/mixture_normals.py except
+    we treat X as already-curated vendor columns: the original handled
+    missing values per row, which is a data-shape concern that doesn't fit
+    the (N, K) dense array contract here.
+
+    Rule #0.5: rows with all-NaN columns or all-zero variances raise.
+    """
+
+    name: str = "MixtureNormals"
+    depends_on: tuple[str, ...] = ()
+    sigma_floor: float = 0.5
+    sigma_v_: np.ndarray | None = field(default=None, init=False)
+    K_: int | None = field(default=None, init=False)
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        sample_weight: np.ndarray | None = None,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> Self:
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        if X.ndim != 2:
+            raise ValueError(f"MixtureNormals expects 2-D X; got shape {X.shape}")
+        K = X.shape[1]
+        diffs = X - y[:, None]
+        sigma_v = np.sqrt(np.mean(diffs ** 2, axis=0))
+        sigma_v = np.maximum(sigma_v, self.sigma_floor)
+        if np.any(~np.isfinite(sigma_v)):
+            raise RuntimeError(
+                f"MixtureNormals: non-finite σ_v after fit ({sigma_v}); "
+                f"check X has no NaNs"
+            )
+        self.sigma_v_ = sigma_v
+        self.K_ = K
+        return self
+
+    def predict_dist(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+    ) -> DistributionForecast:
+        if self.sigma_v_ is None:
+            raise RuntimeError("MixtureNormals.predict_dist called before fit")
+        X = np.asarray(X, dtype=float)
+        if X.shape[1] != self.K_:
+            raise ValueError(
+                f"MixtureNormals: predict X has K={X.shape[1]}, train had K={self.K_}"
+            )
+        N = X.shape[0]
+        mus = X
+        sigmas = np.broadcast_to(self.sigma_v_, (N, self.K_)).copy()
+        weights = np.full((N, self.K_), 1.0 / self.K_)
+        prov = ProvenanceMeta(
+            forecaster_name=self.name,
+            forecaster_version="0.1",
+            fit_window=(datetime(2024, 1, 1), datetime.now()),
+            fold_idx=None,
+            calibration_set_hash=None,
+            random_seed=None,
+            code_sha="dev",
+            feature_matrix_hash="-",
+            created_at=datetime.now(),
+            sigma_source="native",
+        )
+        return DistributionForecast.from_mixture_normal(
+            weights=weights, mus=mus, sigmas=sigmas,
+            ids=np.asarray(ids), timestamps=np.asarray(timestamps),
+            provenance=prov,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Convenience builders — pre-wrap common (forecaster, lifter/calibrator) combos.
+# ---------------------------------------------------------------------------
+
+
+def ridge(
+    *,
+    alphas: tuple[float, ...] = (1e-3, 1e-2, 1e-1, 1.0, 10.0, 100.0, 1000.0),
+    name: str = "ridge",
+) -> Any:
+    """RidgeCV + GlobalResidual wrapped in LiftedForecaster.
+
+    Picks α from `alphas` via leave-one-out CV on the inner-fit slice.
+    Returns a LiftedForecaster ready to register with a ForecastPipeline.
+    """
+    from sklearn.linear_model import RidgeCV
+
+    from bracketlearn.composite import LiftedForecaster
+    from bracketlearn.lift import GlobalResidual
+
+    return LiftedForecaster(
+        base=SklearnPoint(RidgeCV(alphas=np.asarray(alphas))),
+        lifter=GlobalResidual(family="normal"),
+        name=name,
+    )
+
+
+def market_ols(*, name: str = "market_ols") -> Any:
+    """Plain OLS + GlobalResidual. Mirrors market_ols Q2 (target = realized).
+
+    Q1 (target = market_implied) is the same model fit with a different
+    target — out of scope for bracketlearn (the target choice is a calling
+    convention, not a model class).
+    """
+    from sklearn.linear_model import LinearRegression
+
+    from bracketlearn.composite import LiftedForecaster
+    from bracketlearn.lift import GlobalResidual
+
+    return LiftedForecaster(
+        base=SklearnPoint(LinearRegression()),
+        lifter=GlobalResidual(family="normal"),
+        name=name,
+    )
+
+
+def emos_calibrated(*, edges: np.ndarray, name: str = "emos_calibrated") -> Any:
+    """EMOS wrapped with Isotonic on the given bracket ladder.
+
+    `edges` defines the ladder used for isotonic calibration. The pipeline
+    fits the isotonic on a held-out tail of each training fold and applies
+    it to the test fold.
+    """
+    from bracketlearn.composite import CalibratedForecaster
+    from bracketlearn.lift import Isotonic
+
+    return CalibratedForecaster(
+        forecaster=EMOS(),
+        calibrator=Isotonic(edges=np.asarray(edges, dtype=float)),
+        name=name,
+    )

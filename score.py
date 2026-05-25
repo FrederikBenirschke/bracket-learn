@@ -52,11 +52,100 @@ def log_score_gaussian(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
     return -_stats.norm.logpdf(y, loc=mu, scale=sigma)
 
 
-def pit(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
-    """PIT values F(y). Uniform if forecast is calibrated."""
-    mu, sigma = _check_normal(dist)
+def log_score_mixture_normal(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
+    """Negative log-likelihood for a mixture-of-Normals."""
+    if dist.backing != Backing.PARAMETRIC or dist.family != ParametricFamily.MIXTURE_NORMAL:
+        raise NotImplementedError(
+            f"log_score_mixture_normal expects parametric mixture_normal; got "
+            f"{dist.backing}/{dist.family}"
+        )
     y = np.asarray(y, dtype=float)
-    return _stats.norm.cdf(y, loc=mu, scale=sigma)
+    w = dist.params["weights"]
+    mus = dist.params["mus"]
+    sigmas = dist.params["sigmas"]
+    # pdf at y per component, then weighted sum.
+    pdfs = _stats.norm.pdf(y[:, None], loc=mus, scale=sigmas)
+    px = (w * pdfs).sum(axis=1)
+    px = np.maximum(px, 1e-300)
+    return -np.log(px)
+
+
+def pit(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
+    """PIT values F(y). Uniform if forecast is calibrated.
+
+    Works on any backing whose dist.cdf accepts a 1-D array of length N
+    aligned with the rows — we extract the diagonal of dist.cdf(y).
+    """
+    y = np.asarray(y, dtype=float)
+    if dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.NORMAL:
+        mu = dist.params["mu"]
+        sigma = dist.params["sigma"]
+        return _stats.norm.cdf(y, loc=mu, scale=sigma)
+    # Generic path: dist.cdf(y_array) returns (N, len(y_array)); take diagonal.
+    return np.diag(dist.cdf(y))
+
+
+def crps_bracket(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
+    """CRPS for a bracket-backed distribution.
+
+    Computes ∫(F(z) - 1[z ≥ y])² dz under uniform-within-bin density.
+    """
+    if dist.backing != Backing.BRACKET:
+        raise NotImplementedError(f"crps_bracket expects bracket backing; got {dist.backing}")
+    y = np.asarray(y, dtype=float)
+    edges = dist.edges
+    probs = dist.probs                       # (N, B)
+    B = probs.shape[1]
+    cum = np.concatenate(
+        [np.zeros((probs.shape[0], 1)), np.cumsum(probs, axis=1)], axis=1
+    )                                        # (N, B+1) — F at edges
+    out = np.zeros(probs.shape[0])
+    for k in range(B):
+        lo, hi = edges[k], edges[k + 1]
+        width = hi - lo
+        # F linear in [lo, hi]: F(z) = cum[:,k] + (z-lo)/width * probs[:,k].
+        # 1[z≥y]: 0 for z<y, 1 for z≥y. Split by where y sits relative to bin.
+        a = cum[:, k]                        # F at lo
+        b = probs[:, k] / width if width > 0 else np.zeros_like(probs[:, k])
+        # Cases: y >= hi → integrand = F²; y <= lo → integrand = (F-1)²;
+        # lo < y < hi → split.
+        # Compute Σ over rows separately:
+        case_above = y >= hi
+        case_below = y <= lo
+        case_inside = ~case_above & ~case_below
+
+        # 1) y >= hi: integrate F(z)² over [lo, hi].
+        if case_above.any():
+            # F(z) = a + b(z-lo). ∫_0^w (a+bt)² dt = a²w + abw² + b²w³/3.
+            mask = case_above
+            integ = a[mask] ** 2 * width + a[mask] * b[mask] * width ** 2 + b[mask] ** 2 * width ** 3 / 3.0
+            out[mask] += integ
+
+        # 2) y <= lo: integrate (F(z)-1)² over [lo, hi].
+        if case_below.any():
+            mask = case_below
+            # (F-1)² = ((a-1)+bt)². ∫_0^w = (a-1)²w + (a-1)bw² + b²w³/3
+            integ = (a[mask] - 1) ** 2 * width + (a[mask] - 1) * b[mask] * width ** 2 + b[mask] ** 2 * width ** 3 / 3.0
+            out[mask] += integ
+
+        # 3) lo < y < hi: split at y. Left of y (z < y): integrand = F².
+        # Right of y (z >= y): integrand = (F - 1)².
+        if case_inside.any():
+            mask = case_inside
+            t = y[mask] - lo                 # length on left side
+            wL = t
+            wR = width - t
+            aL = a[mask]
+            bL = b[mask]
+            # ∫_0^{wL} (aL + bL u)² du
+            left = aL ** 2 * wL + aL * bL * wL ** 2 + bL ** 2 * wL ** 3 / 3.0
+            # ∫_{wL}^{w} (F - 1)² dz, where F at z = aL + bL(z-lo). Substitute u = z - lo:
+            # ∫_{wL}^{w} (aL - 1 + bL u)² du. Compute as integral from 0 to w minus 0 to wL.
+            full = (aL - 1) ** 2 * width + (aL - 1) * bL * width ** 2 + bL ** 2 * width ** 3 / 3.0
+            head = (aL - 1) ** 2 * wL + (aL - 1) * bL * wL ** 2 + bL ** 2 * wL ** 3 / 3.0
+            right = full - head
+            out[mask] += left + right
+    return out
 
 
 # ---------------------------------------------------------------------------

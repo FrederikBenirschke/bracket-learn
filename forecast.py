@@ -173,7 +173,35 @@ class DistributionForecast:
         timestamps: np.ndarray,
         provenance: ProvenanceMeta,
     ) -> "DistributionForecast":
-        ...
+        """Per-row mixture of K Gaussians. Components with zero weight are
+        permitted (e.g. missing vendor in mixture_normals); the row's
+        weights must still sum to 1 (renormalise upstream)."""
+        weights = np.asarray(weights, dtype=float)
+        mus = np.asarray(mus, dtype=float)
+        sigmas = np.asarray(sigmas, dtype=float)
+        if weights.shape != mus.shape or weights.shape != sigmas.shape:
+            raise ValueError(
+                f"shape mismatch: weights={weights.shape} mus={mus.shape} sigmas={sigmas.shape}"
+            )
+        if weights.shape[0] != ids.shape[0]:
+            raise ValueError(
+                f"N mismatch: weights={weights.shape[0]} ids={ids.shape[0]}"
+            )
+        if np.any(weights < 0):
+            raise ValueError("weights must be nonnegative")
+        if not np.allclose(weights.sum(axis=1), 1.0, atol=1e-6):
+            raise ValueError("weights must sum to 1 per row")
+        if np.any(sigmas <= 0):
+            raise ValueError("sigmas must be strictly positive (components carry mass)")
+        return cls(
+            backing=Backing.PARAMETRIC,
+            family=ParametricFamily.MIXTURE_NORMAL,
+            params={"weights": weights, "mus": mus, "sigmas": sigmas},
+            ids=np.asarray(ids),
+            timestamps=np.asarray(timestamps),
+            provenance=provenance,
+            tail_support="full",
+        )
 
     @classmethod
     def from_quantiles(
@@ -246,6 +274,13 @@ class DistributionForecast:
             mu = self.params["mu"][:, None]
             sigma = self.params["sigma"][:, None]
             out = _stats.norm.cdf(x_arr[None, :], loc=mu, scale=sigma)
+        elif self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.MIXTURE_NORMAL:
+            # weights/mus/sigmas: (N, K). Compute Σ_k w_k Φ((x - μ_k)/σ_k).
+            w = self.params["weights"][:, :, None]      # (N, K, 1)
+            mus = self.params["mus"][:, :, None]
+            sigmas = self.params["sigmas"][:, :, None]
+            cdfs = _stats.norm.cdf(x_arr[None, None, :], loc=mus, scale=sigmas)  # (N, K, M)
+            out = (w * cdfs).sum(axis=1)                 # (N, M)
         elif self.backing == Backing.BRACKET:
             # P(X ≤ x) = sum of probs in fully-included bins + partial last bin.
             # Assume uniform within each bin (default interpolation).
@@ -304,6 +339,12 @@ class DistributionForecast:
             mu = self.params["mu"][:, None]
             sigma = self.params["sigma"][:, None]
             out = _stats.norm.pdf(x_arr[None, :], loc=mu, scale=sigma)
+        elif self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.MIXTURE_NORMAL:
+            w = self.params["weights"][:, :, None]
+            mus = self.params["mus"][:, :, None]
+            sigmas = self.params["sigmas"][:, :, None]
+            pdfs = _stats.norm.pdf(x_arr[None, None, :], loc=mus, scale=sigmas)
+            out = (w * pdfs).sum(axis=1)
         elif self.backing == Backing.BRACKET:
             if density_method != "step":
                 raise ValueError(
@@ -329,8 +370,9 @@ class DistributionForecast:
     def mean(self) -> np.ndarray:
         if self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.NORMAL:
             return self.params["mu"].copy()
+        if self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.MIXTURE_NORMAL:
+            return (self.params["weights"] * self.params["mus"]).sum(axis=1)
         if self.backing == Backing.BRACKET:
-            # bin midpoint expectation under uniform-within-bin
             mids = 0.5 * (self.edges[1:] + self.edges[:-1])    # (B,)
             return (self.probs * mids[None, :]).sum(axis=1)
         raise NotImplementedError(f"mean not implemented for backing={self.backing}")
@@ -338,6 +380,14 @@ class DistributionForecast:
     def variance(self) -> np.ndarray:
         if self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.NORMAL:
             return self.params["sigma"] ** 2
+        if self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.MIXTURE_NORMAL:
+            # E[X²] − E[X]², with E[X²] = Σ w_k (μ_k² + σ_k²).
+            w = self.params["weights"]
+            mus = self.params["mus"]
+            sigmas = self.params["sigmas"]
+            mean = (w * mus).sum(axis=1)
+            ex2 = (w * (mus ** 2 + sigmas ** 2)).sum(axis=1)
+            return ex2 - mean ** 2
         if self.backing == Backing.BRACKET:
             mids = 0.5 * (self.edges[1:] + self.edges[:-1])
             m = (self.probs * mids[None, :]).sum(axis=1)
