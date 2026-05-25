@@ -21,6 +21,11 @@ Tier 2 (quantile / bracket backings, conformal calibration, tail specialist):
   - cumbin           — cumulative-binary classifier (bracket-backed)
   - tail_specialist  — EMOS body + LightGBM tail classifiers (bracket-backed)
 
+Tier 3 (online aggregation):
+  - online_agg       — sleeping-experts AdaHedge over the K columns of X,
+                       lifted to parametric normal via GlobalResidual.
+                       (RNNHourly needs 3-D X — see weather_rnn_e2e.py.)
+
 PipelineResult.score() owns OOF alignment so the user never touches dist.ids.
 """
 
@@ -42,11 +47,14 @@ from bracketlearn.adapters import BracketLadder
 from bracketlearn.composite import CalibratedForecaster
 from bracketlearn.lift import ConformalCalibrate
 from bracketlearn.pipeline import ForecastPipeline
+from bracketlearn.composite import LiftedForecaster
+from bracketlearn.lift import GlobalResidual
 from bracketlearn.trainers import (
     EMOS,
     CumulativeBinary,
     MixtureNormals,
     NGBoostNormal,
+    OnlineAggregator,
     QuantileForest,
     QuantileReg,
     Stacking,
@@ -110,6 +118,11 @@ def main() -> None:
             ("qforest",         QuantileForest(n_estimators=200, random_seed=0)),
             ("cumbin",          CumulativeBinary(cutpoints=inner_cutpoints)),
             ("tail_specialist", TailSpecialist(edges=edges, upstream="emos")),
+            # Tier 3
+            ("online_agg",      LiftedForecaster(
+                                    base=OnlineAggregator(min_experts=2),
+                                    lifter=GlobalResidual(family="normal"),
+                                    name="online_agg")),
         ],
         cv="expanding-window",
         n_folds=4,
