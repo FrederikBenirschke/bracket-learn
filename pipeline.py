@@ -133,6 +133,8 @@ class PipelineResult:
                         row["crps"] = float(scoremod.crps_gaussian(dist, y_oof).mean())
                     elif dist.backing == Backing.BRACKET:
                         row["crps"] = float(scoremod.crps_bracket(dist, y_oof).mean())
+                    elif dist.backing == Backing.QUANTILE:
+                        row["crps"] = float(scoremod.crps_quantile(dist, y_oof).mean())
                     else:
                         # Mixture: no closed-form CRPS; skip.
                         row["crps"] = float("nan")
@@ -141,6 +143,8 @@ class PipelineResult:
                         row["log_score"] = float(scoremod.log_score_gaussian(dist, y_oof).mean())
                     elif dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.MIXTURE_NORMAL:
                         row["log_score"] = float(scoremod.log_score_mixture_normal(dist, y_oof).mean())
+                    elif dist.backing == Backing.BRACKET:
+                        row["log_score"] = float(scoremod.log_score_bracket(dist, y_oof).mean())
                     else:
                         row["log_score"] = float("nan")
                 elif m in ("pit", "pit_mean"):
@@ -556,6 +560,20 @@ def _stitch_folds(
         probs = np.concatenate([d.probs for _, d in folds], axis=0)[order]
         return DistributionForecast.from_brackets(
             edges=edges, probs=probs,
+            ids=ids_sorted, timestamps=ts_sorted, provenance=provenance,
+        )
+
+    if backing == Backing.QUANTILE:
+        taus_set = {tuple(d.taus.tolist()) for _, d in folds}
+        if len(taus_set) > 1:
+            raise NotImplementedError("quantile folds with different taus cannot be stitched")
+        taus = folds[0][1].taus
+        qvals = np.concatenate([d.qvals for _, d in folds], axis=0)[order]
+        # Tail policy must agree across folds (all folds in a pipeline come
+        # from the same trainer); pick from first fold.
+        tail_policy = folds[0][1].tail_policy
+        return DistributionForecast.from_quantiles(
+            taus=taus, qvals=qvals, tail_policy=tail_policy,
             ids=ids_sorted, timestamps=ts_sorted, provenance=provenance,
         )
 

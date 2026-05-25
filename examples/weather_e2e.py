@@ -1,32 +1,56 @@
-"""End-to-end PoC: tier-1 trainers on synthetic weather-like data.
+"""End-to-end PoC: tier-1 + tier-2 trainers on synthetic weather-like data.
 
 Run:
     conda run -n weathermarkets python -m bracketlearn.examples.weather_e2e
 
-Five trainers exercising the major code paths:
+Trainers exercising the major code paths:
 
+Tier 1 (parametric / mixture backings):
   - ridge            — LiftedForecaster(SklearnPoint(RidgeCV) + GlobalResidual)
   - market_ols       — LiftedForecaster(SklearnPoint(LinearRegression) + GlobalResidual)
   - emos             — native parametric-normal DistForecaster
   - emos_calibrated  — CalibratedForecaster(EMOS, Isotonic(edges))
-  - ngboost_normal   — non-linear EMOS via NGBoost (native parametric normal)
-  - mixture_normals  — per-vendor Gaussian mixture (native parametric mixture)
+  - ngboost          — non-linear EMOS via NGBoost (native parametric normal)
+  - mixture          — per-vendor Gaussian mixture (native parametric mixture)
   - stack            — Stacking meta-learner over (ridge, emos)
+
+Tier 2 (quantile / bracket backings, conformal calibration, tail specialist):
+  - qreg             — LightGBM per-τ quantile heads (quantile-backed)
+  - qreg_conformal   — qreg + ConformalCalibrate (per-τ offsets)
+  - qforest          — Random Forest quantile regression (quantile-backed)
+  - cumbin           — cumulative-binary classifier (bracket-backed)
+  - tail_specialist  — EMOS body + LightGBM tail classifiers (bracket-backed)
 
 PipelineResult.score() owns OOF alignment so the user never touches dist.ids.
 """
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 
+# Quiet the LightGBM "X does not have valid feature names" warning — we
+# feed numpy arrays everywhere by design.
+warnings.filterwarnings(
+    "ignore",
+    message="X does not have valid feature names.*",
+    category=UserWarning,
+)
+
 from bracketlearn.adapters import BracketLadder
+from bracketlearn.composite import CalibratedForecaster
+from bracketlearn.lift import ConformalCalibrate
 from bracketlearn.pipeline import ForecastPipeline
 from bracketlearn.trainers import (
     EMOS,
+    CumulativeBinary,
     MixtureNormals,
     NGBoostNormal,
+    QuantileForest,
+    QuantileReg,
     Stacking,
+    TailSpecialist,
     emos_calibrated,
     market_ols,
     ridge,
@@ -34,7 +58,7 @@ from bracketlearn.trainers import (
 
 
 def make_synthetic_weather(
-    n_days: int = 500,
+    n_days: int = 2000,
     n_members: int = 10,
     seed: int = 42,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -55,31 +79,44 @@ def make_synthetic_weather(
 
 def main() -> None:
     print("=" * 70)
-    print("bracketlearn v0.1 — tier-1 end-to-end demo")
+    print("bracketlearn v0.1 — tier-1 + tier-2 end-to-end demo")
     print("=" * 70)
 
     X, y, ids, ts = make_synthetic_weather()
     print(f"data: N={len(y)}, K_members={X.shape[1]}, y range=[{y.min():.1f}, {y.max():.1f}]")
 
-    # Bracket ladder shared between Isotonic calibration and contract scoring.
-    edges = np.linspace(-10, 40, 11)   # 10 brackets
+    # Bracket ladder shared between Isotonic, TailSpecialist, CumulativeBinary,
+    # and scoring. Width chosen so tail brackets contain observed mass
+    # (TailSpecialist refuses to fit with <5 positives per tail).
+    edges = np.linspace(3.0, 28.0, 11)   # 10 brackets; outer ones cover ~10% each
+    inner_cutpoints = edges[1:-1]        # interior cutpoints for CumulativeBinary
 
     pipeline = ForecastPipeline(
         steps=[
-            ("ridge",            ridge()),
-            ("market_ols",       market_ols()),
-            ("emos",             EMOS()),
-            ("emos_calibrated",  emos_calibrated(edges=edges)),
-            ("ngboost",          NGBoostNormal(n_estimators=200, learning_rate=0.02, random_seed=0)),
-            ("mixture",          MixtureNormals()),
-            ("stack",            Stacking(deps=("ridge", "emos"))),
+            # Tier 1
+            ("ridge",           ridge()),
+            ("market_ols",      market_ols()),
+            ("emos",            EMOS()),
+            ("emos_calibrated", emos_calibrated(edges=edges)),
+            ("ngboost",         NGBoostNormal(n_estimators=200, learning_rate=0.02, random_seed=0)),
+            ("mixture",         MixtureNormals()),
+            ("stack",           Stacking(deps=("ridge", "emos"))),
+            # Tier 2
+            ("qreg",            QuantileReg(n_estimators=100, random_seed=0)),
+            ("qreg_conformal",  CalibratedForecaster(
+                                    QuantileReg(n_estimators=100, random_seed=0),
+                                    ConformalCalibrate(),
+                                    name="qreg_conformal")),
+            ("qforest",         QuantileForest(n_estimators=200, random_seed=0)),
+            ("cumbin",          CumulativeBinary(cutpoints=inner_cutpoints)),
+            ("tail_specialist", TailSpecialist(edges=edges, upstream="emos")),
         ],
         cv="expanding-window",
-        n_folds=5,
+        n_folds=4,
         embargo=0,
     )
 
-    print("\nfitting pipeline (5-fold expanding window)...")
+    print(f"\nfitting pipeline (5-fold expanding window, {len(pipeline._stages)} stages)...")
     result = pipeline.fit_predict(X, y, ids=ids, timestamps=ts)
     print(f"got OOF dists for: {result.stages}")
 

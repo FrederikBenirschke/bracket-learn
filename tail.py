@@ -83,7 +83,7 @@ class TailRule:
         """Mass beyond outermost quantile is zero. Triggers a loud warning
         when paired with an unbounded adapter that declares
         needs_<side>_tail=True (e.g. VanillaCall on right tail)."""
-        ...
+        return TailRule(kind="clip", params={})
 
     @staticmethod
     def custom(

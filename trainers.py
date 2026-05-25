@@ -522,3 +522,452 @@ def emos_calibrated(*, edges: np.ndarray, name: str = "emos_calibrated") -> Any:
         calibrator=Isotonic(edges=np.asarray(edges, dtype=float)),
         name=name,
     )
+
+
+# ---------------------------------------------------------------------------
+# QuantileReg — per-τ LightGBM heads. Quantile-backed DistForecaster.
+# ---------------------------------------------------------------------------
+
+
+_DEFAULT_QUANTILES: tuple[float, ...] = (
+    0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95,
+)
+
+
+def _isotonic_repair_row(qvals: np.ndarray) -> np.ndarray:
+    """In-place fix for non-monotone quantile crossings (PAV across τ)."""
+    return np.maximum.accumulate(qvals)
+
+
+@dataclass
+class QuantileReg:
+    """Per-τ LightGBM quantile-regression heads.
+
+    Mirrors prediction_market_weather/ml/trainers/quantile_reg.py: fits one
+    LightGBM regressor per τ ∈ taus with objective='quantile', alpha=τ;
+    isotonic-repairs predicted quantiles per row.
+
+    Output: quantile-backed DistributionForecast with TailRule.clip on both
+    sides (extreme bracket mass stays at the outermost quantile; switch to
+    gpd/gaussian_match in v0.3).
+    """
+
+    taus: tuple[float, ...] = _DEFAULT_QUANTILES
+    n_estimators: int = 200
+    learning_rate: float = 0.05
+    num_leaves: int = 15
+    min_child_samples: int = 20
+    random_seed: int | None = None
+    name: str = "QuantileReg"
+    depends_on: tuple[str, ...] = ()
+    models_: dict[float, Any] = field(default_factory=dict, init=False)
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        sample_weight: np.ndarray | None = None,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> Self:
+        import lightgbm as lgb
+
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        self.models_ = {}
+        for tau in self.taus:
+            m = lgb.LGBMRegressor(
+                objective="quantile", alpha=tau,
+                n_estimators=self.n_estimators,
+                learning_rate=self.learning_rate,
+                num_leaves=self.num_leaves,
+                min_child_samples=self.min_child_samples,
+                verbose=-1,
+                random_state=self.random_seed,
+            )
+            m.fit(X, y)
+            self.models_[tau] = m
+        return self
+
+    def predict_dist(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+    ) -> DistributionForecast:
+        from bracketlearn.tail import TailPolicy, TailRule
+
+        if not self.models_:
+            raise RuntimeError("QuantileReg.predict_dist called before fit")
+        X = np.asarray(X, dtype=float)
+        qvals = np.column_stack([self.models_[t].predict(X) for t in self.taus])
+        # Repair crossings row-by-row.
+        for i in range(qvals.shape[0]):
+            qvals[i] = _isotonic_repair_row(qvals[i])
+        prov = ProvenanceMeta(
+            forecaster_name=self.name,
+            forecaster_version="0.1",
+            fit_window=(datetime(2024, 1, 1), datetime.now()),
+            fold_idx=None,
+            calibration_set_hash=None,
+            random_seed=self.random_seed,
+            code_sha="dev",
+            feature_matrix_hash="-",
+            created_at=datetime.now(),
+            sigma_source="native",
+        )
+        return DistributionForecast.from_quantiles(
+            taus=np.asarray(self.taus, dtype=float),
+            qvals=qvals,
+            tail_policy=TailPolicy.same(TailRule.clip()),
+            ids=np.asarray(ids), timestamps=np.asarray(timestamps),
+            provenance=prov,
+        )
+
+
+# ---------------------------------------------------------------------------
+# QuantileForest — single random forest, quantiles from leaf empirical CDFs.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class QuantileForest:
+    """Quantile Regression Forest (Meinshausen 2006).
+
+    Mirrors prediction_market_weather/ml/trainers/quantile_forest.py: fits
+    one quantile-forest model; predicts per-row quantiles at fixed taus.
+    """
+
+    taus: tuple[float, ...] = _DEFAULT_QUANTILES
+    n_estimators: int = 300
+    min_samples_leaf: int = 10
+    random_seed: int | None = 0
+    name: str = "QuantileForest"
+    depends_on: tuple[str, ...] = ()
+    model_: Any = field(default=None, init=False)
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        sample_weight: np.ndarray | None = None,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> Self:
+        from quantile_forest import RandomForestQuantileRegressor
+
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        self.model_ = RandomForestQuantileRegressor(
+            n_estimators=self.n_estimators,
+            min_samples_leaf=self.min_samples_leaf,
+            n_jobs=-1,
+            random_state=self.random_seed,
+        )
+        self.model_.fit(X, y)
+        return self
+
+    def predict_dist(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+    ) -> DistributionForecast:
+        from bracketlearn.tail import TailPolicy, TailRule
+
+        if self.model_ is None:
+            raise RuntimeError("QuantileForest.predict_dist called before fit")
+        X = np.asarray(X, dtype=float)
+        qpred = np.asarray(self.model_.predict(X, quantiles=list(self.taus)),
+                           dtype=float)
+        # quantile-forest can return shape (N, Q) or (N,) depending on Q==1; coerce.
+        if qpred.ndim == 1:
+            qpred = qpred.reshape(-1, 1)
+        for i in range(qpred.shape[0]):
+            qpred[i] = _isotonic_repair_row(qpred[i])
+        prov = ProvenanceMeta(
+            forecaster_name=self.name,
+            forecaster_version="0.1",
+            fit_window=(datetime(2024, 1, 1), datetime.now()),
+            fold_idx=None,
+            calibration_set_hash=None,
+            random_seed=self.random_seed,
+            code_sha="dev",
+            feature_matrix_hash="-",
+            created_at=datetime.now(),
+            sigma_source="native",
+        )
+        return DistributionForecast.from_quantiles(
+            taus=np.asarray(self.taus, dtype=float),
+            qvals=qpred,
+            tail_policy=TailPolicy.same(TailRule.clip()),
+            ids=np.asarray(ids), timestamps=np.asarray(timestamps),
+            provenance=prov,
+        )
+
+
+# ---------------------------------------------------------------------------
+# CumulativeBinary — one classifier on (X ⊕ cutpoint) → 1[y ≤ cutpoint].
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CumulativeBinary:
+    """Single LightGBM binary classifier on augmented features.
+
+    Mirrors prediction_market_weather/ml/trainers/cumulative_binary.py: fits
+    one classifier over (X, cutpoint) → 1[y ≤ cutpoint] using a fixed grid
+    of cutpoints (derived from the bracket ladder); at predict time, queries
+    P(y ≤ k) for each k in the grid and emits a quantile-backed dist where
+    taus = the cdf values at the configured cutpoints.
+
+    Constructed with a fixed `cutpoints` array — typically the interior
+    edges of the eval bracket ladder.
+    """
+
+    cutpoints: np.ndarray
+    n_estimators: int = 80
+    learning_rate: float = 0.05
+    num_leaves: int = 7
+    min_child_samples: int = 100
+    monotone: bool = True
+    name: str = "CumulativeBinary"
+    depends_on: tuple[str, ...] = ()
+    model_: Any = field(default=None, init=False)
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        sample_weight: np.ndarray | None = None,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> Self:
+        import lightgbm as lgb
+
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        cuts = np.asarray(self.cutpoints, dtype=float)
+        if cuts.size == 0:
+            raise ValueError("CumulativeBinary requires at least one cutpoint")
+        N = X.shape[0]
+        # Build augmented training set: each train row × each cutpoint.
+        X_aug = np.repeat(X, cuts.size, axis=0)
+        cut_col = np.tile(cuts, N).reshape(-1, 1)
+        X_aug = np.hstack([X_aug, cut_col])
+        y_aug = (np.repeat(y, cuts.size) <= np.tile(cuts, N)).astype(int)
+        n_feat = X_aug.shape[1]
+        monotone = [0] * (n_feat - 1) + [1] if self.monotone else None
+        self.model_ = lgb.LGBMClassifier(
+            n_estimators=self.n_estimators,
+            learning_rate=self.learning_rate,
+            num_leaves=self.num_leaves,
+            min_child_samples=self.min_child_samples,
+            objective="binary",
+            verbose=-1,
+            monotone_constraints=monotone,
+        )
+        self.model_.fit(X_aug, y_aug)
+        return self
+
+    def predict_dist(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+    ) -> DistributionForecast:
+        from bracketlearn.tail import TailPolicy, TailRule
+
+        if self.model_ is None:
+            raise RuntimeError("CumulativeBinary.predict_dist called before fit")
+        X = np.asarray(X, dtype=float)
+        cuts = np.asarray(self.cutpoints, dtype=float)
+        N = X.shape[0]
+        # Build query: each test row × each cutpoint.
+        X_aug = np.repeat(X, cuts.size, axis=0)
+        cut_col = np.tile(cuts, N).reshape(-1, 1)
+        X_aug = np.hstack([X_aug, cut_col])
+        proba = self.model_.predict_proba(X_aug)[:, 1].reshape(N, cuts.size)
+        # Isotonic repair per row (non-monotonicity is rare with monotone=True
+        # but the LGBM contraint isn't strict for binary).
+        for i in range(N):
+            proba[i] = np.maximum.accumulate(proba[i])
+        # taus = proba values at the cutpoints (per row), but quantile-backed
+        # storage assumes shared taus across rows. Reverse the roles: store
+        # cutpoints as qvals, and use proba as per-row taus — but that breaks
+        # the shared-tau invariant too. Instead, define a *fixed tau grid*
+        # using rank of cutpoints (e.g. (1..K)/(K+1)) and let qvals = cutpoints.
+        # Simpler: emit a bracket-backed dist on edges = [-inf-equivalent,
+        # cuts, +inf-equivalent], probs = diff(0, proba_at_cuts, 1).
+        #
+        # To match the existing trainer's semantics (bracket probs from
+        # cumulative classifier output), emit a bracket dist over
+        # [cuts[0]-pad, cuts[0], cuts[1], ..., cuts[-1], cuts[-1]+pad].
+        # The two outer bins absorb the tail mass under TailRule.clip.
+        pad = max(1.0, float(np.diff(cuts).mean()) if cuts.size > 1 else 1.0)
+        edges = np.concatenate([[cuts[0] - pad], cuts, [cuts[-1] + pad]])
+        # cdf at the inner edges = proba; at the outer edges = 0 and 1.
+        cdf_at_edges = np.column_stack([
+            np.zeros(N),
+            proba,
+            np.ones(N),
+        ])
+        probs = np.diff(cdf_at_edges, axis=1)
+        probs = np.clip(probs, 0.0, 1.0)
+        row_sum = probs.sum(axis=1, keepdims=True)
+        row_sum = np.where(row_sum > 0, row_sum, 1.0)
+        probs = probs / row_sum
+        prov = ProvenanceMeta(
+            forecaster_name=self.name,
+            forecaster_version="0.1",
+            fit_window=(datetime(2024, 1, 1), datetime.now()),
+            fold_idx=None,
+            calibration_set_hash=None,
+            random_seed=None,
+            code_sha="dev",
+            feature_matrix_hash="-",
+            created_at=datetime.now(),
+            sigma_source="native",
+        )
+        return DistributionForecast.from_brackets(
+            edges=edges, probs=probs,
+            ids=np.asarray(ids), timestamps=np.asarray(timestamps),
+            provenance=prov,
+        )
+
+
+# ---------------------------------------------------------------------------
+# TailSpecialist — EMOS body + LightGBM tail classifiers (DistForecaster).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TailSpecialist:
+    """Gaussian body (from upstream EMOS μ̂/σ̂) + LightGBM tail classifiers.
+
+    Mirrors prediction_market_weather/ml/trainers/tail_specialist.py. depends_on
+    a parametric-normal upstream (typically named 'emos') and a ladder
+    (edges) — fits two binary classifiers for the first/last bracket
+    indicators, then rescales the Gaussian body probs to (1 - p_lo - p_hi).
+    """
+
+    edges: np.ndarray
+    upstream: str = "emos"
+    n_estimators: int = 200
+    learning_rate: float = 0.05
+    num_leaves: int = 15
+    min_child_samples: int = 20
+    name: str = "TailSpecialist"
+    clf_lo_: Any = field(default=None, init=False)
+    clf_hi_: Any = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        self.depends_on = (self.upstream,)
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        sample_weight: np.ndarray | None = None,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> Self:
+        import lightgbm as lgb
+
+        if not deps_oof or self.upstream not in deps_oof:
+            raise ValueError(
+                f"TailSpecialist.fit needs deps_oof[{self.upstream!r}]"
+            )
+        edges = np.asarray(self.edges, dtype=float)
+        if edges.size < 4:
+            raise ValueError(
+                f"TailSpecialist needs ladder with ≥3 brackets (4 edges); got {edges.size}"
+            )
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        # First-bracket indicator: y < edges[1]. Last-bracket: y >= edges[-2].
+        y_lo = (y < edges[1]).astype(int)
+        y_hi = (y >= edges[-2]).astype(int)
+        if y_lo.sum() < 5 or y_hi.sum() < 5:
+            raise RuntimeError(
+                f"TailSpecialist: too few tail positives "
+                f"(lo={int(y_lo.sum())}, hi={int(y_hi.sum())})"
+            )
+        common = dict(
+            n_estimators=self.n_estimators,
+            learning_rate=self.learning_rate,
+            num_leaves=self.num_leaves,
+            min_child_samples=self.min_child_samples,
+            objective="binary",
+            class_weight="balanced",
+            verbose=-1,
+        )
+        self.clf_lo_ = lgb.LGBMClassifier(**common)
+        self.clf_lo_.fit(X, y_lo)
+        self.clf_hi_ = lgb.LGBMClassifier(**common)
+        self.clf_hi_.fit(X, y_hi)
+        return self
+
+    def predict_dist(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> DistributionForecast:
+        if self.clf_lo_ is None:
+            raise RuntimeError("TailSpecialist.predict_dist called before fit")
+        if not deps_oof or self.upstream not in deps_oof:
+            raise ValueError(
+                f"TailSpecialist.predict_dist needs deps_oof[{self.upstream!r}]"
+            )
+        upstream = deps_oof[self.upstream]
+        # Discretise EMOS dist onto ladder.
+        edges = np.asarray(self.edges, dtype=float)
+        cdf_hi = upstream.cdf(edges[1:])
+        cdf_lo = upstream.cdf(edges[:-1])
+        body_probs = np.clip(cdf_hi - cdf_lo, 0.0, 1.0)
+        N, B = body_probs.shape
+        # Tail probs from classifiers.
+        X = np.asarray(X, dtype=float)
+        p_lo = np.clip(self.clf_lo_.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6)
+        p_hi = np.clip(self.clf_hi_.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6)
+        # Rescale inner bins (1..B-1, i.e. all but first and last) to
+        # (1 - p_lo - p_hi).
+        inner = body_probs[:, 1:-1]
+        inner_sum = inner.sum(axis=1, keepdims=True)
+        body_total = np.maximum(0.0, 1.0 - p_lo - p_hi)[:, None]
+        # Avoid divide-by-zero: if inner_sum=0, redistribute body_total uniformly.
+        safe = inner_sum > 0
+        inner_scaled = np.where(
+            safe, inner * (body_total / np.where(safe, inner_sum, 1.0)),
+            body_total / max(inner.shape[1], 1),
+        )
+        probs = np.concatenate(
+            [p_lo[:, None], inner_scaled, p_hi[:, None]], axis=1,
+        )
+        # Final renorm as a safety net.
+        row_sum = probs.sum(axis=1, keepdims=True)
+        row_sum = np.where(row_sum > 0, row_sum, 1.0)
+        probs = probs / row_sum
+        prov = ProvenanceMeta(
+            forecaster_name=self.name,
+            forecaster_version="0.1",
+            fit_window=(datetime(2024, 1, 1), datetime.now()),
+            fold_idx=None,
+            calibration_set_hash=None,
+            random_seed=None,
+            code_sha="dev",
+            feature_matrix_hash="-",
+            created_at=datetime.now(),
+            sigma_source="native",
+        )
+        return DistributionForecast.from_brackets(
+            edges=edges, probs=probs,
+            ids=np.asarray(ids), timestamps=np.asarray(timestamps),
+            provenance=prov,
+        )

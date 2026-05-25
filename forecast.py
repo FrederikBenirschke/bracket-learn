@@ -215,8 +215,38 @@ class DistributionForecast:
         provenance: ProvenanceMeta,
     ) -> "DistributionForecast":
         """Quantile-backed. tail_policy is required (Rule #0.5: no silent
-        linear extrapolation)."""
-        ...
+        linear extrapolation).
+
+        taus: (Q,) sorted ascending in (0, 1).
+        qvals: (N, Q) per-row quantile values, monotone non-decreasing along Q.
+        """
+        taus = np.asarray(taus, dtype=float)
+        qvals = np.asarray(qvals, dtype=float)
+        if taus.ndim != 1 or taus.shape[0] < 2:
+            raise ValueError(f"taus must be 1-D with ≥2 entries; got {taus.shape}")
+        if qvals.ndim != 2 or qvals.shape[1] != taus.shape[0]:
+            raise ValueError(
+                f"qvals shape {qvals.shape} incompatible with taus {taus.shape}"
+            )
+        if qvals.shape[0] != ids.shape[0]:
+            raise ValueError(f"N mismatch: qvals N={qvals.shape[0]} ids N={ids.shape[0]}")
+        if np.any(np.diff(taus) <= 0):
+            raise ValueError("taus must be strictly increasing")
+        if np.any((taus <= 0) | (taus >= 1)):
+            raise ValueError("taus must lie strictly in (0, 1)")
+        # qvals monotonicity: caller's responsibility (isotonic_repair upstream).
+        # We don't enforce here because some trainers may emit small numerical
+        # crossings that BracketLadder rounding handles fine.
+        return cls(
+            backing=Backing.QUANTILE,
+            taus=taus,
+            qvals=qvals,
+            ids=np.asarray(ids),
+            timestamps=np.asarray(timestamps),
+            provenance=provenance,
+            tail_policy=tail_policy,
+            tail_support="finite-quantile",
+        )
 
     @classmethod
     def from_empirical(
@@ -303,6 +333,29 @@ class DistributionForecast:
                     width = edges[k + 1] - edges[k]
                     frac = (xv - edges[k]) / width if width > 0 else 0.0
                     out[:, j] = cum[:, k] + frac * probs[:, k]
+        elif self.backing == Backing.QUANTILE:
+            # Piecewise-linear CDF through (qvals, taus). Outside qvals[0]/qvals[-1]
+            # apply tail policy. Tier 2: only "clip" implemented (0 / 1 outside).
+            taus = self.taus
+            qvals = self.qvals                 # (N, Q)
+            N, Q = qvals.shape
+            out = np.zeros((N, x_arr.shape[0]))
+            # Per-row interp: for each row i, x → F(x) by interpolating taus on qvals[i].
+            # Use np.interp row-by-row (no good vectorized version for non-shared knots).
+            left_rule, right_rule = _resolve_tail_kinds(self.tail_policy)
+            for i in range(N):
+                xq = qvals[i]
+                # ensure monotone increasing (defensive — caller should ensure)
+                if np.any(np.diff(xq) < 0):
+                    xq = np.maximum.accumulate(xq)
+                interp = np.interp(x_arr, xq, taus,
+                                   left=0.0 if left_rule == "clip" else np.nan,
+                                   right=1.0 if right_rule == "clip" else np.nan)
+                if np.any(np.isnan(interp)):
+                    raise NotImplementedError(
+                        f"tail policy {left_rule!r}/{right_rule!r} not implemented yet"
+                    )
+                out[i] = interp
         else:
             raise NotImplementedError(
                 f"cdf not implemented for backing={self.backing} family={self.family}"
@@ -375,6 +428,17 @@ class DistributionForecast:
         if self.backing == Backing.BRACKET:
             mids = 0.5 * (self.edges[1:] + self.edges[:-1])    # (B,)
             return (self.probs * mids[None, :]).sum(axis=1)
+        if self.backing == Backing.QUANTILE:
+            # Trapezoidal: E[X] ≈ Σ ((τ_{k+1}-τ_{k-1})/2) · q_k, with end taus
+            # set so the first/last contribute 0 mass beyond the grid (clip).
+            taus = self.taus
+            qvals = self.qvals
+            # central differences with 0 tail mass
+            d = np.empty_like(taus)
+            d[0] = (taus[1] - 0.0) * 0.5      # approximate left mass at τ_0 from clip(0)
+            d[-1] = (1.0 - taus[-2]) * 0.5    # right mass beyond τ_-1 from clip(1)
+            d[1:-1] = (taus[2:] - taus[:-2]) * 0.5
+            return (qvals * d[None, :]).sum(axis=1)
         raise NotImplementedError(f"mean not implemented for backing={self.backing}")
 
     def variance(self) -> np.ndarray:
@@ -423,6 +487,17 @@ class DistributionForecast:
     def is_lossless_to(self, target_backing: Backing) -> bool:
         """True iff conversion to target_backing preserves all information."""
         ...
+
+
+def _resolve_tail_kinds(tail_policy) -> tuple[str, str]:
+    """Return (left_kind, right_kind) for the tail policy.
+
+    None policy is allowed for parametric backings only — quantile callers
+    must pass one. Tier-2 only implements 'clip'; other kinds raise.
+    """
+    if tail_policy is None:
+        raise NotImplementedError("quantile-backed cdf requires a TailPolicy")
+    return tail_policy.left.kind, tail_policy.right.kind
 
 
 # ---------------------------------------------------------------------------

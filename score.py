@@ -85,6 +85,43 @@ def pit(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
     return np.diag(dist.cdf(y))
 
 
+def crps_quantile(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
+    """Pinball-loss approximation of CRPS for quantile-backed dists.
+
+    CRPS = 2 · ∫_0^1 pinball_τ(y, q_τ) dτ. We use the trapezoidal rule on
+    the (taus, qvals) grid. Exact under linear-interpolated CDF.
+    """
+    if dist.backing != Backing.QUANTILE:
+        raise NotImplementedError(f"crps_quantile expects quantile backing; got {dist.backing}")
+    y = np.asarray(y, dtype=float)
+    taus = dist.taus
+    qvals = dist.qvals                       # (N, Q)
+    # Pinball loss per (row, τ).
+    diff = y[:, None] - qvals
+    pinball = np.where(diff >= 0, taus[None, :] * diff, (taus[None, :] - 1.0) * diff)
+    # Trapezoidal integral over τ.
+    dt = np.diff(taus)
+    avg = 0.5 * (pinball[:, :-1] + pinball[:, 1:])
+    return 2.0 * (avg * dt[None, :]).sum(axis=1)
+
+
+def log_score_bracket(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
+    """Negative log-density per row for bracket-backed dist (uniform-in-bin)."""
+    if dist.backing != Backing.BRACKET:
+        raise NotImplementedError(f"log_score_bracket expects bracket backing; got {dist.backing}")
+    y = np.asarray(y, dtype=float)
+    edges = dist.edges
+    probs = dist.probs
+    widths = np.diff(edges)
+    density = probs / widths[None, :]
+    B = probs.shape[1]
+    bin_idx = np.searchsorted(edges, y, side="right") - 1
+    bin_idx = np.clip(bin_idx, 0, B - 1)
+    px = density[np.arange(probs.shape[0]), bin_idx]
+    px = np.maximum(px, 1e-300)
+    return -np.log(px)
+
+
 def crps_bracket(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
     """CRPS for a bracket-backed distribution.
 

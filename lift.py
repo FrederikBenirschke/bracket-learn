@@ -272,25 +272,72 @@ def _bracket_probs_from_dist(
 class ConformalCalibrate:
     """Conformalised Quantile Regression (Romano et al. 2019).
 
-    Lives in lift.py for proximity to Conformal even though it's a
-    Calibrator (Dist → Dist), not a Lifter.
+    Calibrator (Dist → Dist) for quantile-backed forecasts. For each τ,
+    learns an offset δ_τ on the held-out calibration set such that
+    q̂_τ - δ_τ covers (1-τ) of the calibration rows from below.
 
-    Measures per-τ conformity score on a held-out calibration set; shifts
-    each τ's quantile by the calibrated offset to restore nominal coverage.
+    Under exchangeability, the (1-τ)-coverage guarantee carries to test.
+    Operates only on quantile backings (rejects others loudly per Rule #0.5).
     """
 
-    target_coverage: float | None = None
     mode: Literal["per-tau", "symmetric"] = "per-tau"
+    offsets_: np.ndarray | None = field(default=None, init=False)
+    fitted_: bool = field(default=False, init=False)
 
     def fit(
         self,
         dist_oof: "DistributionForecast",
         y: np.ndarray,
     ) -> Self:
-        ...
+        from bracketlearn.forecast import Backing
+
+        if dist_oof.backing != Backing.QUANTILE:
+            raise NotImplementedError(
+                f"ConformalCalibrate expects quantile backing; got {dist_oof.backing}"
+            )
+        y = np.asarray(y, dtype=float)
+        taus = dist_oof.taus
+        qvals = dist_oof.qvals      # (N, Q)
+        if self.mode != "per-tau":
+            raise NotImplementedError(f"mode={self.mode!r} not in tier-2")
+        # δ_τ = quantile of (q̂_τ - y) at level (1-τ).
+        residuals = qvals - y[:, None]      # (N, Q)
+        offsets = np.zeros(taus.shape[0])
+        for j, tau in enumerate(taus):
+            offsets[j] = float(np.quantile(residuals[:, j], 1.0 - tau))
+        self.offsets_ = offsets
+        self.fitted_ = True
+        return self
 
     def transform(
         self,
         dist: "DistributionForecast",
     ) -> "DistributionForecast":
-        ...
+        from bracketlearn.forecast import Backing, DistributionForecast, ProvenanceMeta
+
+        if not self.fitted_:
+            raise RuntimeError("ConformalCalibrate.transform called before fit")
+        if dist.backing != Backing.QUANTILE:
+            raise NotImplementedError(
+                f"ConformalCalibrate expects quantile backing; got {dist.backing}"
+            )
+        if not np.array_equal(dist.taus, np.arange(self.offsets_.shape[0])) and \
+           dist.taus.shape[0] != self.offsets_.shape[0]:
+            raise ValueError(
+                f"ConformalCalibrate: shape mismatch — calibrated for Q={self.offsets_.shape[0]} "
+                f"taus, dist has Q={dist.taus.shape[0]}"
+            )
+        # Apply δ_τ shift; isotonic-repair afterwards to keep monotonicity.
+        qvals = dist.qvals - self.offsets_[None, :]
+        qvals = np.maximum.accumulate(qvals, axis=1)
+        new_prov = ProvenanceMeta(
+            **{**dist.provenance.__dict__,
+               "conversion_chain": dist.provenance.conversion_chain + ("ConformalCalibrate",),
+               "created_at": datetime.now()},
+        )
+        return DistributionForecast.from_quantiles(
+            taus=dist.taus, qvals=qvals,
+            tail_policy=dist.tail_policy,
+            ids=dist.ids, timestamps=dist.timestamps,
+            provenance=new_prov,
+        )
