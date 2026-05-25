@@ -17,9 +17,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-import numpy as np
-
-
 # ---------------------------------------------------------------------------
 # TailRule — one side of a TailPolicy.
 # ---------------------------------------------------------------------------
@@ -35,7 +32,7 @@ class TailRule:
     # ----------------------------------------------------------- factories
 
     @staticmethod
-    def clip() -> "TailRule":
+    def clip() -> TailRule:
         """Mass beyond outermost quantile is zero. Triggers a loud warning
         when paired with an unbounded adapter that declares
         needs_<side>_tail=True (e.g. VanillaCall on right tail)."""
@@ -53,11 +50,11 @@ class TailPolicy:
     right: TailRule
 
     @classmethod
-    def same(cls, rule: TailRule) -> "TailPolicy":
+    def same(cls, rule: TailRule) -> TailPolicy:
         return cls(left=rule, right=rule)
 
     @classmethod
-    def asym(cls, *, left: TailRule, right: TailRule) -> "TailPolicy":
+    def asym(cls, *, left: TailRule, right: TailRule) -> TailPolicy:
         return cls(left=left, right=right)
 
 

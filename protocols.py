@@ -10,7 +10,7 @@ wrapper, not a protocol.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 
 import numpy as np
 
@@ -63,7 +63,7 @@ class PointForecaster(Forecaster, Protocol):
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
-    ) -> "PointForecast":
+    ) -> PointForecast:
         ...
 
 
@@ -91,7 +91,7 @@ class DistForecaster(Forecaster, Protocol):
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
-    ) -> "DistributionForecast":
+    ) -> DistributionForecast:
         ...
 
 
@@ -155,14 +155,14 @@ class Lifter(Protocol):
 
     def fit(
         self,
-        point_oof: "PointForecast",
+        point_oof: PointForecast,
         y: np.ndarray,
         *,
         X: Any | None = None,
     ) -> Self:
         ...
 
-    def lift(self, point: "PointForecast") -> "DistributionForecast":
+    def lift(self, point: PointForecast) -> DistributionForecast:
         ...
 
 
@@ -183,13 +183,13 @@ class Calibrator(Protocol):
 
     def fit(
         self,
-        dist_oof: "DistributionForecast",
+        dist_oof: DistributionForecast,
         y: np.ndarray,
     ) -> Self:
         ...
 
     def transform(
         self,
-        dist: "DistributionForecast",
-    ) -> "DistributionForecast":
+        dist: DistributionForecast,
+    ) -> DistributionForecast:
         ...

@@ -32,23 +32,20 @@ v0.1 vertical slice:
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 
 from bracketlearn.base import clone
 from bracketlearn.forecast import (
     DistributionForecast,
-    PointForecast,
     ProvenanceMeta,
 )
 from bracketlearn.protocols import (
     Calibrator,
-    DistForecaster,
-    Lifter,
-    PointForecaster,
 )
 
 
@@ -402,7 +399,7 @@ class ForecastPipeline:
         ``depends_on`` receive the upstream stage's in-sample dist on the
         full training data.
         """
-        from bracketlearn.composite import CalibratedForecaster, LiftedForecaster
+        from bracketlearn.composite import CalibratedForecaster
 
         self._fitted_stages = {}
         self._fitted_calibrators = {}
@@ -544,7 +541,7 @@ class ForecastPipeline:
         slides forward by chunk_size each fold. Older rows roll out.
         """
         w = int(self.rolling_window)
-        chunk_size = max(2, (N - w) // self.n_folds) if N > w else 0
+        chunk_size = max(2, (N - w) // self.n_folds) if w < N else 0
         if chunk_size < 2:
             raise ValueError(
                 f"N={N} too small for rolling_window={w} + n_folds={self.n_folds}"
@@ -573,7 +570,7 @@ class ForecastPipeline:
         """
         if self.n_folds < 2:
             raise ValueError(f"kfold needs n_folds >= 2; got {self.n_folds}")
-        if N < self.n_folds:
+        if self.n_folds > N:
             raise ValueError(f"N={N} < n_folds={self.n_folds}")
         idx = np.arange(N)
         if self.shuffle:
@@ -605,11 +602,7 @@ class ForecastPipeline:
         ``f`` should already be a clone — the pipeline never mutates the
         user-supplied forecaster instance.
         """
-        from bracketlearn.composite import CalibratedForecaster, LiftedForecaster
-        X_tr, y_tr = X[train_idx], y[train_idx]
-        X_te = X[test_idx]
-        ids_tr, ts_tr = ids[train_idx], ts[train_idx]
-        ids_te, ts_te = ids[test_idx], ts[test_idx]
+        from bracketlearn.composite import CalibratedForecaster
 
         # Unwrap CalibratedForecaster: fit calibrator on a tail of train_idx.
         calibrator: Calibrator | None = None

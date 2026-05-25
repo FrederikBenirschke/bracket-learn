@@ -156,7 +156,6 @@ sample-weight threading, multi-target wrapper, grid-search wrapper, 14 trainers,
 `bracketlearn/examples/` for runnable demos.
 
 Not yet:
-- Persistence / pickling
 - Empirical + student_t backings
 - `gpd` / `gaussian_match` tail rules (only `clip`)
 

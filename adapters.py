@@ -10,13 +10,13 @@ relevant side.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
-
-from datetime import datetime
 
 from bracketlearn.forecast import (
     ContractForecast,
@@ -54,8 +54,8 @@ class ContractAdapter(Protocol):
 
     def price(
         self,
-        dist: "DistributionForecast",
-    ) -> "ContractForecast":
+        dist: DistributionForecast,
+    ) -> ContractForecast:
         ...
 
 
@@ -73,7 +73,7 @@ class BinaryAbove:
     needs_left_tail: bool = False
     needs_right_tail: bool = False
 
-    def price(self, dist: "DistributionForecast") -> "ContractForecast":
+    def price(self, dist: DistributionForecast) -> ContractForecast:
         ...
 
 
@@ -84,7 +84,7 @@ class BinaryBelow:
     needs_left_tail: bool = False
     needs_right_tail: bool = False
 
-    def price(self, dist: "DistributionForecast") -> "ContractForecast":
+    def price(self, dist: DistributionForecast) -> ContractForecast:
         ...
 
 
@@ -97,7 +97,7 @@ class Bracket:
     needs_left_tail: bool = False
     needs_right_tail: bool = False
 
-    def price(self, dist: "DistributionForecast") -> "ContractForecast":
+    def price(self, dist: DistributionForecast) -> ContractForecast:
         ...
 
 
@@ -156,7 +156,7 @@ class ThresholdLadder:
     needs_left_tail: bool = False
     needs_right_tail: bool = False
 
-    def price(self, dist: "DistributionForecast") -> "ContractForecast":
+    def price(self, dist: DistributionForecast) -> ContractForecast:
         ...
 
 
@@ -169,7 +169,7 @@ class Twin:
     needs_left_tail: bool = False
     needs_right_tail: bool = False
 
-    def price(self, dist: "DistributionForecast") -> "ContractForecast":
+    def price(self, dist: DistributionForecast) -> ContractForecast:
         ...
 
 
@@ -195,7 +195,7 @@ class VanillaCall:
     needs_left_tail: bool = False
     needs_right_tail: bool = True
 
-    def price(self, dist: "DistributionForecast") -> "ContractForecast":
+    def price(self, dist: DistributionForecast) -> ContractForecast:
         ...
 
 
@@ -208,7 +208,7 @@ class VanillaPut:
     needs_left_tail: bool = True
     needs_right_tail: bool = False
 
-    def price(self, dist: "DistributionForecast") -> "ContractForecast":
+    def price(self, dist: DistributionForecast) -> ContractForecast:
         ...
 
 
@@ -238,7 +238,7 @@ class LinearCombo:
     def needs_right_tail(self) -> bool:
         return any(p.needs_right_tail for _, p in self.parts)
 
-    def price(self, dist: "DistributionForecast") -> "ContractForecast":
+    def price(self, dist: DistributionForecast) -> ContractForecast:
         ...
 
 
@@ -297,7 +297,7 @@ class PerRow:
         self.needs_left_tail = probe.needs_left_tail
         self.needs_right_tail = probe.needs_right_tail
 
-    def price(self, dist: "DistributionForecast") -> "ContractForecast":
+    def price(self, dist: DistributionForecast) -> ContractForecast:
         ...
 
 
@@ -330,7 +330,7 @@ class Custom:
     def needs_right_tail(self) -> bool:
         return self.support_hi is None
 
-    def price(self, dist: "DistributionForecast") -> "ContractForecast":
+    def price(self, dist: DistributionForecast) -> ContractForecast:
         ...
 
 
@@ -352,9 +352,9 @@ class VenueSpec:
 
 
 def to_quote(
-    contracts: "ContractForecast",
+    contracts: ContractForecast,
     venue_spec: VenueSpec,
-) -> "ContractForecast":
+) -> ContractForecast:
     """Apply VenueSpec multiplier; return new ContractForecast with
     fair_price in venue units."""
     ...

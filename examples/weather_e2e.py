@@ -44,11 +44,9 @@ warnings.filterwarnings(
 )
 
 from bracketlearn.adapters import BracketLadder
-from bracketlearn.composite import CalibratedForecaster
-from bracketlearn.lift import ConformalCalibrate
+from bracketlearn.composite import CalibratedForecaster, LiftedForecaster
+from bracketlearn.lift import ConformalCalibrate, GlobalResidual
 from bracketlearn.pipeline import ForecastPipeline
-from bracketlearn.composite import LiftedForecaster
-from bracketlearn.lift import GlobalResidual
 from bracketlearn.trainers import (
     EMOS,
     CumulativeBinary,

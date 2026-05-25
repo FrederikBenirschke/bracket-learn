@@ -93,7 +93,11 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 ignore = [
     "E501",   # handled by formatter
     "B008",   # function calls in defaults (we use dataclass field(default_factory=...))
+    "SIM108", # ternary not always more readable than if/else
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"examples/*" = ["E402"]   # sys.path tweak before imports is intentional
 
 [tool.mypy]
 python_version = "3.10"

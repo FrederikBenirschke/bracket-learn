@@ -56,7 +56,7 @@ class LiftedForecaster(BaseEstimator):
         X: Any,
         y: np.ndarray,
         *,
-        base_oof: "PointForecast",
+        base_oof: PointForecast,
         deps_oof: dict[str, Any] | None = None,
         sample_weight: np.ndarray | None = None,
     ) -> Self:
@@ -77,7 +77,7 @@ class LiftedForecaster(BaseEstimator):
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
-    ) -> "DistributionForecast":
+    ) -> DistributionForecast:
         point = self.base.predict(X, ids=ids, timestamps=timestamps)
         return self.lifter.lift(point)
 
@@ -111,7 +111,7 @@ class CalibratedForecaster(BaseEstimator):
         self.forecaster.fit(X, y, **kwargs)
         return self
 
-    def predict_dist(self, X: Any, **kwargs: Any) -> "DistributionForecast":
+    def predict_dist(self, X: Any, **kwargs: Any) -> DistributionForecast:
         dist = self.forecaster.predict_dist(X, **kwargs)
         if getattr(self.calibrator, "fitted_", True):
             return self.calibrator.transform(dist)

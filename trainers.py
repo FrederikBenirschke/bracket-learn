@@ -808,7 +808,6 @@ class CumulativeBinary(BaseEstimator):
         ids: np.ndarray,
         timestamps: np.ndarray,
     ) -> DistributionForecast:
-        from bracketlearn.tail import TailPolicy, TailRule
 
         if self.model_ is None:
             raise RuntimeError("CumulativeBinary.predict_dist called before fit")
@@ -1071,7 +1070,6 @@ class OnlineAggregator(BaseEstimator):
             last_w_per_expert[awake_idx] = w_awake
             seen_per_expert[awake_idx] += 1
             f_awake = f_t[awake_idx]
-            pred = float(np.dot(w_awake, f_awake))
             ell_awake = (f_awake - y_t) ** 2
             hedge_loss_t = float(np.dot(w_awake, ell_awake))
             mix_loss_t = self._mix_loss(eta, w_awake, ell_awake)

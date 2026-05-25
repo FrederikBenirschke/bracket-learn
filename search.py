@@ -32,7 +32,8 @@ Usage::
 from __future__ import annotations
 
 import itertools
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 
@@ -89,7 +90,7 @@ class GridSearch:
     def _iter_grid(self) -> list[dict[str, Any]]:
         keys = list(self.param_grid.keys())
         values = [self.param_grid[k] for k in keys]
-        return [dict(zip(keys, combo)) for combo in itertools.product(*values)]
+        return [dict(zip(keys, combo, strict=True)) for combo in itertools.product(*values)]
 
     def fit(
         self,
@@ -99,7 +100,7 @@ class GridSearch:
         ids: np.ndarray,
         timestamps: np.ndarray,
         sample_weight: np.ndarray | None = None,
-    ) -> "GridSearch":
+    ) -> GridSearch:
         self.results_ = []
         best_score = -np.inf if self.greater_is_better else np.inf
         best_params: dict[str, Any] | None = None

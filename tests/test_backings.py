@@ -18,7 +18,6 @@ import pytest
 from bracketlearn.forecast import Backing, DistributionForecast, ParametricFamily
 from bracketlearn.tail import TailPolicy, TailRule
 
-
 # ---------------------------------------------------------------------------
 # Normal backing
 # ---------------------------------------------------------------------------

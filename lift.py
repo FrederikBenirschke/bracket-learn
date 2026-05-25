@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any, Literal, Self
 import numpy as np
 
 from bracketlearn.base import BaseEstimator
-from bracketlearn.protocols import Calibrator, Lifter
 
 if TYPE_CHECKING:
     from bracketlearn.forecast import DistributionForecast, PointForecast
@@ -40,7 +39,7 @@ class GlobalResidual(BaseEstimator):
 
     def fit(
         self,
-        point_oof: "PointForecast",
+        point_oof: PointForecast,
         y: np.ndarray,
         *,
         X: Any | None = None,
@@ -56,7 +55,7 @@ class GlobalResidual(BaseEstimator):
             raise ValueError("fitted σ is non-positive — residuals all equal?")
         return self
 
-    def lift(self, point: "PointForecast") -> "DistributionForecast":
+    def lift(self, point: PointForecast) -> DistributionForecast:
         if self.sigma_ is None:
             raise RuntimeError("GlobalResidual.lift called before fit")
         from bracketlearn.forecast import DistributionForecast, ProvenanceMeta
@@ -113,12 +112,11 @@ class Isotonic(BaseEstimator):
 
     def fit(
         self,
-        dist_oof: "DistributionForecast",
+        dist_oof: DistributionForecast,
         y: np.ndarray,
     ) -> Self:
         from sklearn.isotonic import IsotonicRegression
 
-        from bracketlearn.forecast import Backing, DistributionForecast
 
         y = np.asarray(y, dtype=float)
         edges = np.asarray(self.edges, dtype=float)
@@ -141,8 +139,8 @@ class Isotonic(BaseEstimator):
 
     def transform(
         self,
-        dist: "DistributionForecast",
-    ) -> "DistributionForecast":
+        dist: DistributionForecast,
+    ) -> DistributionForecast:
         if not self.fitted_:
             raise RuntimeError("Isotonic.transform called before fit")
         from bracketlearn.forecast import DistributionForecast, ProvenanceMeta
@@ -166,7 +164,7 @@ class Isotonic(BaseEstimator):
 
 
 def _bracket_probs_from_dist(
-    dist: "DistributionForecast", edges: np.ndarray,
+    dist: DistributionForecast, edges: np.ndarray,
 ) -> np.ndarray:
     """Per-row bracket probabilities from any dist that supports cdf()."""
     cdf_hi = dist.cdf(edges[1:])
@@ -198,7 +196,7 @@ class ConformalCalibrate(BaseEstimator):
 
     def fit(
         self,
-        dist_oof: "DistributionForecast",
+        dist_oof: DistributionForecast,
         y: np.ndarray,
     ) -> Self:
         from bracketlearn.forecast import Backing
@@ -223,8 +221,8 @@ class ConformalCalibrate(BaseEstimator):
 
     def transform(
         self,
-        dist: "DistributionForecast",
-    ) -> "DistributionForecast":
+        dist: DistributionForecast,
+    ) -> DistributionForecast:
         from bracketlearn.forecast import Backing, DistributionForecast, ProvenanceMeta
 
         if not self.fitted_:

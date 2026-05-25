@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 from sklearn.linear_model import LinearRegression
 
-from bracketlearn.base import BaseEstimator, clone
+from bracketlearn.base import clone
 from bracketlearn.composite import LiftedForecaster
 from bracketlearn.lift import GlobalResidual
 from bracketlearn.pipeline import ForecastPipeline

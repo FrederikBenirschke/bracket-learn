@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 from scipy import stats as _stats
@@ -115,7 +115,7 @@ class DistributionForecast:
 
     # Tail policy — required for finite-support backings; None for full-support
     # parametric (normal, student_t with infinite support).
-    tail_policy: "TailPolicy | None" = None
+    tail_policy: TailPolicy | None = None
     tail_support: Literal["full", "bounded", "finite-quantile"] = "full"
 
     # ------------------------------------------------------------------ ctor
@@ -129,7 +129,7 @@ class DistributionForecast:
         ids: np.ndarray,
         timestamps: np.ndarray,
         provenance: ProvenanceMeta,
-    ) -> "DistributionForecast":
+    ) -> DistributionForecast:
         """Native parametric normal. No tail policy needed."""
         mu = np.asarray(mu, dtype=float)
         sigma = np.asarray(sigma, dtype=float)
@@ -159,7 +159,7 @@ class DistributionForecast:
         ids: np.ndarray,
         timestamps: np.ndarray,
         provenance: ProvenanceMeta,
-    ) -> "DistributionForecast":
+    ) -> DistributionForecast:
         ...
 
     @classmethod
@@ -172,7 +172,7 @@ class DistributionForecast:
         ids: np.ndarray,
         timestamps: np.ndarray,
         provenance: ProvenanceMeta,
-    ) -> "DistributionForecast":
+    ) -> DistributionForecast:
         """Per-row mixture of K Gaussians. Components with zero weight are
         permitted (e.g. missing vendor in mixture_normals); the row's
         weights must still sum to 1 (renormalise upstream)."""
@@ -209,11 +209,11 @@ class DistributionForecast:
         taus: np.ndarray,
         qvals: np.ndarray,
         *,
-        tail_policy: "TailPolicy",      # REQUIRED — no default
+        tail_policy: TailPolicy,      # REQUIRED — no default
         ids: np.ndarray,
         timestamps: np.ndarray,
         provenance: ProvenanceMeta,
-    ) -> "DistributionForecast":
+    ) -> DistributionForecast:
         """Quantile-backed. tail_policy is required (Rule #0.5: no silent
         linear extrapolation).
 
@@ -264,11 +264,11 @@ class DistributionForecast:
         cls,
         members: np.ndarray,            # (N, K)
         *,
-        tail_policy: "TailPolicy",      # REQUIRED
+        tail_policy: TailPolicy,      # REQUIRED
         ids: np.ndarray,
         timestamps: np.ndarray,
         provenance: ProvenanceMeta,
-    ) -> "DistributionForecast":
+    ) -> DistributionForecast:
         ...
 
     @classmethod
@@ -280,7 +280,7 @@ class DistributionForecast:
         ids: np.ndarray,
         timestamps: np.ndarray,
         provenance: ProvenanceMeta,
-    ) -> "DistributionForecast":
+    ) -> DistributionForecast:
         """Bracket-backed. Bounded by construction; no tail policy."""
         edges = np.asarray(edges, dtype=float)
         probs = np.asarray(probs, dtype=float)
@@ -487,15 +487,15 @@ class DistributionForecast:
 
     # ----------------------------------------------------------- conversions
 
-    def to_quantiles(self, taus: np.ndarray) -> "DistributionForecast":
+    def to_quantiles(self, taus: np.ndarray) -> DistributionForecast:
         """Returns new dist with quantile backing. Records lossy conversion
         into provenance.conversion_chain."""
         ...
 
-    def to_brackets(self, edges: np.ndarray) -> "DistributionForecast":
+    def to_brackets(self, edges: np.ndarray) -> DistributionForecast:
         ...
 
-    def to_normal(self) -> "DistributionForecast":
+    def to_normal(self) -> DistributionForecast:
         """Moment match. Lossy for fat-tailed or skewed inputs."""
         ...
 
@@ -552,7 +552,7 @@ class ContractForecast:
         method: Literal["platt", "isotonic", "beta"],
         *,
         realized: np.ndarray,
-    ) -> "ContractForecast":
+    ) -> ContractForecast:
         """Contract-space recalibration (§8.4). Distinct from
         DistributionForecast-level calibration."""
         ...

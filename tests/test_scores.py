@@ -14,7 +14,6 @@ silent bug.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from bracketlearn.forecast import DistributionForecast
 from bracketlearn.score import (
@@ -23,13 +22,11 @@ from bracketlearn.score import (
     crps_gaussian,
     crps_quantile,
     log_loss_bracket,
-    log_score_bracket,
     log_score_gaussian,
     log_score_mixture_normal,
     pit,
 )
 from bracketlearn.tail import TailPolicy, TailRule
-
 
 # ---------------------------------------------------------------------------
 # Gaussian CRPS — closed-form check.

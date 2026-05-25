@@ -20,7 +20,6 @@ from bracketlearn.forecast import (
     ParametricFamily,
 )
 
-
 # ---------------------------------------------------------------------------
 # distribution-level
 # ---------------------------------------------------------------------------
@@ -171,7 +170,6 @@ def crps_bracket(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
             mask = case_inside
             t = y[mask] - lo                 # length on left side
             wL = t
-            wR = width - t
             aL = a[mask]
             bL = b[mask]
             # ∫_0^{wL} (aL + bL u)² du

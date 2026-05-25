@@ -66,7 +66,7 @@ class TestCVVariants:
         f1 = p1._make_folds(200)
         f2 = p2._make_folds(200)
         # At least one fold's test set should differ.
-        assert any(not np.array_equal(a[1], b[1]) for a, b in zip(f1, f2))
+        assert any(not np.array_equal(a[1], b[1]) for a, b in zip(f1, f2, strict=True))
 
     def test_kfold_too_few_rows_raises(self):
         p = ForecastPipeline(steps=[("emos", EMOS())], cv="kfold", n_folds=10)
@@ -129,7 +129,8 @@ class TestSampleWeights:
         X[0] = 10.0
         y[0] = -10.0
         w_uniform = np.ones(n)
-        w_skew = np.ones(n); w_skew[0] = 1e6
+        w_skew = np.ones(n)
+        w_skew[0] = 1e6
 
         e1 = EMOS().fit(X, y, sample_weight=w_uniform)
         e2 = EMOS().fit(X, y, sample_weight=w_skew)
@@ -165,7 +166,8 @@ class TestSampleWeights:
     def test_sklearnpoint_forwards_to_estimator(self):
         """SklearnPoint(LinearRegression()) accepts sample_weight."""
         X, y, ids, ts = _synthetic()
-        w = np.ones(y.shape[0]); w[:10] = 1e3
+        w = np.ones(y.shape[0])
+        w[:10] = 1e3
         p = ForecastPipeline(
             steps=[("ridge", LiftedForecaster(
                 SklearnPoint(LinearRegression()), GlobalResidual(),
@@ -183,7 +185,8 @@ class TestSampleWeights:
         n = 100
         X = rng.normal(0, 1, (n, 3))
         y = X[:, 0] + rng.normal(0, 0.5, n)
-        w = np.ones(n); w[:20] = 1e6
+        w = np.ones(n)
+        w[:20] = 1e6
         # Force high residuals on the heavy rows.
         y[:20] = X[:20, 0] + 5.0
         m_un = MixtureNormals().fit(X, y)

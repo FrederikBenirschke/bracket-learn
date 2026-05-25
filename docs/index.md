@@ -17,6 +17,7 @@ guides/cv
 guides/weights
 guides/multitarget
 guides/search
+guides/persistence
 ```
 
 ```{toctree}
@@ -32,6 +33,7 @@ api/adapters
 api/score
 api/multitarget
 api/search
+api/persistence
 api/base
 ```
 

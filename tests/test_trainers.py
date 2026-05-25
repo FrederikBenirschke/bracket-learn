@@ -13,15 +13,12 @@ import importlib
 import numpy as np
 import pytest
 
-from bracketlearn.composite import LiftedForecaster
 from bracketlearn.forecast import Backing, ParametricFamily
-from bracketlearn.lift import GlobalResidual
 from bracketlearn.trainers import (
     EMOS,
     MixtureNormals,
     OnlineAggregator,
     SklearnPoint,
-    Stacking,
 )
 
 

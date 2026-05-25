@@ -25,10 +25,12 @@ sees a flat 6-D mean and misses the cloud signal.
 from __future__ import annotations
 
 import os
+
 # Set before torch import (per Rule #0 in rnn_hourly.py): macOS libomp clash.
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import warnings
+
 warnings.filterwarnings("ignore", category=UserWarning)
 
 import numpy as np
@@ -93,7 +95,7 @@ def main() -> None:
         embargo=0,
     )
 
-    print(f"\nfitting pipeline (3-fold expanding window, 3-D X)...")
+    print("\nfitting pipeline (3-fold expanding window, 3-D X)...")
     result = pipeline.fit_predict(X, y, ids=ids, timestamps=ts)
     print(f"got OOF dists for: {result.stages}")
 
