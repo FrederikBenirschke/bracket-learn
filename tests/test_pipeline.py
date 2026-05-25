@@ -101,8 +101,8 @@ def test_missing_dependency_raises():
 
 
 def test_unsupported_cv_raises():
-    with pytest.raises(NotImplementedError, match="expanding-window"):
-        ForecastPipeline(steps=[("emos", EMOS())], cv="kfold")
+    with pytest.raises(ValueError, match="cv="):
+        ForecastPipeline(steps=[("emos", EMOS())], cv="not-a-cv")
 
 
 def test_score_unknown_metric_raises():

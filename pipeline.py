@@ -239,14 +239,27 @@ class ForecastPipeline:
         embargo: int = 0,
         calibration_fraction: float = 0.2,
         refit_on_full: bool = True,
+        shuffle: bool = False,
+        random_state: int | None = None,
+        rolling_window: int | None = None,
     ):
-        if cv != "expanding-window":
-            raise NotImplementedError("v0.1: only 'expanding-window'")
+        _VALID_CV = ("expanding-window", "rolling-window", "kfold")
+        if cv not in _VALID_CV:
+            raise ValueError(f"cv={cv!r} not in {_VALID_CV}")
+        if cv == "rolling-window" and rolling_window is None:
+            raise ValueError(
+                "cv='rolling-window' requires rolling_window=<int> (train chunk size)"
+            )
+        if cv == "expanding-window" and shuffle:
+            raise ValueError("shuffle=True is incompatible with time-series CV")
         self.cv = cv
         self.n_folds = n_folds
         self.embargo = embargo
         self.calibration_fraction = calibration_fraction
         self.refit_on_full = refit_on_full
+        self.shuffle = shuffle
+        self.random_state = random_state
+        self.rolling_window = rolling_window
         self._stages: list[_Stage] = []
         self._names: set[str] = set()
         # Set by fit_predict when refit_on_full=True; consumed by .predict().
@@ -277,24 +290,36 @@ class ForecastPipeline:
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
+        sample_weight: np.ndarray | None = None,
     ) -> PipelineResult:
         X = np.asarray(X)
         y = np.asarray(y, dtype=float)
         ids = np.asarray(ids)
         timestamps = np.asarray(timestamps)
+        if sample_weight is not None:
+            sample_weight = np.asarray(sample_weight, dtype=float)
+            if sample_weight.shape[0] != y.shape[0]:
+                raise ValueError(
+                    f"sample_weight length {sample_weight.shape[0]} != y length {y.shape[0]}"
+                )
         N = y.shape[0]
 
         feature_hash = _hash_array(X)
         fit_window = (_to_dt(timestamps.min()), _to_dt(timestamps.max()))
         code_sha = "dev"
 
-        order = np.argsort(timestamps, kind="stable")
+        # Time-series CV sorts by timestamp; k-fold does not (rows are i.i.d.).
+        if self.cv == "kfold":
+            order = np.arange(N)
+        else:
+            order = np.argsort(timestamps, kind="stable")
         Xo = X[order]
         yo = y[order]
         ids_o = ids[order]
         ts_o = timestamps[order]
+        sw_o = sample_weight[order] if sample_weight is not None else None
 
-        folds = self._expanding_folds(N)
+        folds = self._make_folds(N)
 
         # Per stage, accumulate (orig_row_index, fold_dist) pairs across folds.
         per_stage_folds: dict[str, list[tuple[np.ndarray, DistributionForecast]]] = {
@@ -325,7 +350,7 @@ class ForecastPipeline:
                 dist_train, dist_test = self._fit_stage_on_fold(
                     fold_forecaster, Xo, yo, ids_o, ts_o, train_idx, test_idx,
                     deps_for_fit=deps_for_fit, deps_for_pred=deps_for_pred,
-                    prov=prov,
+                    prov=prov, sample_weight=sw_o,
                 )
                 fold_train_dist[stage.name] = dist_train
                 fold_test_dist[stage.name] = dist_test
@@ -358,13 +383,14 @@ class ForecastPipeline:
         # This is sklearn's standard pattern: CV produces OOF metrics, the
         # final-model fit produces the artefact that scores new data.
         if self.refit_on_full:
-            self._fit_canonical_models(Xo, yo, ids_o, ts_o)
+            self._fit_canonical_models(Xo, yo, ids_o, ts_o, sw_o)
 
         return PipelineResult(forecasts=out)
 
     def _fit_canonical_models(
         self,
         X: np.ndarray, y: np.ndarray, ids: np.ndarray, ts: np.ndarray,
+        sample_weight: np.ndarray | None = None,
     ) -> None:
         """Fit each stage on the *full* training data, storing the result on
         ``self._fitted_stages`` for later use by ``predict()``.
@@ -399,6 +425,7 @@ class ForecastPipeline:
                 if len(tr_minus) >= 2:
                     _, cal_dist = self._fit_inner(
                         inner, X, y, ids, ts, tr_minus, calib_idx, deps, deps,
+                        sample_weight=sample_weight,
                     )
                     calibrator.fit(cal_dist, y[calib_idx])
                 else:
@@ -409,7 +436,7 @@ class ForecastPipeline:
             # row-alignment invariant (deps_oof[name].params['mu'].shape[0] == N)
             # holds for whatever downstream Stacking expects.
             dist_train_full = self._refit_and_predict_full(
-                inner, X, y, ids, ts, deps,
+                inner, X, y, ids, ts, deps, sample_weight=sample_weight,
             )
             if calibrator is not None:
                 dist_train_full = calibrator.transform(dist_train_full)
@@ -422,24 +449,27 @@ class ForecastPipeline:
         f: Any,
         X: np.ndarray, y: np.ndarray, ids: np.ndarray, ts: np.ndarray,
         deps: dict[str, DistributionForecast],
+        sample_weight: np.ndarray | None = None,
     ) -> DistributionForecast:
         """Refit ``f`` on full (X, y); return its in-sample predict_dist."""
         from bracketlearn.composite import LiftedForecaster
 
         if isinstance(f, LiftedForecaster):
             half = X.shape[0] // 2
-            f.base.fit(X[:half], y[:half])
+            sw_half = sample_weight[:half] if sample_weight is not None else None
+            sw_full = sample_weight
+            _fit_with_optional_weight(f.base, X[:half], y[:half], sw_half)
             base_pt_oof = f.base.predict(X[half:], ids=ids[half:], timestamps=ts[half:])
-            f.base.fit(X, y)
+            _fit_with_optional_weight(f.base, X, y, sw_full)
             if f.lifter.requires_X:
                 f.lifter.fit(base_pt_oof, y[half:], X=X[half:])
             else:
                 f.lifter.fit(base_pt_oof, y[half:])
             return f.predict_dist(X, ids=ids, timestamps=ts)
         if deps:
-            f.fit(X, y, deps_oof=deps)
+            _fit_with_optional_weight(f, X, y, sample_weight, deps_oof=deps)
             return _predict_with_deps(f, X, ids, ts, deps)
-        f.fit(X, y)
+        _fit_with_optional_weight(f, X, y, sample_weight)
         return f.predict_dist(X, ids=ids, timestamps=ts)
 
     def predict(
@@ -482,6 +512,15 @@ class ForecastPipeline:
 
     # ---------------------------------------------------------- fold helpers
 
+    def _make_folds(self, N: int) -> list[tuple[np.ndarray, np.ndarray]]:
+        if self.cv == "expanding-window":
+            return self._expanding_folds(N)
+        if self.cv == "rolling-window":
+            return self._rolling_folds(N)
+        if self.cv == "kfold":
+            return self._kfold_folds(N)
+        raise ValueError(f"unknown cv={self.cv!r}")
+
     def _expanding_folds(self, N: int) -> list[tuple[np.ndarray, np.ndarray]]:
         chunk_size = N // (self.n_folds + 1)
         if chunk_size < 2:
@@ -498,6 +537,54 @@ class ForecastPipeline:
             folds.append((train_idx, test_idx))
         return folds
 
+    def _rolling_folds(self, N: int) -> list[tuple[np.ndarray, np.ndarray]]:
+        """Rolling-window CV: train slice has fixed width ``rolling_window``,
+        slides forward by chunk_size each fold. Older rows roll out.
+        """
+        w = int(self.rolling_window)
+        chunk_size = max(2, (N - w) // self.n_folds) if N > w else 0
+        if chunk_size < 2:
+            raise ValueError(
+                f"N={N} too small for rolling_window={w} + n_folds={self.n_folds}"
+            )
+        folds = []
+        for k in range(self.n_folds):
+            train_start = k * chunk_size
+            train_end = train_start + w
+            test_start = train_end + self.embargo
+            test_end = min(N, test_start + chunk_size)
+            if test_start >= N or train_end > N:
+                break
+            train_idx = np.arange(train_start, train_end)
+            test_idx = np.arange(test_start, test_end)
+            folds.append((train_idx, test_idx))
+        if not folds:
+            raise ValueError(
+                f"rolling-window CV produced 0 folds (N={N}, w={w}, n_folds={self.n_folds})"
+            )
+        return folds
+
+    def _kfold_folds(self, N: int) -> list[tuple[np.ndarray, np.ndarray]]:
+        """Plain k-fold CV: rows split into n_folds disjoint test sets, each
+        trained on the complement. Use only when rows are exchangeable —
+        not for time-series data (use 'expanding-window' or 'rolling-window').
+        """
+        if self.n_folds < 2:
+            raise ValueError(f"kfold needs n_folds >= 2; got {self.n_folds}")
+        if N < self.n_folds:
+            raise ValueError(f"N={N} < n_folds={self.n_folds}")
+        idx = np.arange(N)
+        if self.shuffle:
+            rng = np.random.default_rng(self.random_state)
+            idx = rng.permutation(idx)
+        chunks = np.array_split(idx, self.n_folds)
+        folds = []
+        for k in range(self.n_folds):
+            test_idx = np.sort(chunks[k])
+            train_idx = np.sort(np.concatenate([chunks[j] for j in range(self.n_folds) if j != k]))
+            folds.append((train_idx, test_idx))
+        return folds
+
     # ---------------------------------------------------------- stage fit
 
     def _fit_stage_on_fold(
@@ -509,6 +596,7 @@ class ForecastPipeline:
         deps_for_fit: dict[str, DistributionForecast],
         deps_for_pred: dict[str, DistributionForecast],
         prov: ProvenanceMeta,
+        sample_weight: np.ndarray | None = None,
     ) -> tuple[DistributionForecast, DistributionForecast]:
         """Fit ``f`` on train_idx; return (dist_on_train, dist_on_test).
 
@@ -542,18 +630,21 @@ class ForecastPipeline:
             dist_train, dist_test = self._fit_inner(
                 inner, X, y, ids, ts, train_idx, test_idx,
                 deps_for_fit, deps_for_pred,
+                sample_weight=sample_weight,
             )
         else:
             # 1) fit on train minus calibration tail
             cal_train_dist, cal_dist = self._fit_inner(
                 inner, X, y, ids, ts, tr_minus, calib_idx,
                 deps_for_fit, deps_for_pred,    # deps approximation OK in v0.1
+                sample_weight=sample_weight,
             )
             calibrator.fit(cal_dist, y[calib_idx])
             # 2) refit on full train for canonical predictions
             dist_train, dist_test = self._fit_inner(
                 inner, X, y, ids, ts, train_idx, test_idx,
                 deps_for_fit, deps_for_pred,
+                sample_weight=sample_weight,
             )
             dist_train = calibrator.transform(dist_train)
             dist_test = calibrator.transform(dist_test)
@@ -569,6 +660,7 @@ class ForecastPipeline:
         train_idx: np.ndarray, test_idx: np.ndarray,
         deps_for_fit: dict[str, DistributionForecast],
         deps_for_pred: dict[str, DistributionForecast],
+        sample_weight: np.ndarray | None = None,
     ) -> tuple[DistributionForecast, DistributionForecast]:
         from bracketlearn.composite import LiftedForecaster
 
@@ -576,16 +668,18 @@ class ForecastPipeline:
         X_te = X[test_idx]
         ids_tr, ts_tr = ids[train_idx], ts[train_idx]
         ids_te, ts_te = ids[test_idx], ts[test_idx]
+        sw_tr = sample_weight[train_idx] if sample_weight is not None else None
 
         if isinstance(f, LiftedForecaster):
             half = len(train_idx) // 2
             base_fit_idx = train_idx[:half]
             base_oof_idx = train_idx[half:]
-            f.base.fit(X[base_fit_idx], y[base_fit_idx])
+            sw_half = sample_weight[base_fit_idx] if sample_weight is not None else None
+            _fit_with_optional_weight(f.base, X[base_fit_idx], y[base_fit_idx], sw_half)
             base_pt_oof = f.base.predict(
                 X[base_oof_idx], ids=ids[base_oof_idx], timestamps=ts[base_oof_idx],
             )
-            f.base.fit(X_tr, y_tr)
+            _fit_with_optional_weight(f.base, X_tr, y_tr, sw_tr)
             if f.lifter.requires_X:
                 f.lifter.fit(base_pt_oof, y[base_oof_idx], X=X[base_oof_idx])
             else:
@@ -595,11 +689,11 @@ class ForecastPipeline:
             return dist_train, dist_test
 
         if deps_for_fit:
-            f.fit(X_tr, y_tr, deps_oof=deps_for_fit)
+            _fit_with_optional_weight(f, X_tr, y_tr, sw_tr, deps_oof=deps_for_fit)
             dist_train = _predict_with_deps(f, X_tr, ids_tr, ts_tr, deps_for_fit)
             dist_test = _predict_with_deps(f, X_te, ids_te, ts_te, deps_for_pred)
         else:
-            f.fit(X_tr, y_tr)
+            _fit_with_optional_weight(f, X_tr, y_tr, sw_tr)
             dist_train = f.predict_dist(X_tr, ids=ids_tr, timestamps=ts_tr)
             dist_test = f.predict_dist(X_te, ids=ids_te, timestamps=ts_te)
         return dist_train, dist_test
@@ -625,6 +719,44 @@ def _to_dt(x: Any) -> datetime:
     if isinstance(x, (int, float, np.integer, np.floating)):
         return datetime.fromtimestamp(float(x)) if float(x) > 1e6 else datetime(2024, 1, 1)
     return datetime(2024, 1, 1)
+
+
+def _fit_with_optional_weight(
+    forecaster: Any,
+    X: np.ndarray,
+    y: np.ndarray,
+    sample_weight: np.ndarray | None,
+    **extra: Any,
+) -> None:
+    """Call ``forecaster.fit`` with ``sample_weight`` if the signature accepts
+    it; otherwise drop it silently. Extra kwargs (e.g. ``deps_oof``) pass
+    through verbatim.
+
+    Why: trainers that genuinely support weights take ``sample_weight=`` as
+    a keyword; those that don't (online-learning trainers like
+    OnlineAggregator, or pure-sequence trainers like RNNHourly) shouldn't
+    crash a pipeline that happens to thread weights through. The detection
+    is signature-based, not TypeError-based, so a missing kwarg doesn't
+    mask an unrelated bug in the trainer.
+    """
+    import inspect
+
+    if sample_weight is None:
+        forecaster.fit(X, y, **extra)
+        return
+    try:
+        sig = inspect.signature(forecaster.fit)
+        params = sig.parameters
+    except (TypeError, ValueError):
+        params = {}
+    accepts_sw = (
+        "sample_weight" in params
+        or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    )
+    if accepts_sw:
+        forecaster.fit(X, y, sample_weight=sample_weight, **extra)
+    else:
+        forecaster.fit(X, y, **extra)
 
 
 def _predict_with_deps(

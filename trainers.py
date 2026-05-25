@@ -29,6 +29,16 @@ from bracketlearn.base import BaseEstimator
 from bracketlearn.forecast import DistributionForecast, PointForecast, ProvenanceMeta
 
 
+def _weighted_lstsq2(A: np.ndarray, y: np.ndarray, w: np.ndarray | None) -> tuple[float, float]:
+    """Weighted least squares for 2-column design matrices. Returns (a, b)."""
+    if w is None:
+        sol, *_ = np.linalg.lstsq(A, y, rcond=None)
+    else:
+        sw = np.sqrt(np.asarray(w, dtype=float))
+        sol, *_ = np.linalg.lstsq(A * sw[:, None], y * sw, rcond=None)
+    return float(sol[0]), float(sol[1])
+
+
 # ---------------------------------------------------------------------------
 # SklearnPoint — wrap any sklearn-style regressor as a PointForecaster.
 # ---------------------------------------------------------------------------
@@ -144,18 +154,15 @@ class EMOS(BaseEstimator):
         ens_mean = X.mean(axis=1)
         ens_var = X.var(axis=1, ddof=0)
 
-        # OLS for μ: y ≈ a + b·ens_mean
+        # OLS for μ: y ≈ a + b·ens_mean (weighted if sample_weight given).
         A_mu = np.column_stack([np.ones_like(ens_mean), ens_mean])
-        sol_mu, *_ = np.linalg.lstsq(A_mu, y, rcond=None)
-        self.a_, self.b_ = float(sol_mu[0]), float(sol_mu[1])
+        self.a_, self.b_ = _weighted_lstsq2(A_mu, y, sample_weight)
 
-        # Squared residuals → σ².
+        # Squared residuals → σ². Non-negative LS for variance: r² ≈ c + d·ens_var
         resid = y - (self.a_ + self.b_ * ens_mean)
         r2 = resid ** 2
-        # Non-negative LS for variance: r² ≈ c + d·ens_var
         A_var = np.column_stack([np.ones_like(ens_var), ens_var])
-        sol_var, *_ = np.linalg.lstsq(A_var, r2, rcond=None)
-        self.c_, self.d_ = float(sol_var[0]), float(sol_var[1])
+        self.c_, self.d_ = _weighted_lstsq2(A_var, r2, sample_weight)
         return self
 
     def predict_dist(
@@ -243,9 +250,13 @@ class Stacking(BaseEstimator):
                 )
             cols.append(d.params["mu"])
         Z = np.column_stack(cols)  # (N, K)
-        # OLS with intercept.
+        # OLS with intercept (weighted if sample_weight given).
         A = np.column_stack([np.ones(Z.shape[0]), Z])
-        sol, *_ = np.linalg.lstsq(A, y, rcond=None)
+        if sample_weight is None:
+            sol, *_ = np.linalg.lstsq(A, y, rcond=None)
+        else:
+            sw = np.sqrt(np.asarray(sample_weight, dtype=float))
+            sol, *_ = np.linalg.lstsq(A * sw[:, None], y * sw, rcond=None)
         self.intercept_ = float(sol[0])
         self.weights_ = sol[1:]
         resid = y - (self.intercept_ + Z @ self.weights_)
@@ -337,7 +348,10 @@ class NGBoostNormal(BaseEstimator):
             random_state=self.random_seed,
             verbose=False,
         )
-        self.model_.fit(X, y)
+        if sample_weight is not None:
+            self.model_.fit(X, y, sample_weight=sample_weight)
+        else:
+            self.model_.fit(X, y)
         return self
 
     def predict_dist(
@@ -414,7 +428,11 @@ class MixtureNormals(BaseEstimator):
             raise ValueError(f"MixtureNormals expects 2-D X; got shape {X.shape}")
         K = X.shape[1]
         diffs = X - y[:, None]
-        sigma_v = np.sqrt(np.mean(diffs ** 2, axis=0))
+        if sample_weight is not None:
+            w = np.asarray(sample_weight, dtype=float)
+            sigma_v = np.sqrt((w[:, None] * diffs ** 2).sum(axis=0) / w.sum())
+        else:
+            sigma_v = np.sqrt(np.mean(diffs ** 2, axis=0))
         sigma_v = np.maximum(sigma_v, self.sigma_floor)
         if np.any(~np.isfinite(sigma_v)):
             raise RuntimeError(
@@ -586,7 +604,10 @@ class QuantileReg(BaseEstimator):
                 verbose=-1,
                 random_state=self.random_seed,
             )
-            m.fit(X, y)
+            if sample_weight is not None:
+                m.fit(X, y, sample_weight=sample_weight)
+            else:
+                m.fit(X, y)
             self.models_[tau] = m
         return self
 
@@ -666,7 +687,10 @@ class QuantileForest(BaseEstimator):
             n_jobs=-1,
             random_state=self.random_seed,
         )
-        self.model_.fit(X, y)
+        if sample_weight is not None:
+            self.model_.fit(X, y, sample_weight=sample_weight)
+        else:
+            self.model_.fit(X, y)
         return self
 
     def predict_dist(
@@ -770,7 +794,11 @@ class CumulativeBinary(BaseEstimator):
             verbose=-1,
             monotone_constraints=monotone,
         )
-        self.model_.fit(X_aug, y_aug)
+        if sample_weight is not None:
+            sw_aug = np.repeat(sample_weight, cuts.size)
+            self.model_.fit(X_aug, y_aug, sample_weight=sw_aug)
+        else:
+            self.model_.fit(X_aug, y_aug)
         return self
 
     def predict_dist(
@@ -907,9 +935,13 @@ class TailSpecialist(BaseEstimator):
             verbose=-1,
         )
         self.clf_lo_ = lgb.LGBMClassifier(**common)
-        self.clf_lo_.fit(X, y_lo)
         self.clf_hi_ = lgb.LGBMClassifier(**common)
-        self.clf_hi_.fit(X, y_hi)
+        if sample_weight is not None:
+            self.clf_lo_.fit(X, y_lo, sample_weight=sample_weight)
+            self.clf_hi_.fit(X, y_hi, sample_weight=sample_weight)
+        else:
+            self.clf_lo_.fit(X, y_lo)
+            self.clf_hi_.fit(X, y_hi)
         return self
 
     def predict_dist(
