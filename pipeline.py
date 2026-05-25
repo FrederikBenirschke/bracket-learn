@@ -1,6 +1,6 @@
 """ForecastPipeline — orchestration (CV + OOF stitching + DAG injection).
 
-sklearn-style API:
+sklearn-style API::
 
     pipeline = ForecastPipeline(
         steps=[
@@ -18,6 +18,7 @@ live inside `LiftedForecaster` / `CalibratedForecaster` wrappers — no
 special pipeline slots.
 
 v0.1 vertical slice:
+
 - Expanding-window CV with embargo.
 - Per-fold OOF stitching for each registered forecaster.
 - depends_on topo-sort: pipeline pre-computes upstream OOF and injects via
@@ -213,7 +214,8 @@ class ForecastPipeline:
     PointForecasters in `LiftedForecaster(base, lifter)` and add calibration
     via `CalibratedForecaster(dist_forecaster, calibrator)` at the call site.
 
-    Example:
+    Example::
+
         from bracketlearn.composite import LiftedForecaster, CalibratedForecaster
         from bracketlearn.lift import GlobalResidual, Isotonic
         from bracketlearn.trainers import SklearnPoint, EMOS, Stacking

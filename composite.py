@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 class LiftedForecaster(BaseEstimator):
     """PointForecaster + Lifter, exposed as a DistForecaster.
 
-    fit signature: fit(X, y, *, base_oof: PointForecast).
+    fit signature: ``fit(X, y, *, base_oof: PointForecast)``.
     Pipeline supplies base_oof from its fold structure. Standalone callers
     compute OOF themselves (cross_val_predict → PointForecast → .fit).
 

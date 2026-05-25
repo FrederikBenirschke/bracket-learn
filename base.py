@@ -8,6 +8,7 @@ layer (forecasters that don't use sklearn estimators internally don't
 have to install scikit-learn).
 
 Contract:
+
 - ``__init__`` parameters are stored on ``self`` under the same name.
 - ``get_params()`` returns a dict of constructor params; fitted state
   (attributes ending in ``_``) is excluded.

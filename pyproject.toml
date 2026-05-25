@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bracketlearn"
-version = "0.1.0"
+version = "0.2.0"
 description = "Forecasting + bracket-contract pricing framework, sklearn-style."
 readme = "README.md"
 license = { text = "MIT" }
@@ -53,6 +53,11 @@ dev = [
     "pytest-cov>=4",
     "ruff>=0.4",
     "mypy>=1.8",
+]
+docs = [
+    "sphinx>=7",
+    "furo>=2024",
+    "myst-parser>=2",
 ]
 
 [project.urls]

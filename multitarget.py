@@ -6,6 +6,7 @@ modelling is desired, the user builds a single trainer that natively
 consumes (N, M) y and uses it inside an ordinary ``ForecastPipeline``.
 
 Why a wrapper rather than threading M through every trainer:
+
 - The (N, M) → (N, M) contract would multiply every backing's shape (e.g.
   ``DistributionForecast.params['mu']`` becomes (N, M)) and break every
   scoring rule. The blast radius is huge for a feature most users won't
@@ -15,7 +16,7 @@ Why a wrapper rather than threading M through every trainer:
   user expectation that "M targets = M models" unless they explicitly
   build a joint trainer.
 
-Usage::
+Example::
 
     mt = MultiOutputForecastPipeline(
         ForecastPipeline(steps=[("emos", EMOS())], n_folds=5),
