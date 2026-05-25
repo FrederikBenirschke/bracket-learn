@@ -1,0 +1,97 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bracketlearn"
+version = "0.1.0"
+description = "Forecasting + bracket-contract pricing framework, sklearn-style."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [
+    { name = "Frederik Benirschke" },
+]
+keywords = [
+    "forecasting",
+    "probabilistic-forecasting",
+    "prediction-markets",
+    "calibration",
+    "conformal-prediction",
+    "quantile-regression",
+    "ensemble",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "scikit-learn>=1.3",
+]
+
+[project.optional-dependencies]
+# Trainers that need extra ML libs.
+boosting = ["lightgbm>=4.0", "ngboost>=0.5"]
+quantile-forest = ["quantile-forest>=1.3"]
+rnn = ["torch>=2.0"]
+# Everything for the full e2e demo.
+demo = [
+    "bracketlearn[boosting]",
+    "bracketlearn[quantile-forest]",
+    "bracketlearn[rnn]",
+]
+dev = [
+    "pytest>=7",
+    "pytest-cov>=4",
+    "ruff>=0.4",
+    "mypy>=1.8",
+]
+
+[project.urls]
+Homepage = "https://github.com/fbenirschke/bracketlearn"
+Issues = "https://github.com/fbenirschke/bracketlearn/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["bracketlearn*"]
+
+[tool.setuptools.package-data]
+bracketlearn = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+filterwarnings = [
+    "ignore::UserWarning:lightgbm",
+    "ignore::DeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",   # handled by formatter
+    "B008",   # function calls in defaults (we use dataclass field(default_factory=...))
+]
+
+[tool.mypy]
+python_version = "3.10"
+strict_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true

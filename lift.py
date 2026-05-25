@@ -1,18 +1,13 @@
-"""Point → Distribution lifters (§6).
+"""Point → Distribution lifters (§6) + Dist → Dist calibrators.
 
-Four genuine learned lifters + one pass-through utility:
-- GlobalResidual         — iid residuals, one σ
-- SisterModel            — per-row σ from external column (pass-through)
-- ConditionalVariance    — σ̂ = f(X), needs raw X
-- Conformal              — empirical residual distribution shifted by μ̂
+v0.1 ships:
+- GlobalResidual      — Lifter: iid Gaussian residuals, one σ.
+- Isotonic            — Calibrator: per-bracket isotonic calibration.
+- ConformalCalibrate  — Calibrator: per-τ conformal coverage on quantile dists.
 
-Plus the calibration-side conformal:
-- ConformalCalibrate     — Calibrator (per-τ coverage on quantile dists)
-
-Bootstrap / EnsembleSpread / IsotonicCDF are NOT lifters under v0.2:
-- Bootstrap: a DistForecaster taking a base in __init__ (see composite.py).
-- EnsembleSpread: just DistributionForecast.from_empirical(members).
-- IsotonicCDF: already Calibrator.Isotonic.
+Planned for v0.2 (see README "Not yet" section):
+- SisterModel, ConditionalVariance, Conformal lifters
+- Bootstrap, IsotonicCDF
 """
 
 from __future__ import annotations
@@ -88,91 +83,7 @@ class GlobalResidual:
 
 
 # ---------------------------------------------------------------------------
-# SisterModel — per-row σ from external column. Pass-through.
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class SisterModel:
-    """Reads per-row σ from a column already present in X (e.g. vendor's
-    own predictive std). No learning — fit is a no-op."""
-
-    sigma_col: str
-    requires_X: bool = True       # needs X at lift time to read sigma_col
-
-    def fit(
-        self,
-        point_oof: "PointForecast",
-        y: np.ndarray,
-        *,
-        X: Any | None = None,
-    ) -> Self:
-        return self
-
-    def lift(self, point: "PointForecast") -> "DistributionForecast":
-        ...
-
-
-# ---------------------------------------------------------------------------
-# ConditionalVariance — σ̂ = f(X).
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ConditionalVariance:
-    """Heteroscedastic Gaussian. Fits sigma_estimator on log r² where
-    r = y - μ̂_oof; predicts σ̂(x) at lift time."""
-
-    sigma_estimator: Any            # any sklearn-style regressor
-    requires_X: bool = True
-
-    def fit(
-        self,
-        point_oof: "PointForecast",
-        y: np.ndarray,
-        *,
-        X: Any | None = None,
-    ) -> Self:
-        ...
-
-    def lift(self, point: "PointForecast") -> "DistributionForecast":
-        ...
-
-
-# ---------------------------------------------------------------------------
-# Conformal — marginal or Mondrian.
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class Conformal:
-    """Marginal or Mondrian conformal prediction.
-
-    Builds an empirical residual distribution from OOF (one global, or per
-    Mondrian bin); at lift time, members[i] = μ̂[i] + residuals_calib.
-
-    Produces empirical-backed DistributionForecast.
-    """
-
-    mode: Literal["marginal", "mondrian"] = "marginal"
-    mondrian_bin_fn: Any = None             # Callable[X_row → bin_id]; required if mondrian
-    requires_X: bool = False                # True if mondrian
-
-    def fit(
-        self,
-        point_oof: "PointForecast",
-        y: np.ndarray,
-        *,
-        X: Any | None = None,
-    ) -> Self:
-        ...
-
-    def lift(self, point: "PointForecast") -> "DistributionForecast":
-        ...
-
-
-# ---------------------------------------------------------------------------
-# ConformalCalibrate — Calibrator (CQR-style per-τ coverage).
+# Isotonic — Calibrator (bracket-probability isotonic regression).
 # ---------------------------------------------------------------------------
 
 

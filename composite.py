@@ -1,29 +1,23 @@
-"""Composite forecasters and drivers.
+"""Composite forecasters: combine simple Forecasters into richer ones.
 
-- LiftedForecaster: PointForecaster + Lifter → DistForecaster (§4.8).
-  Pipeline injects base_oof via the same mechanism as deps_oof.
-- WalkForward: refit-each-cycle driver for batch forecasters (§4.5).
-- Bootstrap: DistForecaster that takes a base in __init__ (§3, end).
+- LiftedForecaster:     PointForecaster + Lifter      → DistForecaster.
+- CalibratedForecaster: DistForecaster  + Calibrator  → DistForecaster.
 
-Bootstrap is intentionally NOT a Lifter — it needs to refit the base B
-times on resampled subsets, which the (point_oof, y) Lifter signature
-can't express. Same pattern would handle Jackknife+ / CV+ later.
+Both are flat wrappers — the pipeline keeps a `[(name, forecaster)]` list
+without special slots for lifters/calibrators.
+
+Planned for v0.2 (see README):
+- Bootstrap (B-fold resample → empirical-backed DistForecast)
+- WalkForward refit-each-cycle driver
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
 
-from bracketlearn.protocols import (
-    Calibrator,
-    DistForecaster,
-    Forecaster,
-    Lifter,
-    PointForecaster,
-)
+from bracketlearn.protocols import Calibrator, Lifter, PointForecaster
 
 if TYPE_CHECKING:
     from bracketlearn.forecast import DistributionForecast, PointForecast
@@ -123,74 +117,3 @@ class CalibratedForecaster:
         return dist
 
 
-# ---------------------------------------------------------------------------
-# WalkForward — refit-each-cycle driver (§4.5).
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class WalkForward:
-    """Wraps a batch forecaster into a refit-each-cycle pipeline.
-
-    Pipeline-level concept — not a Forecaster protocol member. Inspect
-    .forecaster to reach the wrapped object.
-
-    refit_every: "1d" / "1w" / N rows / a Splitter.
-    expanding=True grows the training window each cycle (default);
-    expanding=False uses a rolling window of fixed length.
-    """
-
-    forecaster: Forecaster
-    refit_every: str | int
-    expanding: bool = True
-    window_length: str | int | None = None    # required if not expanding
-
-
-# ---------------------------------------------------------------------------
-# Bootstrap — DistForecaster that refits a base B times on resampled data.
-# ---------------------------------------------------------------------------
-
-
-class Bootstrap:
-    """DistForecaster wrapping a PointForecaster. Refits B copies of the
-    base on bootstrap-resampled subsets; predict_dist returns an
-    empirical-backed DistributionForecast over the B member predictions.
-
-    NOT a Lifter — Lifter takes a fitted PointForecast in; Bootstrap takes
-    a recipe (forecaster object) and refits it. Same pattern would handle
-    Jackknife+ / CV+ in v0.2.
-    """
-
-    def __init__(
-        self,
-        base: PointForecaster,
-        n_bags: int = 50,
-        *,
-        random_seed: int | None = None,
-        name: str | None = None,
-    ):
-        self.base = base
-        self.n_bags = n_bags
-        self.random_seed = random_seed
-        self.name = name or f"Bootstrap({base.name},B={n_bags})"
-        self.depends_on = base.depends_on
-        self._bags: list[PointForecaster] = []
-
-    def fit(
-        self,
-        X: Any,
-        y: np.ndarray,
-        *,
-        sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
-    ) -> Self:
-        ...
-
-    def predict_dist(
-        self,
-        X: Any,
-        *,
-        ids: np.ndarray,
-        timestamps: np.ndarray,
-    ) -> "DistributionForecast":
-        ...

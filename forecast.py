@@ -234,9 +234,20 @@ class DistributionForecast:
             raise ValueError("taus must be strictly increasing")
         if np.any((taus <= 0) | (taus >= 1)):
             raise ValueError("taus must lie strictly in (0, 1)")
-        # qvals monotonicity: caller's responsibility (isotonic_repair upstream).
-        # We don't enforce here because some trainers may emit small numerical
-        # crossings that BracketLadder rounding handles fine.
+        # Quantiles must be monotone non-decreasing along Q. Small numerical
+        # crossings (≲ 1e-9 of the row range) are repaired silently; anything
+        # bigger is a real bug upstream and raises (Rule #0.5).
+        diffs = np.diff(qvals, axis=1)
+        if np.any(diffs < 0):
+            row_range = qvals.max(axis=1, keepdims=True) - qvals.min(axis=1, keepdims=True)
+            tol = np.maximum(1e-9 * row_range, 1e-12)
+            worst = float(diffs.min())
+            if np.any(diffs < -tol):
+                raise ValueError(
+                    f"qvals must be monotone non-decreasing along Q; "
+                    f"worst crossing = {worst:.6g} (use isotonic-repair upstream)"
+                )
+            qvals = np.maximum.accumulate(qvals, axis=1)
         return cls(
             backing=Backing.QUANTILE,
             taus=taus,
@@ -281,8 +292,12 @@ class DistributionForecast:
             )
         if probs.shape[0] != ids.shape[0]:
             raise ValueError(f"N mismatch: probs N={probs.shape[0]} ids N={ids.shape[0]}")
-        if np.any(probs < 0) or not np.allclose(probs.sum(axis=1), 1.0, atol=1e-6):
-            raise ValueError("probs must be nonnegative and sum to 1 per row")
+        if np.any(np.diff(edges) <= 0):
+            raise ValueError("edges must be monotone strictly increasing")
+        if np.any(probs < 0):
+            raise ValueError("probs must be nonnegative")
+        if not np.allclose(probs.sum(axis=1), 1.0, atol=1e-6):
+            raise ValueError("probs must sum to 1 per row")
         return cls(
             backing=Backing.BRACKET,
             edges=edges,
