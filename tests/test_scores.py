@@ -231,3 +231,77 @@ def test_pit_uniform_mean_half(prov, ids_ts, rng):
     )
     p = pit(d, y)
     assert abs(p.mean() - 0.5) < 0.02
+
+
+# ---------------------------------------------------------------------------
+# cdf_at — per-row CDF (B9 fix: must equal np.diag(cdf(y)) without
+# materialising the (N, N) cross product).
+# ---------------------------------------------------------------------------
+
+
+def test_cdf_at_matches_diag_for_normal(prov, ids_ts, rng):
+    n = 50
+    ids, ts = ids_ts(n)
+    d = DistributionForecast.from_normal(
+        mu=rng.normal(0, 1, n), sigma=rng.uniform(0.5, 2.0, n),
+        ids=ids, timestamps=ts, provenance=prov,
+    )
+    y = rng.normal(0, 1, n)
+    np.testing.assert_allclose(d.cdf_at(y), np.diag(d.cdf(y)), atol=1e-10)
+
+
+def test_cdf_at_matches_diag_for_bracket(prov, ids_ts, rng):
+    n = 30
+    B = 8
+    ids, ts = ids_ts(n)
+    edges = np.linspace(-2.0, 2.0, B + 1)
+    raw = rng.uniform(0.1, 1.0, size=(n, B))
+    probs = raw / raw.sum(axis=1, keepdims=True)
+    d = DistributionForecast.from_brackets(
+        edges=edges, probs=probs, ids=ids, timestamps=ts, provenance=prov,
+    )
+    y = rng.uniform(-2.5, 2.5, n)  # mix of inside and outside support
+    np.testing.assert_allclose(d.cdf_at(y), np.diag(d.cdf(y)), atol=1e-10)
+
+
+def test_cdf_at_matches_diag_for_quantile(prov, ids_ts, rng):
+    n = 20
+    Q = 5
+    ids, ts = ids_ts(n)
+    taus = np.linspace(0.1, 0.9, Q)
+    base = np.sort(rng.normal(0, 1, size=(n, Q)), axis=1)
+    d = DistributionForecast.from_quantiles(
+        taus=taus, qvals=base,
+        tail_policy=TailPolicy.same(TailRule.clip()),
+        ids=ids, timestamps=ts, provenance=prov,
+    )
+    y = rng.normal(0, 1, n)
+    np.testing.assert_allclose(d.cdf_at(y), np.diag(d.cdf(y)), atol=1e-10)
+
+
+def test_cdf_at_matches_diag_for_mixture_normal(prov, ids_ts, rng):
+    n = 25
+    K = 3
+    ids, ts = ids_ts(n)
+    raw_w = rng.uniform(0.1, 1.0, size=(n, K))
+    w = raw_w / raw_w.sum(axis=1, keepdims=True)
+    mus = rng.normal(0, 1, size=(n, K))
+    sigmas = rng.uniform(0.3, 1.5, size=(n, K))
+    d = DistributionForecast.from_mixture_normal(
+        weights=w, mus=mus, sigmas=sigmas,
+        ids=ids, timestamps=ts, provenance=prov,
+    )
+    y = rng.normal(0, 1, n)
+    np.testing.assert_allclose(d.cdf_at(y), np.diag(d.cdf(y)), atol=1e-10)
+
+
+def test_cdf_at_rejects_wrong_length(prov, ids_ts):
+    import pytest as _pytest
+    n = 5
+    ids, ts = ids_ts(n)
+    d = DistributionForecast.from_normal(
+        mu=np.zeros(n), sigma=np.ones(n),
+        ids=ids, timestamps=ts, provenance=prov,
+    )
+    with _pytest.raises(ValueError, match="cdf_at"):
+        d.cdf_at(np.zeros(n + 1))

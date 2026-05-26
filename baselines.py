@@ -116,24 +116,26 @@ class EmpiricalDistribution(BaseEstimator):
 class Persistence(BaseEstimator):
     """``mu_t = y_{t - lag}``. PointForecaster — wrap with a Lifter for σ.
 
-    At fit time we record the *last* ``lag`` training ``y`` values; at
-    predict time we slide them into the head of the inference sequence
-    so the first ``lag`` inference rows still get a value (the most
-    recent train values) and subsequent rows shift to use prior
-    inference rows — but only the per-row predicted values, not realised
-    y, since the model has no access to inference truth.
+    At fit time we record the *last* ``lag`` training ``y`` values. At
+    predict time we tile that vector across the inference horizon:
+    inference row ``i`` gets ``tail_y_[i mod lag]``. This means:
 
-    Concretely: predict on a contiguous future block of length M returns
-    ``[y_train[-lag], y_train[-lag+1], ..., y_train[-1], mu[0], mu[1], ...]``,
-    which on a strict-lag-1 model collapses to "predict y_train[-1] for
-    every inference row". On lag-k it stretches that to the last k.
+    - lag=1 collapses to "predict the last training y everywhere" (the
+      classical random-walk baseline).
+    - lag=24 on hourly data emits ``[y_{T-24}, y_{T-23}, ..., y_{T-1},
+      y_{T-24}, y_{T-23}, ...]`` — the last full day repeated, which is
+      the standard "yesterday's diurnal cycle" baseline used in
+      bike-share / load-forecasting benchmarks.
+
+    The cycle is deterministic and ignores any inference y (the model
+    sees only X and timestamps). For a strictly causal autoregressive
+    forecaster, pair this with ``cv="expanding-window"`` or
+    ``"rolling-window"`` — ``"kfold"`` on shuffled rows makes the "last
+    y" meaningless.
 
     Trivial on i.i.d. shuffles; standard time-series baseline whenever
     rows are autocorrelated. Pair with ``GlobalResidual`` (fit on OOF
     residuals) for a proper distributional forecast.
-
-    Use with ``cv="expanding-window"`` or ``"rolling-window"`` — ``"kfold"``
-    on shuffled rows makes the "last y" meaningless.
     """
 
     lag: int = 1
@@ -170,15 +172,9 @@ class Persistence(BaseEstimator):
             raise RuntimeError("Persistence.predict called before fit")
         X = np.asarray(X)
         N = X.shape[0]
-        mu = np.empty(N, dtype=float)
-        # First `lag` inference rows: peel from the recorded tail (oldest first).
-        head = min(self.lag, N)
-        mu[:head] = self.tail_y_[:head]
-        # Remaining inference rows: use the most recent value (lag=1 collapses
-        # to "predict the last training y everywhere"; for lag>1 we copy
-        # forward by one each step but never see realised inference y).
-        if head < N:
-            mu[head:] = self.tail_y_[-1]
+        # Tile the recorded tail across the inference horizon. For lag=1
+        # this gives a constant prediction; for lag=24 it repeats yesterday.
+        mu = self.tail_y_[np.arange(N) % self.lag]
         prov = ProvenanceMeta(
             forecaster_name=self.name,
             forecaster_version="0.1",

@@ -276,3 +276,58 @@ def test_stacking_raises_on_degenerate_sigma():
     stack = Stacking(deps=("a",))
     with pytest.raises(ValueError, match="degenerate"):
         stack.fit(np.zeros((N, 2)), y, deps_oof={"a": d})
+
+
+def test_emos_falls_back_to_constant_sigma_when_mom_gives_negative_coef():
+    """MoM variance fit may produce c_<0 or d_<0 (unconstrained OLS). The
+    pre-fix code silently clipped negative variance at predict time. The
+    fix: detect at fit time and fall back to a constant variance.
+    """
+    from bracketlearn.trainers import EMOS
+
+    rng = np.random.default_rng(0)
+    n, k = 200, 4
+    X = rng.normal(0, 1, (n, k))
+    # Build y so residuals shrink as spread widens — this gives d_<0 on
+    # the linear-in-variance MoM regression.
+    ens_var = X.var(axis=1, ddof=0)
+    noise = rng.normal(0, 1.0 / np.maximum(ens_var, 0.1), n)
+    y = X.mean(axis=1) + noise
+
+    e = EMOS().fit(X, y)
+    assert e.sigma_fit_was_constant_ is True, (
+        "expected constant-σ fallback when MoM gives negative coefficients"
+    )
+    # σ must be positive everywhere.
+    d = e.predict_dist(X, ids=np.arange(n), timestamps=np.arange(n, dtype=float))
+    assert np.all(d.params["sigma"] > 0)
+    # And the constant-σ choice means σ does not vary with X.
+    np.testing.assert_allclose(
+        d.params["sigma"], d.params["sigma"][0],
+    )
+
+
+def test_emos_predict_raises_on_negative_variance_extrapolation():
+    """If the user trains on one spread range then predicts on a wider
+    one, the linear-in-variance fit can extrapolate to var<=0. Used to
+    silently clip; now raises.
+    """
+    from bracketlearn.trainers import EMOS
+
+    rng = np.random.default_rng(0)
+    # Training data with a narrow spread range and d_<0 *not* triggered
+    # (we hand-patch the coefficients).
+    n, k = 100, 4
+    X = rng.normal(0, 1, (n, k))
+    y = X.mean(axis=1) + rng.normal(0, 0.5, n)
+    e = EMOS().fit(X, y)
+    # Force a linear-in-variance regime with d_<0 by hand.
+    e.c_ = 0.1
+    e.d_ = -0.5
+    e.sigma_fit_was_constant_ = False
+    # Inference X with high spread → variance goes negative.
+    big_X = rng.normal(0, 5, (10, k))
+    with pytest.raises(ValueError, match="non-positive variance"):
+        e.predict_dist(
+            big_X, ids=np.arange(10), timestamps=np.arange(10, dtype=float),
+        )

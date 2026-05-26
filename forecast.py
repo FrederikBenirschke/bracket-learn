@@ -413,6 +413,82 @@ class DistributionForecast:
 
         return out[:, 0] if scalar else out
 
+    def cdf_at(self, y: np.ndarray) -> np.ndarray:
+        """Per-row CDF: ``F_i(y_i)`` for ``y`` aligned to rows. Returns (N,).
+
+        Equivalent to ``np.diag(self.cdf(y))`` but never materializes the
+        (N, N) cross product — important when N is large (the diagonal
+        form costs 800 MB at N=10k just to throw most of it away).
+
+        Used by ``score.pit`` and by any caller that wants per-row
+        PIT-like values without building a full grid.
+        """
+        y_arr = np.asarray(y, dtype=float).reshape(-1)
+        N_rows = self.ids.shape[0]
+        if y_arr.shape[0] != N_rows:
+            raise ValueError(
+                f"cdf_at: y has {y_arr.shape[0]} rows, dist has {N_rows}"
+            )
+
+        if self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.NORMAL:
+            mu = self.params["mu"]
+            sigma = self.params["sigma"]
+            return _stats.norm.cdf(y_arr, loc=mu, scale=sigma)
+        if self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.STUDENT_T:
+            mu = self.params["mu"]
+            sigma = self.params["sigma"]
+            df = self.params["df"]
+            return _stats.t.cdf(y_arr, df=df, loc=mu, scale=sigma)
+        if self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.MIXTURE_NORMAL:
+            w = self.params["weights"]
+            mus = self.params["mus"]
+            sigmas = self.params["sigmas"]
+            cdfs = _stats.norm.cdf(y_arr[:, None], loc=mus, scale=sigmas)
+            return (w * cdfs).sum(axis=1)
+        if self.backing == Backing.BRACKET:
+            edges = self.edges
+            probs = self.probs
+            B = probs.shape[1]
+            cum = np.concatenate(
+                [np.zeros((N_rows, 1)), np.cumsum(probs, axis=1)], axis=1
+            )
+            # find bin index per row in O(N log B)
+            k = np.searchsorted(edges, y_arr, side="right") - 1
+            below = y_arr <= edges[0]
+            above = y_arr >= edges[-1]
+            k_clipped = np.clip(k, 0, B - 1)
+            rows = np.arange(N_rows)
+            widths = edges[k_clipped + 1] - edges[k_clipped]
+            safe_w = np.where(widths > 0, widths, 1.0)
+            frac = np.where(widths > 0, (y_arr - edges[k_clipped]) / safe_w, 0.0)
+            out = cum[rows, k_clipped] + frac * probs[rows, k_clipped]
+            out = np.where(below, 0.0, out)
+            out = np.where(above, 1.0, out)
+            return out
+        if self.backing == Backing.QUANTILE:
+            taus = self.taus
+            qvals = self.qvals
+            left_rule, right_rule = _resolve_tail_kinds(self.tail_policy)
+            out = np.empty(N_rows, dtype=float)
+            for i in range(N_rows):
+                xq = qvals[i]
+                if np.any(np.diff(xq) < 0):
+                    xq = np.maximum.accumulate(xq)
+                v = np.interp(
+                    y_arr[i:i + 1], xq, taus,
+                    left=0.0 if left_rule == "clip" else np.nan,
+                    right=1.0 if right_rule == "clip" else np.nan,
+                )
+                if np.isnan(v).any():
+                    raise NotImplementedError(
+                        f"tail policy {left_rule!r}/{right_rule!r} not implemented yet"
+                    )
+                out[i] = v[0]
+            return out
+        raise NotImplementedError(
+            f"cdf_at not implemented for backing={self.backing} family={self.family}"
+        )
+
     def ppf(self, tau: np.ndarray | float) -> np.ndarray:
         """Quantile function. Scalar tau → (N,); array tau → (N, len(tau))."""
         tau_arr = np.atleast_1d(np.asarray(tau, dtype=float))

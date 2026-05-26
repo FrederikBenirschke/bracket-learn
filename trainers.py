@@ -173,11 +173,37 @@ class EMOS(BaseEstimator):
         A_mu = np.column_stack([np.ones_like(ens_mean), ens_mean])
         self.a_, self.b_ = _weighted_lstsq2(A_mu, y, sample_weight)
 
-        # Squared residuals → σ². Non-negative LS for variance: r² ≈ c + d·ens_var
+        # Squared residuals → σ². Method-of-moments OLS for variance:
+        # r² ≈ c + d·ens_var. Unconstrained OLS can return c_<0 or d_<0,
+        # which makes σ²(x) negative somewhere in the training range —
+        # silently clipping that at predict time hides a bad fit (Rule
+        # #0.5). Solve unconstrained first; if either coefficient is
+        # negative, fall back to a constant variance (mean of r²) and
+        # record that we did so via ``sigma_source``.
         resid = y - (self.a_ + self.b_ * ens_mean)
         r2 = resid ** 2
         A_var = np.column_stack([np.ones_like(ens_var), ens_var])
-        self.c_, self.d_ = _weighted_lstsq2(A_var, r2, sample_weight)
+        c_unc, d_unc = _weighted_lstsq2(A_var, r2, sample_weight)
+        # Reject the linear-in-variance fit if it would emit negative
+        # variance anywhere on the *training* spread range.
+        var_train = c_unc + d_unc * ens_var
+        if c_unc < 0 or d_unc < 0 or np.any(var_train <= 0):
+            if sample_weight is None:
+                c_fallback = float(np.mean(r2))
+            else:
+                w = np.asarray(sample_weight, dtype=float)
+                c_fallback = float((w * r2).sum() / w.sum())
+            if c_fallback <= 0:
+                raise ValueError(
+                    "EMOS: mean squared residual non-positive — y is a "
+                    "perfect linear function of X.mean(axis=1) on the "
+                    "training set; no variance left to fit."
+                )
+            self.c_, self.d_ = c_fallback, 0.0
+            self.sigma_fit_was_constant_ = True
+        else:
+            self.c_, self.d_ = c_unc, d_unc
+            self.sigma_fit_was_constant_ = False
         return self
 
     def predict_dist(
@@ -193,7 +219,21 @@ class EMOS(BaseEstimator):
         ens_mean = X.mean(axis=1)
         ens_var = X.var(axis=1, ddof=0)
         mu = self.a_ + self.b_ * ens_mean
-        var = np.clip(self.c_ + self.d_ * ens_var, 1e-6, None)
+        var = self.c_ + self.d_ * ens_var
+        # var should be > 0 by construction (fit guards both coefficients
+        # and rechecks on training data). Negative here means the
+        # inference X.var() went outside the training range — a real
+        # extrapolation problem, not a numerical-noise floor. Raise.
+        if np.any(var <= 0):
+            n_bad = int(np.sum(var <= 0))
+            min_var = float(var.min())
+            raise ValueError(
+                f"EMOS.predict_dist: linear-in-variance fit emits "
+                f"non-positive variance on {n_bad} rows "
+                f"(min var = {min_var:.3g}). The inference X has lower "
+                f"ensemble spread than any training row; refit on a "
+                f"wider spread range or use a constant-σ fallback."
+            )
         sigma = np.sqrt(var)
         prov = ProvenanceMeta(
             forecaster_name=self.name,
@@ -1048,6 +1088,29 @@ class TailSpecialist(BaseEstimator):
         X = np.asarray(X, dtype=float)
         p_lo = np.clip(self.clf_lo_.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6)
         p_hi = np.clip(self.clf_hi_.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6)
+        # Sanity check: when the ladder is narrow, the upstream EMOS
+        # may put substantial mass in body bins 0 and B-1 (the bins
+        # the tail classifiers are about to replace). Discarding that
+        # mass is the *point* of TailSpecialist — but if the classifier
+        # disagrees with the upstream by more than `tail_disagreement_tol`,
+        # the user is probably running on a ladder too narrow for this
+        # trainer's design. Warn loudly so it's not silent.
+        upstream_p_lo = body_probs[:, 0]
+        upstream_p_hi = body_probs[:, -1]
+        max_disagreement = float(np.maximum(
+            np.abs(p_lo - upstream_p_lo), np.abs(p_hi - upstream_p_hi),
+        ).max())
+        if max_disagreement > 0.5:
+            import warnings
+            warnings.warn(
+                f"TailSpecialist: classifier tail probabilities disagree "
+                f"with upstream EMOS by up to {max_disagreement:.2f} on "
+                f"the outer bins. The classifier outputs *replace* the "
+                f"upstream's edge-bin mass — large disagreement on a "
+                f"narrow ladder usually means the EMOS body is dominating "
+                f"the tails. Consider widening the ladder.",
+                UserWarning, stacklevel=2,
+            )
         # Rescale inner bins (1..B-1, i.e. all but first and last) to
         # (1 - p_lo - p_hi). Refuse to silently fabricate a
         # uniform body when the upstream returns zero inner mass —

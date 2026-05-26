@@ -101,16 +101,31 @@ class TestPersistence:
         )
         np.testing.assert_array_equal(pred.mu, np.full(5, 99.0))
 
-    def test_lag_k_peels_then_holds(self):
+    def test_lag_k_cycles(self):
+        """lag=k tiles the last k training y values across the inference horizon."""
         y = np.arange(10, 20, dtype=float)   # ..., 17, 18, 19
         p = Persistence(lag=3).fit(np.zeros((10, 1)), y)
         pred = p.predict(
-            np.zeros((5, 1)), ids=np.arange(5), timestamps=np.arange(5, dtype=float),
+            np.zeros((7, 1)), ids=np.arange(7), timestamps=np.arange(7, dtype=float),
         )
-        # First 3 inference rows use the last 3 training y values (oldest first);
-        # remaining rows hold at the most recent training y.
-        np.testing.assert_array_equal(pred.mu[:3], np.array([17., 18., 19.]))
-        np.testing.assert_array_equal(pred.mu[3:], np.array([19., 19.]))
+        # tail = [17, 18, 19]; inference rows pick tail[i mod 3] →
+        # 17, 18, 19, 17, 18, 19, 17.
+        np.testing.assert_array_equal(
+            pred.mu, np.array([17., 18., 19., 17., 18., 19., 17.])
+        )
+
+    def test_lag24_diurnal_cycle(self):
+        """lag=24 replays the last 24 hours — the diurnal-cycle baseline."""
+        rng = np.random.default_rng(0)
+        y = rng.normal(0, 1, 200)
+        p = Persistence(lag=24).fit(np.zeros((200, 1)), y)
+        pred = p.predict(
+            np.zeros((48, 1)), ids=np.arange(48), timestamps=np.arange(48, dtype=float),
+        )
+        # First 24 inference hours are exactly y[-24:].
+        np.testing.assert_array_equal(pred.mu[:24], y[-24:])
+        # Hours 24-47 are exactly y[-24:] again (full cycle repeated).
+        np.testing.assert_array_equal(pred.mu[24:48], y[-24:])
 
     def test_lifted_in_pipeline(self):
         """Wrapped with GlobalResidual, Persistence drops into a pipeline."""

@@ -75,10 +75,14 @@ framework**. The current "both" is the root of most issues.
 - Inner-sum=0 silent uniform fallback → loud `ValueError`.
 - Final row-sum guard upgraded from `np.where(..., 1.0)` to a raise
   (logic error if ever triggered).
-- Body rescaling shape concern (`body_probs[:, 1:-1]` discarding edge
-  bin mass on narrow ladders) — DEFERRED. Documented as a known
-  modelling limitation; the rescaling matches the existing trainer's
-  semantics. Revisit when a narrow-ladder test case actually exists.
+- Body rescaling shape (`body_probs[:, 1:-1]` discarding edge bin mass)
+  — addressed 2026-05-25 with a consistency warning. The override of
+  upstream edge-bin mass by the classifier output is *intentional*
+  (the whole point of a tail specialist), but on narrow ladders the
+  discarded body mass can be substantial. `predict_dist` now compares
+  classifier p_lo/p_hi against upstream `body_probs[:, 0]` /
+  `body_probs[:, -1]` and emits a `UserWarning` if they disagree by
+  more than 0.5 — surfaces a "ladder too narrow" misconfiguration.
 
 ### B5. `RNNHourly` clips unseen station IDs to 0 — FIXED 2026-05-25
 - `RNNHourly.predict` now raises `ValueError` on any `station_id`
@@ -95,12 +99,16 @@ framework**. The current "both" is the root of most issues.
 - Tests: `test_sklearn_point_introspects_sample_weight_signature`,
   `test_sklearn_point_raises_genuine_typeerror_inside_fit`.
 
-### B7. Persistence baseline holds at last value after `lag` rows
-- `baselines.py:174-182`: emits `tail_y_[:lag]` then `tail_y_[-1]` repeated.
-- `examples/bike_sharing_timeseries.py:99` markets it as "diurnal cycle";
-  output shows identical `persist24` across rows.
-- Either fix predict semantics (rotate by test-row index) or fix the example
-  claim.
+### B7. Persistence baseline holds at last value after `lag` rows — FIXED 2026-05-25
+- `Persistence.predict` now tiles `tail_y_` across the inference
+  horizon via `tail_y_[np.arange(N) % self.lag]`. lag=1 still collapses
+  to "predict the last training y everywhere"; lag=24 on hourly data
+  replays the last full day repeatedly — actually matches the
+  `examples/bike_sharing_timeseries.py` "diurnal cycle" framing.
+- Docstring rewritten to spell out the cyclic semantics.
+- Tests: `test_baselines.py::test_lag_k_cycles` (replaces the old
+  `test_lag_k_peels_then_holds`) and `::test_lag24_diurnal_cycle` pin
+  the new behaviour.
 
 ### B8. Stubs return `None` silently — FIXED 2026-05-25
 - All concrete-class stubs in `forecast.py` (`from_empirical`,
@@ -115,17 +123,36 @@ framework**. The current "both" is the root of most issues.
   `...` — idiomatic Protocol stub, not a real method.
 - Tests: `test_no_silent_fallbacks.py::test_*_stubs_raise*`.
 
-### B9. `pit` builds full (N,N) matrix then `np.diag`
-- `score.py:84`: 800 MB at N=10k. Should be per-row `cdf(y_i)`.
+### B9. `pit` builds full (N,N) matrix then `np.diag` — FIXED 2026-05-25
+- New `DistributionForecast.cdf_at(y)` returns the per-row CDF in
+  O(N) time and O(N) memory. Implemented for all four backings
+  (normal, student-t, mixture-normal, bracket, quantile) — vectorised
+  except for the quantile branch (per-row `np.interp` is unavoidable
+  with non-shared knots).
+- `score.pit` rewired to call `cdf_at` instead of `np.diag(dist.cdf(y))`.
+  At N=10k this drops from ~800 MB peak to ~80 KB.
+- Tests in `test_scores.py`: `cdf_at` matches `np.diag(cdf(y))` for
+  normal / bracket / quantile / mixture-normal; raises on a length
+  mismatch.
 
-### B10. Other silent fallbacks — PARTIALLY FIXED 2026-05-25
+### B10. Other silent fallbacks — FIXED 2026-05-25
 - `lift.py` `Isotonic.transform` and `_bracket_probs_from_dist` row-sum
   guards now raise `ValueError` with a row-count diagnostic. No more
   silent uniform substitution.
-- `EMOS.fit` MoM negative-variance issue — DEFERRED. The clip at
-  predict time is *visible* (uses `np.maximum(var, floor)`) and the
-  fix is independent. Track separately.
-- Test: `test_bracket_probs_from_dist_raises_on_zero_row_sum`.
+- `EMOS.fit` MoM negative-variance — fixed 2026-05-25.
+  Method-of-moments OLS for variance (`r² ≈ c + d·ens_var`) is
+  unconstrained, so it can return `c_<0` or `d_<0` and yield negative
+  variance somewhere in the training range. Pre-fix code silently
+  clipped at predict time via `np.clip(..., 1e-6, None)` — Rule #0.5
+  violation. Fix: at fit, detect `c_<0 ∨ d_<0 ∨ any var_train ≤ 0`
+  and fall back to a constant variance (mean of squared residuals),
+  recording the choice on `sigma_fit_was_constant_`. At predict, if
+  variance still goes non-positive (means inference X is outside the
+  training spread range), raise a `ValueError` naming the bad row
+  count instead of clipping.
+- Tests: `test_bracket_probs_from_dist_raises_on_zero_row_sum`,
+  `test_emos_falls_back_to_constant_sigma_when_mom_gives_negative_coef`,
+  `test_emos_predict_raises_on_negative_variance_extrapolation`.
 
 ---
 

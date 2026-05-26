@@ -70,18 +70,13 @@ def log_score_mixture_normal(dist: DistributionForecast, y: np.ndarray) -> np.nd
 
 
 def pit(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
-    """PIT values F(y). Uniform if forecast is calibrated.
+    """PIT values F_i(y_i). Uniform-distributed if forecast is calibrated.
 
-    Works on any backing whose dist.cdf accepts a 1-D array of length N
-    aligned with the rows — we extract the diagonal of dist.cdf(y).
+    Per-row CDF lookup via ``dist.cdf_at(y)``. Costs O(N), not O(N²) —
+    earlier versions built ``dist.cdf(y)`` as an (N, N) matrix and took
+    the diagonal (800 MB at N=10k).
     """
-    y = np.asarray(y, dtype=float)
-    if dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.NORMAL:
-        mu = dist.params["mu"]
-        sigma = dist.params["sigma"]
-        return _stats.norm.cdf(y, loc=mu, scale=sigma)
-    # Generic path: dist.cdf(y_array) returns (N, len(y_array)); take diagonal.
-    return np.diag(dist.cdf(y))
+    return dist.cdf_at(np.asarray(y, dtype=float))
 
 
 def crps_quantile(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
