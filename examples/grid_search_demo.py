@@ -30,6 +30,7 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
+from bracketlearn.baselines import EmpiricalDistribution
 from bracketlearn.pipeline import ForecastPipeline
 from bracketlearn.search import GridSearch
 from bracketlearn.trainers import QuantileReg
@@ -45,6 +46,19 @@ def main() -> None:
     X, y = X[keep], y[keep]
     ids = np.arange(X.shape[0])
     ts = ids.astype(float)
+
+    # Fit the marginal-y baseline once, outside the grid. Its CRPS is the
+    # "you must beat this" anchor; we'll report the grid winner's skill
+    # score against it. Doing this outside the grid avoids re-fitting
+    # an identical baseline at every grid point.
+    base_pipeline = ForecastPipeline(
+        steps=[("emp", EmpiricalDistribution())],
+        cv="kfold", n_folds=4, shuffle=True, random_state=0,
+        refit_on_full=False,
+    )
+    base_result = base_pipeline.fit_predict(X, y, ids=ids, timestamps=ts)
+    baseline_crps = base_result.score(y, metrics=["crps"])["emp"]["crps"]
+    print(f"\nbaseline EmpiricalDistribution CRPS = {baseline_crps:.4f}")
 
     prototype = ForecastPipeline(
         steps=[("qreg", QuantileReg(random_seed=0))],
@@ -75,6 +89,8 @@ def main() -> None:
 
     print(f"\nbest params : {search.best_params_}")
     print(f"best CRPS   : {search.best_score_:.4f}")
+    print(f"baseline    : {baseline_crps:.4f}  (EmpiricalDistribution)")
+    print(f"CRPSS       : {1.0 - search.best_score_ / baseline_crps:+.3f}")
 
     # best_pipeline_ is already fitted on full data (refit_on_full=True).
     pred = search.best_pipeline_.predict(

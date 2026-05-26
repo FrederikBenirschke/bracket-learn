@@ -34,8 +34,9 @@ warnings.filterwarnings(
 )
 
 from bracketlearn.adapters import BracketLadder
-from bracketlearn.composite import CalibratedForecaster
-from bracketlearn.lift import Isotonic
+from bracketlearn.baselines import EmpiricalDistribution, Persistence
+from bracketlearn.composite import CalibratedForecaster, LiftedForecaster
+from bracketlearn.lift import GlobalResidual, Isotonic
 from bracketlearn.pipeline import ForecastPipeline
 from bracketlearn.trainers import EMOS, QuantileReg
 
@@ -90,6 +91,14 @@ def main() -> None:
     print("\nfitting pipeline (expanding-window, 5 folds) …")
     pipeline = ForecastPipeline(
         steps=[
+            # Baseline 1: marginal-y distribution, ignores everything.
+            ("emp", EmpiricalDistribution()),
+            # Baseline 2: same hour yesterday + global residual σ.
+            # On hourly bike demand the diurnal cycle is the dominant
+            # signal, so lag-24 persistence is a non-trivial bar to clear.
+            ("persist24", LiftedForecaster(
+                Persistence(lag=24), GlobalResidual(), name="persist24",
+            )),
             ("emos_iso", CalibratedForecaster(
                 EMOS(), Isotonic(edges=edges), name="emos_iso",
             )),
@@ -112,6 +121,21 @@ def main() -> None:
     print(result.to_table(
         y, metrics=["log_loss_bracket", "brier_bracket"], ladder=ladder,
     ))
+
+    # Skill scores vs each baseline. Two anchors are useful here: the
+    # marginal-y "emp" baseline, and the seasonal lag-24 "persist24"
+    # baseline. Beating "emp" only means "you learned the marginal";
+    # beating "persist24" means "you learned more than the diurnal cycle".
+    print("\n=== skill scores (1 - CRPS / CRPS_baseline) ===")
+    crps = result.score(y, metrics=["crps"])
+    for ref in ("emp", "persist24"):
+        base = crps[ref]["crps"]
+        print(f"  vs {ref:<10} (CRPS {base:.2f}):")
+        for stage, row in crps.items():
+            if stage == ref or not np.isfinite(row["crps"]):
+                continue
+            skill = 1.0 - row["crps"] / base
+            print(f"    {stage:<10}  CRPSS = {skill:+.3f}")
 
     # Pick three OOF rows from the latest fold and show bracket prices.
     print("\n=== example bracket prices for 3 late-fold rows ===")

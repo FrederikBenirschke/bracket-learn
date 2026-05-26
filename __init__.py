@@ -6,6 +6,7 @@ See /tmp/bracketcast_concept_v0.2.md for the design document.
 v0.1 stubs — signatures only, no implementations.
 """
 
+from bracketlearn.baselines import EmpiricalDistribution, Persistence
 from bracketlearn.forecast import (
     ContractForecast,
     DistributionForecast,
@@ -27,8 +28,10 @@ __all__ = [
     "ContractForecast",
     "DistForecaster",
     "DistributionForecast",
+    "EmpiricalDistribution",
     "Forecaster",
     "Lifter",
+    "Persistence",
     "PointForecast",
     "PointForecaster",
     "ProvenanceMeta",

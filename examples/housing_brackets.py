@@ -36,6 +36,7 @@ warnings.filterwarnings(
 )
 
 from bracketlearn.adapters import BracketLadder
+from bracketlearn.baselines import EmpiricalDistribution
 from bracketlearn.composite import LiftedForecaster
 from bracketlearn.lift import GlobalResidual
 from bracketlearn.pipeline import ForecastPipeline
@@ -65,6 +66,8 @@ def main() -> None:
     print("fitting pipeline (kfold, 5 folds) …")
     pipeline = ForecastPipeline(
         steps=[
+            # Baseline: marginal-y distribution, ignores X.
+            ("emp", EmpiricalDistribution()),
             ("ridge", LiftedForecaster(
                 SklearnPoint(RidgeCV()), GlobalResidual(), name="ridge",
             )),
@@ -83,6 +86,18 @@ def main() -> None:
     print(result.to_table(
         y, metrics=["log_loss_bracket", "brier_bracket"], ladder=ladder,
     ))
+
+    # Skill score vs the EmpiricalDistribution baseline. CRPSS = 1 - CRPS/CRPS_emp;
+    # 0 = matches baseline, positive = beats it, negative = worse.
+    print("\n=== skill vs EmpiricalDistribution baseline ===")
+    crps_scores = result.score(y, metrics=["crps"])
+    base = crps_scores["emp"]["crps"]
+    for stage, row in crps_scores.items():
+        if stage == "emp":
+            continue
+        skill = 1.0 - row["crps"] / base
+        print(f"  {stage:<8} CRPSS = {skill:+.3f}  "
+              f"(CRPS {row['crps']:.4f} vs baseline {base:.4f})")
 
     # Predict bracket prices for the first 3 houses. ContractForecast stores
     # contracts flat with group_id linking the B rows from one entity, so we
