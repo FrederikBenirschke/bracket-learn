@@ -12,13 +12,12 @@ Convenience builders pre-wrap common combinations:
 - market_ols()      — OLS + GlobalResidual.
 - emos_calibrated() — EMOS + Isotonic via CalibratedForecaster (needs edges).
 
-These trainers exist to prove the framework holds across protocol shapes;
-they mirror the algorithmic essence of the equivalents in
-prediction_market_weather/ml/trainers/ but without the parquet/registry I/O.
+These trainers exist to prove the framework holds across protocol shapes.
 """
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Self
@@ -27,6 +26,20 @@ import numpy as np
 
 from bracketlearn.base import BaseEstimator
 from bracketlearn.forecast import DistributionForecast, PointForecast, ProvenanceMeta
+
+
+def _estimator_accepts_sample_weight(estimator: Any) -> bool:
+    """Inspect fit signature for a sample_weight parameter.
+
+    Replaces the v0.1 bare ``except TypeError`` pattern (any TypeError
+    raised *inside* fit silently dropped the weights). Now we either pass
+    weights or skip them by explicit signature check.
+    """
+    try:
+        sig = inspect.signature(estimator.fit)
+    except (ValueError, TypeError):
+        return False
+    return "sample_weight" in sig.parameters
 
 
 def _weighted_lstsq2(A: np.ndarray, y: np.ndarray, w: np.ndarray | None) -> tuple[float, float]:
@@ -77,12 +90,10 @@ class SklearnPoint(BaseEstimator):
     ) -> Self:
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
-        # Forward sample_weight only if the estimator accepts it.
-        if sample_weight is not None:
-            try:
-                self.estimator.fit(X, y, sample_weight=sample_weight)
-            except TypeError:
-                self.estimator.fit(X, y)
+        # Forward sample_weight only if the estimator accepts it. We
+        # introspect the signature (no silent TypeError swallow).
+        if sample_weight is not None and _estimator_accepts_sample_weight(self.estimator):
+            self.estimator.fit(X, y, sample_weight=sample_weight)
         else:
             self.estimator.fit(X, y)
         return self
@@ -229,6 +240,7 @@ class Stacking(BaseEstimator):
         X: np.ndarray,
         y: np.ndarray,
         *,
+        ids: np.ndarray | None = None,
         sample_weight: np.ndarray | None = None,
         deps_oof: dict[str, Any] | None = None,
     ) -> Self:
@@ -237,18 +249,38 @@ class Stacking(BaseEstimator):
                 f"Stacking.fit needs deps_oof for {self.depends_on}; got {list(deps_oof or [])}"
             )
         y = np.asarray(y, dtype=float)
-        # Stack upstream μ predictions row-aligned. We rely on pipeline
-        # passing the test-fold dist for each upstream; align by .ids ordering.
-        # v0.1 simplification: assume deps_oof[name] has the same row order
-        # as our (X, y).
-        cols = []
+        # Stack upstream μ predictions row-aligned. We REQUIRE that each
+        # upstream dist's .ids matches our (X, y) row order (no silent
+        # misalignment). If the caller passes ids, we check
+        # them; if not, we still require all upstream dists to agree on
+        # their own ids vectors (else the meta-learner builds rows from
+        # mis-zipped predictions).
+        upstream_ids = None
         for name in self.depends_on:
             d = deps_oof[name]
             if d.backing.value != "parametric":
                 raise NotImplementedError(
                     f"Stacking expects parametric upstream; {name} is {d.backing}"
                 )
-            cols.append(d.params["mu"])
+            if d.params["mu"].shape[0] != y.shape[0]:
+                raise ValueError(
+                    f"Stacking.fit: deps_oof[{name!r}] has N={d.params['mu'].shape[0]} "
+                    f"but y has N={y.shape[0]}"
+                )
+            if upstream_ids is None:
+                upstream_ids = d.ids
+            elif not np.array_equal(upstream_ids, d.ids):
+                raise ValueError(
+                    f"Stacking.fit: deps_oof[{name!r}].ids does not match the "
+                    f"first upstream's ids — meta-learner rows would be misaligned"
+                )
+        if ids is not None and upstream_ids is not None:
+            if not np.array_equal(np.asarray(ids), upstream_ids):
+                raise ValueError(
+                    "Stacking.fit: caller's ids do not match deps_oof ids — "
+                    "rows would be misaligned"
+                )
+        cols = [deps_oof[name].params["mu"] for name in self.depends_on]
         Z = np.column_stack(cols)  # (N, K)
         # OLS with intercept (weighted if sample_weight given).
         A = np.column_stack([np.ones(Z.shape[0]), Z])
@@ -261,8 +293,20 @@ class Stacking(BaseEstimator):
         self.weights_ = sol[1:]
         resid = y - (self.intercept_ + Z @ self.weights_)
         self.sigma_ = float(np.std(resid, ddof=1))
-        if self.sigma_ <= 0:
-            self.sigma_ = 1e-3
+        # Refuse degenerate σ̂. v0.1 floored σ̂≤0 to 1e-3,
+        # which produced near-deterministic forecasts and masked
+        # upstream-μ-vs-y collinearity (data leak). We raise when σ̂
+        # falls below a small fraction of y's scale — covers exact-zero
+        # AND float-noise-positive cases.
+        y_scale = float(np.std(y, ddof=1)) if y.size > 1 else 0.0
+        if self.sigma_ <= max(1e-9 * max(y_scale, 1.0), 1e-12):
+            raise ValueError(
+                f"Stacking.fit: residual std is degenerate "
+                f"(sigma_={self.sigma_:.3g}, y_scale={y_scale:.3g}); "
+                f"meta-learner perfectly fits training y, which means either "
+                f"upstream μ collinearity with y (data leak) or N is too small. "
+                f"Refusing to substitute a 1e-3 floor."
+            )
         return self
 
     def predict_dist(
@@ -277,6 +321,16 @@ class Stacking(BaseEstimator):
         # on the current X; it passes their dist via deps_oof again.
         if not deps_oof:
             raise ValueError("Stacking.predict_dist needs deps_oof")
+        # Row-alignment check: each upstream's ids must match the caller's ids
+        # exactly (no silent misalignment).
+        ids_arr = np.asarray(ids)
+        for name in self.depends_on:
+            d = deps_oof[name]
+            if not np.array_equal(d.ids, ids_arr):
+                raise ValueError(
+                    f"Stacking.predict_dist: deps_oof[{name!r}].ids does not "
+                    f"match caller ids — rows would be misaligned"
+                )
         cols = [deps_oof[name].params["mu"] for name in self.depends_on]
         Z = np.column_stack(cols)
         mu = self.intercept_ + Z @ self.weights_
@@ -308,8 +362,7 @@ class Stacking(BaseEstimator):
 class NGBoostNormal(BaseEstimator):
     """Native parametric-normal DistForecaster backed by NGBoost.
 
-    Mirrors prediction_market_weather/ml/trainers/ngboost_normal.py: boosts
-    (μ̂, σ̂) as non-linear functions of the full feature vector so
+    Boosts (μ̂, σ̂) as non-linear functions of the full feature vector so
     dispersion can be regime-conditional.
 
     sigma_floor clamps σ̂ above a minimum (NGBoost can collapse σ̂ → 0 on
@@ -400,12 +453,10 @@ class MixtureNormals(BaseEstimator):
     that vendor's train-slice RMSE against y. Equal weights over the K
     columns of X.
 
-    Mirrors prediction_market_weather/ml/trainers/mixture_normals.py except
-    we treat X as already-curated vendor columns: the original handled
-    missing values per row, which is a data-shape concern that doesn't fit
-    the (N, K) dense array contract here.
+    Treats X as already-curated vendor columns; missing-value handling per
+    row is out of scope for the (N, K) dense array contract.
 
-    Rule #0.5: rows with all-NaN columns or all-zero variances raise.
+    Rows with all-NaN columns or all-zero variances raise.
     """
 
     name: str = "MixtureNormals"
@@ -562,9 +613,8 @@ def _isotonic_repair_row(qvals: np.ndarray) -> np.ndarray:
 class QuantileReg(BaseEstimator):
     """Per-τ LightGBM quantile-regression heads.
 
-    Mirrors prediction_market_weather/ml/trainers/quantile_reg.py: fits one
-    LightGBM regressor per τ ∈ taus with objective='quantile', alpha=τ;
-    isotonic-repairs predicted quantiles per row.
+    Fits one LightGBM regressor per τ ∈ taus with objective='quantile',
+    alpha=τ; isotonic-repairs predicted quantiles per row.
 
     Output: quantile-backed DistributionForecast with TailRule.clip on both
     sides (extreme bracket mass stays at the outermost quantile; switch to
@@ -657,8 +707,7 @@ class QuantileReg(BaseEstimator):
 class QuantileForest(BaseEstimator):
     """Quantile Regression Forest (Meinshausen 2006).
 
-    Mirrors prediction_market_weather/ml/trainers/quantile_forest.py: fits
-    one quantile-forest model; predicts per-row quantiles at fixed taus.
+    Fits one quantile-forest model; predicts per-row quantiles at fixed taus.
     """
 
     taus: tuple[float, ...] = _DEFAULT_QUANTILES
@@ -742,17 +791,22 @@ class QuantileForest(BaseEstimator):
 class CumulativeBinary(BaseEstimator):
     """Single LightGBM binary classifier on augmented features.
 
-    Mirrors prediction_market_weather/ml/trainers/cumulative_binary.py: fits
-    one classifier over (X, cutpoint) → 1[y ≤ cutpoint] using a fixed grid
+    Fits one classifier over (X, cutpoint) → 1[y ≤ cutpoint] using a fixed grid
     of cutpoints (derived from the bracket ladder); at predict time, queries
     P(y ≤ k) for each k in the grid and emits a quantile-backed dist where
     taus = the cdf values at the configured cutpoints.
 
     Constructed with a fixed `cutpoints` array — typically the interior
-    edges of the eval bracket ladder.
+    edges of the eval bracket ladder. Caller MUST also pass
+    ``outer_edges=(low, high)`` defining the bracket boundaries below
+    ``cutpoints[0]`` and above ``cutpoints[-1]``. The two outer bins
+    absorb the tail mass under TailRule.clip semantics; without explicit
+    outer edges, downstream mean/variance would be biased by an invented
+    pad.
     """
 
     cutpoints: np.ndarray
+    outer_edges: tuple[float, float]
     n_estimators: int = 80
     learning_rate: float = 0.05
     num_leaves: int = 7
@@ -761,6 +815,20 @@ class CumulativeBinary(BaseEstimator):
     name: str = "CumulativeBinary"
     depends_on: tuple[str, ...] = ()
     model_: Any = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        lo, hi = self.outer_edges
+        cuts = np.asarray(self.cutpoints, dtype=float)
+        if cuts.size == 0:
+            return  # fit() will raise on this; defer.
+        if not (lo < cuts[0]):
+            raise ValueError(
+                f"outer_edges[0]={lo} must be strictly less than cutpoints[0]={cuts[0]}"
+            )
+        if not (hi > cuts[-1]):
+            raise ValueError(
+                f"outer_edges[1]={hi} must be strictly greater than cutpoints[-1]={cuts[-1]}"
+            )
 
     def fit(
         self,
@@ -831,12 +899,11 @@ class CumulativeBinary(BaseEstimator):
         # Simpler: emit a bracket-backed dist on edges = [-inf-equivalent,
         # cuts, +inf-equivalent], probs = diff(0, proba_at_cuts, 1).
         #
-        # To match the existing trainer's semantics (bracket probs from
-        # cumulative classifier output), emit a bracket dist over
-        # [cuts[0]-pad, cuts[0], cuts[1], ..., cuts[-1], cuts[-1]+pad].
-        # The two outer bins absorb the tail mass under TailRule.clip.
-        pad = max(1.0, float(np.diff(cuts).mean()) if cuts.size > 1 else 1.0)
-        edges = np.concatenate([[cuts[0] - pad], cuts, [cuts[-1] + pad]])
+        # Emit a bracket dist over [outer_edges[0], cuts..., outer_edges[1]].
+        # The two outer bins absorb tail mass under TailRule.clip. The outer
+        # edges are explicit constructor args (no invented pad).
+        lo, hi = self.outer_edges
+        edges = np.concatenate([[lo], cuts, [hi]])
         # cdf at the inner edges = proba; at the outer edges = 0 and 1.
         cdf_at_edges = np.column_stack([
             np.zeros(N),
@@ -845,9 +912,15 @@ class CumulativeBinary(BaseEstimator):
         ])
         probs = np.diff(cdf_at_edges, axis=1)
         probs = np.clip(probs, 0.0, 1.0)
-        row_sum = probs.sum(axis=1, keepdims=True)
-        row_sum = np.where(row_sum > 0, row_sum, 1.0)
-        probs = probs / row_sum
+        row_sum = probs.sum(axis=1)
+        if np.any(row_sum <= 0):
+            n_bad = int((row_sum <= 0).sum())
+            raise ValueError(
+                f"CumulativeBinary.predict_dist: {n_bad}/{N} rows produced "
+                f"zero total mass (LightGBM classifier output is degenerate). "
+                f"Refusing to substitute uniform distribution."
+            )
+        probs = probs / row_sum[:, None]
         prov = ProvenanceMeta(
             forecaster_name=self.name,
             forecaster_version="0.1",
@@ -876,8 +949,7 @@ class CumulativeBinary(BaseEstimator):
 class TailSpecialist(BaseEstimator):
     """Gaussian body (from upstream EMOS μ̂/σ̂) + LightGBM tail classifiers.
 
-    Mirrors prediction_market_weather/ml/trainers/tail_specialist.py. depends_on
-    a parametric-normal upstream (typically named 'emos') and a ladder
+    depends_on a parametric-normal upstream (typically named 'emos') and a ladder
     (edges) — fits two binary classifiers for the first/last bracket
     indicators, then rescales the Gaussian body probs to (1 - p_lo - p_hi).
     """
@@ -930,9 +1002,13 @@ class TailSpecialist(BaseEstimator):
             num_leaves=self.num_leaves,
             min_child_samples=self.min_child_samples,
             objective="binary",
-            class_weight="balanced",
             verbose=-1,
         )
+        # class_weight="balanced" only when the caller does NOT supply
+        # sample_weight (don't silently multiply user weights
+        # by sklearn's balanced inverse-frequency weights).
+        if sample_weight is None:
+            common["class_weight"] = "balanced"
         self.clf_lo_ = lgb.LGBMClassifier(**common)
         self.clf_hi_ = lgb.LGBMClassifier(**common)
         if sample_weight is not None:
@@ -969,22 +1045,33 @@ class TailSpecialist(BaseEstimator):
         p_lo = np.clip(self.clf_lo_.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6)
         p_hi = np.clip(self.clf_hi_.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6)
         # Rescale inner bins (1..B-1, i.e. all but first and last) to
-        # (1 - p_lo - p_hi).
+        # (1 - p_lo - p_hi). Refuse to silently fabricate a
+        # uniform body when the upstream returns zero inner mass —
+        # that means the upstream is degenerate and the caller needs
+        # to know.
         inner = body_probs[:, 1:-1]
         inner_sum = inner.sum(axis=1, keepdims=True)
+        if np.any(inner_sum <= 0):
+            n_bad = int((inner_sum.ravel() <= 0).sum())
+            raise ValueError(
+                f"TailSpecialist.predict_dist: {n_bad}/{N} rows have zero "
+                f"upstream body mass in bins [1..B-2]. Refusing to "
+                f"redistribute uniformly."
+            )
         body_total = np.maximum(0.0, 1.0 - p_lo - p_hi)[:, None]
-        # Avoid divide-by-zero: if inner_sum=0, redistribute body_total uniformly.
-        safe = inner_sum > 0
-        inner_scaled = np.where(
-            safe, inner * (body_total / np.where(safe, inner_sum, 1.0)),
-            body_total / max(inner.shape[1], 1),
-        )
+        inner_scaled = inner * (body_total / inner_sum)
         probs = np.concatenate(
             [p_lo[:, None], inner_scaled, p_hi[:, None]], axis=1,
         )
-        # Final renorm as a safety net.
+        # Final renorm against numerical drift (clip+scale can leave
+        # rounding errors at the 1e-15 level). Any row sum at or below
+        # zero indicates a logic error, not drift — raise.
         row_sum = probs.sum(axis=1, keepdims=True)
-        row_sum = np.where(row_sum > 0, row_sum, 1.0)
+        if np.any(row_sum <= 0):
+            raise ValueError(
+                "TailSpecialist.predict_dist: row sum is non-positive after "
+                "renormalisation — should be unreachable; investigate."
+            )
         probs = probs / row_sum
         prov = ProvenanceMeta(
             forecaster_name=self.name,
@@ -1014,8 +1101,7 @@ class TailSpecialist(BaseEstimator):
 class OnlineAggregator(BaseEstimator):
     """AdaHedge over forecast experts (columns of X).
 
-    Mirrors prediction_market_weather/ml/trainers/online_aggregator.py:
-    walks rows in order, treats each column of X as an expert's point
+    Walks rows in order, treats each column of X as an expert's point
     prediction (NaN = asleep on that row), accumulates per-expert squared
     losses, updates the mixability-gap learning rate, and produces an
     aggregated prediction per row.
@@ -1120,7 +1206,7 @@ class OnlineAggregator(BaseEstimator):
             if s <= 0:
                 continue
             mu[t] = float(np.dot(w / s, X[t][awake]))
-        # Rule #0.5: leftover NaNs are a real coverage hole — raise.
+        # Leftover NaNs are a real coverage hole — raise.
         if np.isnan(mu).any():
             n_miss = int(np.isnan(mu).sum())
             raise RuntimeError(
@@ -1170,8 +1256,7 @@ class OnlineAggregator(BaseEstimator):
 class RNNHourly(BaseEstimator):
     """Tiny GRU on a (24, C) hourly tensor → residual-corrected point forecast.
 
-    Mirrors prediction_market_weather/ml/trainers/rnn_hourly.py: GRU reads
-    the 24-hour sequence, concatenates a station embedding (if station_ids
+    GRU reads the 24-hour sequence, concatenates a station embedding (if station_ids
     is passed via the `station_ids` argument at fit), MLP head outputs a
     scalar residual to the channel-0 max (HRRR's max-T baseline). Final
     prediction = channel_0_max + residual.
@@ -1295,8 +1380,19 @@ class RNNHourly(BaseEstimator):
         Xn = (X - self.mean_) / self.std_
         if station_ids is not None:
             sid = np.asarray(station_ids, dtype=np.int64)
-            # Cold-start guard: clamp to known range.
-            sid = np.clip(sid, 0, self.n_stations_ - 1)
+            # Raise on unknown station IDs instead of silently
+            # clamping them onto station 0's embedding. Cold-start is a
+            # real failure mode that needs caller-level handling (drop the
+            # row, pick a fallback embedding policy explicitly, or extend
+            # the training set), not a silent map-to-zero.
+            unknown_mask = (sid < 0) | (sid >= self.n_stations_)
+            if np.any(unknown_mask):
+                bad = np.unique(sid[unknown_mask]).tolist()
+                raise ValueError(
+                    f"RNNHourly.predict: {int(unknown_mask.sum())} rows have "
+                    f"station_ids outside the trained range "
+                    f"[0, {self.n_stations_ - 1}]; unknown IDs={bad[:10]}"
+                )
         else:
             sid = np.zeros(N, dtype=np.int64)
         self.model_.eval()
@@ -1355,3 +1451,470 @@ class _HourlyGRU:
                 return self.head(z).squeeze(-1)
 
         return HourlyGRU()
+
+
+# ---------------------------------------------------------------------------
+# DistAsFeatures — generic bridge: upstream dists → feature matrix → any trainer.
+# ---------------------------------------------------------------------------
+
+
+_DIST_FEATURE_TAUS: tuple[float, ...] = (0.05, 0.25, 0.50, 0.75, 0.95)
+
+
+@dataclass
+class DistAsFeatures(BaseEstimator):
+    """Materialise K upstream distributions into a feature matrix and hand it
+    to a downstream forecaster.
+
+    Per-row features extracted from each upstream dist:
+
+        - quantiles at ``feature_taus`` (default 5 quantiles)
+        - mean (if ``include_mean=True``)
+        - variance (if ``include_variance=True``)
+        - CDF at ``tail_cutpoints`` (tail-mass features)
+
+    Total per row: K · (|taus| + include_mean + include_variance + |cuts|).
+
+    The downstream forecaster sees ONLY dist-derived features, not raw X.
+    If you also want raw X, build a separate node — keeping this class
+    single-purpose is intentional.
+
+    The downstream's own ``depends_on`` is ignored; ``DistAsFeatures`` owns
+    the dep contract via its ``deps`` argument.
+
+    Requires each upstream backing to support ``ppf`` for the requested
+    ``feature_taus``. v0.1 ppf coverage: parametric-normal, mixture-normal,
+    quantile, bracket.
+    """
+
+    deps: tuple[str, ...]
+    downstream: Any
+    feature_taus: tuple[float, ...] = _DIST_FEATURE_TAUS
+    tail_cutpoints: tuple[float, ...] = ()
+    include_mean: bool = True
+    include_variance: bool = True
+    name: str = "DistAsFeatures"
+    _n_features_: int | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        if not self.deps:
+            raise ValueError("DistAsFeatures requires at least one upstream dep")
+        self.depends_on = tuple(self.deps)
+
+    def _featurize(self, deps_oof: dict[str, Any]) -> np.ndarray:
+        taus = np.asarray(self.feature_taus, dtype=float)
+        cuts = np.asarray(self.tail_cutpoints, dtype=float)
+        cols: list[np.ndarray] = []
+        for name in self.depends_on:
+            d = deps_oof[name]
+            cols.append(d.ppf(taus))                  # (N, len(taus))
+            if self.include_mean:
+                cols.append(d.mean()[:, None])
+            if self.include_variance:
+                cols.append(d.variance()[:, None])
+            if cuts.size:
+                cols.append(d.cdf(cuts))              # (N, len(cuts))
+        return np.column_stack(cols)
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        sample_weight: np.ndarray | None = None,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> Self:
+        if not deps_oof or set(self.depends_on) - set(deps_oof):
+            raise ValueError(
+                f"DistAsFeatures.fit needs deps_oof for {self.depends_on}; "
+                f"got {list(deps_oof or [])}"
+            )
+        Z = self._featurize(deps_oof)
+        # Forward sample_weight only if downstream accepts it; matches the
+        # SklearnPoint convention.
+        try:
+            self.downstream.fit(Z, y, sample_weight=sample_weight, deps_oof=None)
+        except TypeError:
+            self.downstream.fit(Z, y)
+        self._n_features_ = Z.shape[1]
+        return self
+
+    def predict(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> PointForecast:
+        Z = self._predict_features(deps_oof)
+        return self.downstream.predict(Z, ids=ids, timestamps=timestamps)
+
+    def predict_dist(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> DistributionForecast:
+        Z = self._predict_features(deps_oof)
+        return self.downstream.predict_dist(Z, ids=ids, timestamps=timestamps)
+
+    def _predict_features(self, deps_oof: dict[str, Any] | None) -> np.ndarray:
+        if not deps_oof or set(self.depends_on) - set(deps_oof):
+            raise ValueError(
+                f"DistAsFeatures.predict needs deps_oof for {self.depends_on}; "
+                f"got {list(deps_oof or [])}"
+            )
+        Z = self._featurize(deps_oof)
+        if Z.shape[1] != self._n_features_:
+            raise RuntimeError(
+                f"DistAsFeatures: train had {self._n_features_} features; "
+                f"predict produced {Z.shape[1]}"
+            )
+        return Z
+
+
+# ---------------------------------------------------------------------------
+# LinearPoolDist — convex combination of upstream DistributionForecasts.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LinearPoolDist(BaseEstimator):
+    """Linear (mixture) opinion pool over K upstream dists:
+
+        F(y | x) = Σ_k w_k · F_k(y | x),    w_k ≥ 0,  Σ w_k = 1
+
+    Weights are GLOBAL (not per-row) and fit by minimising weighted-empirical
+    CRPS on OOF. Per-component samples drawn from a fixed mid-rank τ grid
+    via ppf — so each upstream backing must support ppf.
+
+    Output backing: quantile, evaluated at a 99-point τ grid by inverting
+    the weighted empirical CDF of stacked component samples. Tail policy:
+    clip.
+
+    For Gaussian-only upstream a closed-form mixture-CRPS exists (Grimit
+    et al., 2006) — left as a v0.2 optimisation.
+    """
+
+    deps: tuple[str, ...]
+    n_samples: int = 200
+    name: str = "LinearPoolDist"
+    weights_: np.ndarray | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        if len(self.deps) < 2:
+            raise ValueError(
+                f"LinearPoolDist needs ≥2 upstream deps; got {self.deps}"
+            )
+        self.depends_on = tuple(self.deps)
+
+    def _sample_grid(self) -> np.ndarray:
+        # Mid-rank τ grid in (0, 1); excludes endpoints so parametric-normal
+        # tails don't blow up to ±inf.
+        return (np.arange(self.n_samples) + 0.5) / self.n_samples
+
+    def _component_samples(self, deps_oof: dict[str, Any]) -> np.ndarray:
+        """Return (K, N, n_samples) sample tensor from upstream ppfs."""
+        taus = self._sample_grid()
+        cols = [deps_oof[name].ppf(taus) for name in self.depends_on]
+        return np.stack(cols, axis=0)
+
+    @staticmethod
+    def _weighted_crps(
+        stacked: np.ndarray,                       # (N, M) — M = K·S
+        sample_w: np.ndarray,                      # (M,) sums to 1
+        y: np.ndarray,                             # (N,)
+    ) -> np.ndarray:
+        """Per-row weighted-empirical CRPS.
+
+        CRPS = Σ_j w_j |x_j - y|  -  0.5 · Σ_{j,k} w_j w_k |x_j - x_k|
+
+        Vectorised pairwise term via sorted-sample identity:
+            0.5 · Σ_{j,k} w_j w_k |x_j - x_k|
+              = Σ_j w_j (x_j · cum_w_j  -  cum_wx_j)
+        where cum_w / cum_wx are cumulative sums over x-sorted samples.
+        """
+        N, M = stacked.shape
+        term1 = (sample_w[None, :] * np.abs(stacked - y[:, None])).sum(axis=1)
+        order = np.argsort(stacked, axis=1)
+        s_sorted = np.take_along_axis(stacked, order, axis=1)
+        w_sorted = sample_w[order]
+        cum_w = np.cumsum(w_sorted, axis=1)
+        cum_wx = np.cumsum(w_sorted * s_sorted, axis=1)
+        pairwise = (w_sorted * (s_sorted * cum_w - cum_wx)).sum(axis=1)
+        return term1 - pairwise
+
+    def _objective(
+        self,
+        w: np.ndarray,
+        comp_samples: np.ndarray,                  # (K, N, S)
+        y: np.ndarray,
+        sample_weight: np.ndarray | None,
+    ) -> float:
+        K, N, S = comp_samples.shape
+        stacked = comp_samples.transpose(1, 0, 2).reshape(N, K * S)
+        sample_w = np.repeat(w, S) / S
+        crps = self._weighted_crps(stacked, sample_w, y)
+        if sample_weight is None:
+            return float(crps.mean())
+        sw = np.asarray(sample_weight, dtype=float)
+        return float((sw * crps).sum() / sw.sum())
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        sample_weight: np.ndarray | None = None,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> Self:
+        from scipy.optimize import minimize
+
+        if not deps_oof or set(self.depends_on) - set(deps_oof):
+            raise ValueError(
+                f"LinearPoolDist.fit needs deps_oof for {self.depends_on}; "
+                f"got {list(deps_oof or [])}"
+            )
+        y = np.asarray(y, dtype=float)
+        comp_samples = self._component_samples(deps_oof)
+        K = comp_samples.shape[0]
+        w0 = np.full(K, 1.0 / K)
+        bounds = [(0.0, 1.0)] * K
+        constraints = ({"type": "eq", "fun": lambda w: w.sum() - 1.0},)
+        res = minimize(
+            self._objective, w0,
+            args=(comp_samples, y, sample_weight),
+            method="SLSQP", bounds=bounds, constraints=constraints,
+            options={"ftol": 1e-6, "maxiter": 200},
+        )
+        if not res.success:
+            raise RuntimeError(
+                f"LinearPoolDist: weight optimisation failed: {res.message}"
+            )
+        w_fit = np.clip(res.x, 0.0, 1.0)
+        self.weights_ = w_fit / w_fit.sum()
+        return self
+
+    def predict_dist(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> DistributionForecast:
+        from bracketlearn.tail import TailPolicy, TailRule
+
+        if self.weights_ is None:
+            raise RuntimeError("LinearPoolDist.predict_dist called before fit")
+        if not deps_oof or set(self.depends_on) - set(deps_oof):
+            raise ValueError(
+                f"LinearPoolDist.predict_dist needs deps_oof for {self.depends_on}"
+            )
+        comp_samples = self._component_samples(deps_oof)        # (K, N, S)
+        K, N, S = comp_samples.shape
+        stacked = comp_samples.transpose(1, 0, 2).reshape(N, K * S)
+        sample_w = np.repeat(self.weights_, S) / S
+
+        taus_out = np.linspace(0.01, 0.99, 99)
+        qvals = np.empty((N, taus_out.size))
+        for i in range(N):
+            order = np.argsort(stacked[i])
+            s_sorted = stacked[i][order]
+            w_sorted = sample_w[order]
+            cum = np.cumsum(w_sorted)
+            qvals[i] = np.interp(taus_out, cum, s_sorted)
+        qvals = np.maximum.accumulate(qvals, axis=1)            # isotonic-repair
+
+        prov = ProvenanceMeta(
+            forecaster_name=self.name,
+            forecaster_version="0.1",
+            fit_window=(datetime(2024, 1, 1), datetime.now()),
+            fold_idx=None,
+            calibration_set_hash=None,
+            random_seed=None,
+            code_sha="dev",
+            feature_matrix_hash="-",
+            created_at=datetime.now(),
+            sigma_source="native",
+        )
+        return DistributionForecast.from_quantiles(
+            taus=taus_out, qvals=qvals,
+            tail_policy=TailPolicy.same(TailRule.clip()),
+            ids=np.asarray(ids), timestamps=np.asarray(timestamps),
+            provenance=prov,
+        )
+
+
+# ---------------------------------------------------------------------------
+# CDFBoostBracket — B LightGBM heads on upstream-CDF features → bracket dist.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CDFBoostBracket(BaseEstimator):
+    """B LightGBM binary classifiers over upstream-CDF features.
+
+    Construction:
+        edges: (B+1,)  — bracket ladder. B = len(edges) - 1 bins.
+        deps:  K upstream DistForecaster names.
+
+    Feature matrix per row (passed to all B heads): the CDF of each upstream
+    dist evaluated at every ladder edge → shape (K · (B+1),). Optionally
+    concat raw X with ``include_raw_X=True`` (off by default — keeps the
+    "dist features only" framing clean).
+
+    Training: for each bin b, classifier_b predicts
+        y_b = 1[edges[b] ≤ y < edges[b+1]]
+    Outputs (N, B) probabilities, row-renormalised → bracket-backed dist.
+
+    Why this rather than linear stacking on upstream µ:
+      - sees the full CDF shape, not a point summary
+      - tree splits can model conditional "trust schedules" across regimes
+      - output is bracket-backed: natural fit for laddered contract pricing
+
+    Compare with:
+      - LinearPoolDist:    convex combination, global weights, full-dist mixture
+      - DistAsFeatures + NGBoostNormal:  Gaussian output, dist-summary features
+      - CumulativeBinary:  single classifier with cutpoint augmentation
+    """
+
+    deps: tuple[str, ...]
+    edges: np.ndarray
+    n_estimators: int = 200
+    learning_rate: float = 0.05
+    num_leaves: int = 15
+    min_child_samples: int = 20
+    include_raw_X: bool = False
+    name: str = "CDFBoostBracket"
+    clfs_: list[Any] = field(default_factory=list, init=False)
+
+    def __post_init__(self) -> None:
+        if not self.deps:
+            raise ValueError("CDFBoostBracket requires at least one upstream dep")
+        edges = np.asarray(self.edges, dtype=float)
+        if edges.ndim != 1 or edges.size < 3:
+            raise ValueError(
+                f"edges must be 1-D with ≥3 entries (≥2 bins); got shape {edges.shape}"
+            )
+        if np.any(np.diff(edges) <= 0):
+            raise ValueError("edges must be strictly increasing")
+        self.edges = edges
+        self.depends_on = tuple(self.deps)
+
+    def _featurize(
+        self,
+        X: np.ndarray | None,
+        deps_oof: dict[str, Any],
+    ) -> np.ndarray:
+        cols = [deps_oof[name].cdf(self.edges) for name in self.depends_on]
+        Z = np.column_stack(cols)
+        if self.include_raw_X:
+            if X is None:
+                raise ValueError(
+                    "CDFBoostBracket.include_raw_X=True but X was None"
+                )
+            X = np.asarray(X, dtype=float)
+            Z = np.column_stack([X, Z])
+        return Z
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        sample_weight: np.ndarray | None = None,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> Self:
+        import lightgbm as lgb
+
+        if not deps_oof or set(self.depends_on) - set(deps_oof):
+            raise ValueError(
+                f"CDFBoostBracket.fit needs deps_oof for {self.depends_on}; "
+                f"got {list(deps_oof or [])}"
+            )
+        y = np.asarray(y, dtype=float)
+        Z = self._featurize(X, deps_oof)
+        B = self.edges.size - 1
+        # Bin assignment: index of bin each y falls into. y outside [edges[0],
+        # edges[-1]] is clipped to the nearest bin (if you want
+        # to forbid out-of-range y, do it at the caller).
+        bin_idx = np.searchsorted(self.edges, y, side="right") - 1
+        bin_idx = np.clip(bin_idx, 0, B - 1)
+
+        common = dict(
+            n_estimators=self.n_estimators,
+            learning_rate=self.learning_rate,
+            num_leaves=self.num_leaves,
+            min_child_samples=self.min_child_samples,
+            objective="binary",
+            verbose=-1,
+        )
+        self.clfs_ = []
+        for b in range(B):
+            y_b = (bin_idx == b).astype(int)
+            if y_b.sum() < 2:
+                # Degenerate bin: no positives. Store sentinel = base rate.
+                base_rate = float(y_b.mean())
+                self.clfs_.append(("const", base_rate))
+                continue
+            clf = lgb.LGBMClassifier(**common, class_weight="balanced")
+            if sample_weight is not None:
+                clf.fit(Z, y_b, sample_weight=sample_weight)
+            else:
+                clf.fit(Z, y_b)
+            self.clfs_.append(("model", clf))
+        return self
+
+    def predict_dist(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> DistributionForecast:
+        if not self.clfs_:
+            raise RuntimeError("CDFBoostBracket.predict_dist called before fit")
+        if not deps_oof or set(self.depends_on) - set(deps_oof):
+            raise ValueError(
+                f"CDFBoostBracket.predict_dist needs deps_oof for {self.depends_on}"
+            )
+        Z = self._featurize(X, deps_oof)
+        N = Z.shape[0]
+        B = len(self.clfs_)
+        probs = np.empty((N, B))
+        for b, (kind, model) in enumerate(self.clfs_):
+            if kind == "const":
+                probs[:, b] = model
+            else:
+                probs[:, b] = model.predict_proba(Z)[:, 1]
+        # Row-renorm (heads are independent, so sums won't be 1).
+        probs = np.clip(probs, 0.0, 1.0)
+        row_sum = probs.sum(axis=1, keepdims=True)
+        if np.any(row_sum <= 0):
+            raise RuntimeError(
+                "CDFBoostBracket: all-zero row in predict_proba "
+                "(no head fired); check upstream dist coverage"
+            )
+        probs = probs / row_sum
+        prov = ProvenanceMeta(
+            forecaster_name=self.name,
+            forecaster_version="0.1",
+            fit_window=(datetime(2024, 1, 1), datetime.now()),
+            fold_idx=None,
+            calibration_set_hash=None,
+            random_seed=None,
+            code_sha="dev",
+            feature_matrix_hash="-",
+            created_at=datetime.now(),
+            sigma_source="native",
+        )
+        return DistributionForecast.from_brackets(
+            edges=self.edges, probs=probs,
+            ids=np.asarray(ids), timestamps=np.asarray(timestamps),
+            provenance=prov,
+        )

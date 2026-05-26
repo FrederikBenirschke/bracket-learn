@@ -152,6 +152,7 @@ def test_cumulative_binary_emits_bracket():
     from bracketlearn.trainers import CumulativeBinary
     X, y, ids, ts = _synthetic(n=80)
     cb = CumulativeBinary(cutpoints=np.array([8.0, 10.0, 12.0]),
+                          outer_edges=(0.0, 20.0),
                           n_estimators=20).fit(X, y)
     d = cb.predict_dist(X, ids=ids, timestamps=ts)
     assert d.backing == Backing.BRACKET

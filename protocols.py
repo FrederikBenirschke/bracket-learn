@@ -32,7 +32,7 @@ class Forecaster(Protocol):
 
     `depends_on` names upstream pipeline nodes whose OOF this forecaster
     consumes. Pipeline topo-sorts on this at build time and raises loudly
-    on missing deps (Rule #0.5). Default empty tuple = no deps.
+    on missing deps. Default empty tuple = no deps.
     """
 
     name: str

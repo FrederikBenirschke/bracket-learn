@@ -10,6 +10,7 @@ relevant side.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
 
 
 class BracketEdges(StrEnum):
-    CLOSED_OPEN = "closed_open"     # lo ≤ X < hi (Kalshi ladder default)
+    CLOSED_OPEN = "closed_open"     # lo ≤ X < hi (common ladder default)
     OPEN_CLOSED = "open_closed"     # lo < X ≤ hi
     CLOSED_CLOSED = "closed_closed" # lo ≤ X ≤ hi
     OPEN_OPEN = "open_open"         # lo < X < hi
@@ -74,7 +75,7 @@ class BinaryAbove:
     needs_right_tail: bool = False
 
     def price(self, dist: DistributionForecast) -> ContractForecast:
-        ...
+        raise NotImplementedError("BinaryAbove.price — not yet implemented")
 
 
 @dataclass
@@ -85,7 +86,7 @@ class BinaryBelow:
     needs_right_tail: bool = False
 
     def price(self, dist: DistributionForecast) -> ContractForecast:
-        ...
+        raise NotImplementedError("BinaryBelow.price — not yet implemented")
 
 
 @dataclass
@@ -98,19 +99,37 @@ class Bracket:
     needs_right_tail: bool = False
 
     def price(self, dist: DistributionForecast) -> ContractForecast:
-        ...
+        raise NotImplementedError("Bracket.price — not yet implemented")
 
 
 @dataclass
 class BracketLadder:
     """One row per (lo, hi) interval. Shared group_id across rows so
-    downstream calibrators can enforce monotonicity / simplex constraints."""
+    downstream calibrators can enforce monotonicity / simplex constraints.
+
+    ``strict`` controls coverage-failure behavior. By construction, the
+    ladder's bracket probabilities (cdf(edges[-1]) - cdf(edges[0])) only
+    capture mass that falls inside [edges[0], edges[-1]]. If the
+    distribution places mass outside that range — common for quantile
+    backings whose stored qvals extend past the ladder, or normal
+    backings whose σ-tails exceed the outermost edges — row sums fall
+    below 1.0 and contract prices are biased.
+
+    - ``strict=False`` (default): warn loudly via UserWarning when any
+      row's missed mass exceeds ``coverage_tol`` (default 1e-4). The
+      warning reports the worst-row missed mass so callers can judge.
+    - ``strict=True``: raise ValueError instead of warning. Use this
+      when downstream code requires coherent ladder probabilities (e.g.
+      simplex calibration, log-loss scoring).
+    """
 
     edges: np.ndarray               # (B+1,)
     edge_semantics: BracketEdges = BracketEdges.CLOSED_OPEN
     name: str = "bracket_ladder"
     needs_left_tail: bool = False
     needs_right_tail: bool = False
+    strict: bool = False
+    coverage_tol: float = 1e-4
 
     def price(self, dist: DistributionForecast) -> ContractForecast:
         edges = np.asarray(self.edges, dtype=float)
@@ -120,6 +139,23 @@ class BracketLadder:
         cdf_hi = dist.cdf(edges[1:])    # (N, B)
         cdf_lo = dist.cdf(edges[:-1])
         probs = cdf_hi - cdf_lo         # (N, B)
+        # Coverage check: row sums must be ~1.0. If not, ladder edges
+        # don't cover the distribution's effective support and mass is
+        # being silently dropped from contract prices.
+        row_sums = probs.sum(axis=1)
+        missed = 1.0 - row_sums
+        worst_missed = float(missed.max())
+        if worst_missed > self.coverage_tol:
+            n_bad = int((missed > self.coverage_tol).sum())
+            msg = (
+                f"ladder does not cover distribution support: "
+                f"worst row missed {worst_missed:.4f} of mass "
+                f"({n_bad}/{N} rows above coverage_tol={self.coverage_tol:g}). "
+                f"Extend ladder edges or set strict=False to silence."
+            )
+            if self.strict:
+                raise ValueError(msg)
+            warnings.warn(msg, UserWarning, stacklevel=2)
         # Flatten to long form: (N*B,) rows.
         contract_ids = np.tile(np.arange(B), N)
         entity_ids = np.repeat(dist.ids, B)
@@ -157,7 +193,7 @@ class ThresholdLadder:
     needs_right_tail: bool = False
 
     def price(self, dist: DistributionForecast) -> ContractForecast:
-        ...
+        raise NotImplementedError("ThresholdLadder.price — not yet implemented")
 
 
 @dataclass
@@ -170,7 +206,7 @@ class Twin:
     needs_right_tail: bool = False
 
     def price(self, dist: DistributionForecast) -> ContractForecast:
-        ...
+        raise NotImplementedError("Twin.price — not yet implemented")
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +232,7 @@ class VanillaCall:
     needs_right_tail: bool = True
 
     def price(self, dist: DistributionForecast) -> ContractForecast:
-        ...
+        raise NotImplementedError("VanillaCall.price — not yet implemented")
 
 
 @dataclass
@@ -209,7 +245,7 @@ class VanillaPut:
     needs_right_tail: bool = False
 
     def price(self, dist: DistributionForecast) -> ContractForecast:
-        ...
+        raise NotImplementedError("VanillaPut.price — not yet implemented")
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +275,7 @@ class LinearCombo:
         return any(p.needs_right_tail for _, p in self.parts)
 
     def price(self, dist: DistributionForecast) -> ContractForecast:
-        ...
+        raise NotImplementedError("LinearCombo.price — not yet implemented")
 
 
 def CallSpread(k1: float, k2: float) -> LinearCombo:
@@ -274,8 +310,8 @@ def Condor(k1: float, k2: float, k3: float, k4: float) -> LinearCombo:
 class PerRow:
     """Per-row strike (or other scalar param) wrapper.
 
-    Refuses the float | ndarray union footgun on adapter constructors
-    (Rule #0.5). Each row of dist priced against its own param value.
+    Refuses the float | ndarray union footgun on adapter constructors.
+    Each row of dist priced against its own param value.
 
     Usage:
         adapter = PerRow(BinaryAbove, strike=arr_per_row)
@@ -298,7 +334,7 @@ class PerRow:
         self.needs_right_tail = probe.needs_right_tail
 
     def price(self, dist: DistributionForecast) -> ContractForecast:
-        ...
+        raise NotImplementedError("PerRow.price — not yet implemented")
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +367,7 @@ class Custom:
         return self.support_hi is None
 
     def price(self, dist: DistributionForecast) -> ContractForecast:
-        ...
+        raise NotImplementedError("Custom.price — not yet implemented")
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +380,7 @@ class VenueSpec:
     """Venue-specific quote translation. Multiplies adapter fair_price
     (payoff-natural units) into venue units."""
 
-    venue: str                      # "kalshi", "polymarket_us", "cme", ...
+    venue: str                      # "venue_a", "exchange_b", ...
     ticker: str
     multiplier: float = 1.0         # $1 for binaries; $20 for CME HDD index pt
     tick_size: float = 0.01
@@ -357,4 +393,4 @@ def to_quote(
 ) -> ContractForecast:
     """Apply VenueSpec multiplier; return new ContractForecast with
     fair_price in venue units."""
-    ...
+    raise NotImplementedError("to_quote — not yet implemented")

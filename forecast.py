@@ -160,7 +160,34 @@ class DistributionForecast:
         timestamps: np.ndarray,
         provenance: ProvenanceMeta,
     ) -> DistributionForecast:
-        ...
+        """Native parametric Student-t. sigma is the scale parameter; the
+        marginal variance is sigma² · df / (df − 2) and requires df > 2.
+
+        df may be a scalar (broadcast) or per-row array.
+        """
+        mu = np.asarray(mu, dtype=float)
+        sigma = np.asarray(sigma, dtype=float)
+        df = np.asarray(df, dtype=float)
+        if df.ndim == 0:
+            df = np.full(mu.shape, float(df))
+        if mu.shape != sigma.shape or mu.shape != ids.shape or mu.shape != df.shape:
+            raise ValueError(
+                f"shape mismatch: mu={mu.shape} sigma={sigma.shape} "
+                f"df={df.shape} ids={ids.shape}"
+            )
+        if np.any(sigma <= 0):
+            raise ValueError("sigma must be strictly positive")
+        if np.any(df <= 2.0):
+            raise ValueError("df must be > 2 (finite variance required)")
+        return cls(
+            backing=Backing.PARAMETRIC,
+            family=ParametricFamily.STUDENT_T,
+            params={"mu": mu, "sigma": sigma, "df": df},
+            ids=np.asarray(ids),
+            timestamps=np.asarray(timestamps),
+            provenance=provenance,
+            tail_support="full",
+        )
 
     @classmethod
     def from_mixture_normal(
@@ -214,8 +241,8 @@ class DistributionForecast:
         timestamps: np.ndarray,
         provenance: ProvenanceMeta,
     ) -> DistributionForecast:
-        """Quantile-backed. tail_policy is required (Rule #0.5: no silent
-        linear extrapolation).
+        """Quantile-backed. tail_policy is required — silent linear
+        extrapolation would mask upstream config bugs.
 
         taus: (Q,) sorted ascending in (0, 1).
         qvals: (N, Q) per-row quantile values, monotone non-decreasing along Q.
@@ -236,7 +263,7 @@ class DistributionForecast:
             raise ValueError("taus must lie strictly in (0, 1)")
         # Quantiles must be monotone non-decreasing along Q. Small numerical
         # crossings (≲ 1e-9 of the row range) are repaired silently; anything
-        # bigger is a real bug upstream and raises (Rule #0.5).
+        # bigger is a real bug upstream and raises.
         diffs = np.diff(qvals, axis=1)
         if np.any(diffs < 0):
             row_range = qvals.max(axis=1, keepdims=True) - qvals.min(axis=1, keepdims=True)
@@ -269,7 +296,10 @@ class DistributionForecast:
         timestamps: np.ndarray,
         provenance: ProvenanceMeta,
     ) -> DistributionForecast:
-        ...
+        raise NotImplementedError(
+            "DistributionForecast.from_empirical — empirical backing not "
+            "yet implemented. Use from_quantiles or from_brackets."
+        )
 
     @classmethod
     def from_brackets(
@@ -319,6 +349,11 @@ class DistributionForecast:
             mu = self.params["mu"][:, None]
             sigma = self.params["sigma"][:, None]
             out = _stats.norm.cdf(x_arr[None, :], loc=mu, scale=sigma)
+        elif self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.STUDENT_T:
+            mu = self.params["mu"][:, None]
+            sigma = self.params["sigma"][:, None]
+            df = self.params["df"][:, None]
+            out = _stats.t.cdf(x_arr[None, :], df=df, loc=mu, scale=sigma)
         elif self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.MIXTURE_NORMAL:
             # weights/mus/sigmas: (N, K). Compute Σ_k w_k Φ((x - μ_k)/σ_k).
             w = self.params["weights"][:, :, None]      # (N, K, 1)
@@ -379,7 +414,7 @@ class DistributionForecast:
         return out[:, 0] if scalar else out
 
     def ppf(self, tau: np.ndarray | float) -> np.ndarray:
-        """Quantile function."""
+        """Quantile function. Scalar tau → (N,); array tau → (N, len(tau))."""
         tau_arr = np.atleast_1d(np.asarray(tau, dtype=float))
         scalar = np.isscalar(tau)
         if np.any((tau_arr < 0) | (tau_arr > 1)):
@@ -389,6 +424,87 @@ class DistributionForecast:
             mu = self.params["mu"][:, None]
             sigma = self.params["sigma"][:, None]
             out = _stats.norm.ppf(tau_arr[None, :], loc=mu, scale=sigma)
+        elif self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.STUDENT_T:
+            mu = self.params["mu"][:, None]
+            sigma = self.params["sigma"][:, None]
+            df = self.params["df"][:, None]
+            out = _stats.t.ppf(tau_arr[None, :], df=df, loc=mu, scale=sigma)
+        elif self.backing == Backing.QUANTILE:
+            # Per-row piecewise-linear interp: tau → q. Outside [taus[0], taus[-1]]
+            # we clip to the outermost stored quantile (matches TailRule.clip
+            # semantics; any non-clip policy raises rather than silently
+            # extrapolating).
+            taus = self.taus
+            qvals = self.qvals
+            N, _ = qvals.shape
+            out = np.empty((N, tau_arr.shape[0]))
+            left_rule, right_rule = _resolve_tail_kinds(self.tail_policy)
+            if left_rule != "clip" or right_rule != "clip":
+                raise NotImplementedError(
+                    f"ppf on quantile backing only supports clip tails; "
+                    f"got left={left_rule!r} right={right_rule!r}"
+                )
+            for i in range(N):
+                out[i] = np.interp(tau_arr, taus, qvals[i])
+        elif self.backing == Backing.BRACKET:
+            # Invert piecewise-linear CDF: cum-probs at edge k is sum of
+            # probs[0..k-1]. For tau in [cum[k], cum[k+1]] we land in bin k
+            # and linearly interpolate within [edges[k], edges[k+1]].
+            edges = self.edges
+            probs = self.probs                   # (N, B)
+            N, B = probs.shape
+            cum = np.concatenate(
+                [np.zeros((N, 1)), np.cumsum(probs, axis=1)], axis=1
+            )                                    # (N, B+1)
+            out = np.empty((N, tau_arr.shape[0]))
+            for i in range(N):
+                for j, t in enumerate(tau_arr):
+                    if t <= 0:
+                        out[i, j] = edges[0]
+                    elif t >= 1:
+                        out[i, j] = edges[-1]
+                    else:
+                        k = int(np.searchsorted(cum[i], t, side="right") - 1)
+                        k = max(0, min(k, B - 1))
+                        width_p = cum[i, k + 1] - cum[i, k]
+                        if width_p <= 0:
+                            out[i, j] = edges[k]
+                        else:
+                            frac = (t - cum[i, k]) / width_p
+                            out[i, j] = edges[k] + frac * (edges[k + 1] - edges[k])
+        elif self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.MIXTURE_NORMAL:
+            # Numeric inverse via vectorised per-row bisection. Search range:
+            # μ ± 8·σ across components — wide enough that mixture CDF is
+            # ~0/1 at endpoints.
+            w = self.params["weights"]            # (N, K)
+            mus = self.params["mus"]              # (N, K)
+            sigmas = self.params["sigmas"]        # (N, K)
+            N = w.shape[0]
+            lo_full = (mus - 8.0 * sigmas).min(axis=1)    # (N,)
+            hi_full = (mus + 8.0 * sigmas).max(axis=1)    # (N,)
+
+            def _row_cdf(x_per_row: np.ndarray) -> np.ndarray:
+                """Mixture CDF evaluated at one x per row. Returns (N,)."""
+                # P(X ≤ x) = Σ_k w_k Φ((x - μ_k) / σ_k), with x broadcast over K.
+                z = (x_per_row[:, None] - mus) / sigmas
+                return (w * _stats.norm.cdf(z)).sum(axis=1)
+
+            out = np.empty((N, tau_arr.shape[0]))
+            for j, t in enumerate(tau_arr):
+                if t <= 0:
+                    out[:, j] = lo_full
+                    continue
+                if t >= 1:
+                    out[:, j] = hi_full
+                    continue
+                lo = lo_full.copy()
+                hi = hi_full.copy()
+                for _ in range(60):                       # ~1e-18 on 16-decade range
+                    mid = 0.5 * (lo + hi)
+                    go_right = _row_cdf(mid) < t
+                    lo = np.where(go_right, mid, lo)
+                    hi = np.where(go_right, hi, mid)
+                out[:, j] = 0.5 * (lo + hi)
         else:
             raise NotImplementedError(f"ppf not implemented for backing={self.backing}")
 
@@ -407,6 +523,11 @@ class DistributionForecast:
             mu = self.params["mu"][:, None]
             sigma = self.params["sigma"][:, None]
             out = _stats.norm.pdf(x_arr[None, :], loc=mu, scale=sigma)
+        elif self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.STUDENT_T:
+            mu = self.params["mu"][:, None]
+            sigma = self.params["sigma"][:, None]
+            df = self.params["df"][:, None]
+            out = _stats.t.pdf(x_arr[None, :], df=df, loc=mu, scale=sigma)
         elif self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.MIXTURE_NORMAL:
             w = self.params["weights"][:, :, None]
             mus = self.params["mus"][:, :, None]
@@ -417,7 +538,7 @@ class DistributionForecast:
             if density_method != "step":
                 raise ValueError(
                     "pdf on bracket backing requires density_method='step' "
-                    "(Rule #0.5: no silent KDE bandwidth)"
+                    "(no silent KDE bandwidth)"
                 )
             # density inside bin k = probs[:, k] / (edges[k+1] - edges[k])
             widths = np.diff(self.edges)         # (B,)
@@ -437,6 +558,8 @@ class DistributionForecast:
 
     def mean(self) -> np.ndarray:
         if self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.NORMAL:
+            return self.params["mu"].copy()
+        if self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.STUDENT_T:
             return self.params["mu"].copy()
         if self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.MIXTURE_NORMAL:
             return (self.params["weights"] * self.params["mus"]).sum(axis=1)
@@ -459,6 +582,11 @@ class DistributionForecast:
     def variance(self) -> np.ndarray:
         if self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.NORMAL:
             return self.params["sigma"] ** 2
+        if self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.STUDENT_T:
+            # Var = σ² · df / (df − 2); df > 2 is enforced at construction.
+            sigma = self.params["sigma"]
+            df = self.params["df"]
+            return sigma ** 2 * df / (df - 2.0)
         if self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.MIXTURE_NORMAL:
             # E[X²] − E[X]², with E[X²] = Σ w_k (μ_k² + σ_k²).
             w = self.params["weights"]
@@ -479,6 +607,17 @@ class DistributionForecast:
             mu = self.params["mu"][:, None]
             sigma = self.params["sigma"][:, None]
             return rng.normal(loc=mu, scale=sigma, size=(mu.shape[0], n))
+        if self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.STUDENT_T:
+            mu = self.params["mu"][:, None]
+            sigma = self.params["sigma"][:, None]
+            df = self.params["df"][:, None]
+            # rng.standard_t(df) does not broadcast df over rows; sample per-row.
+            N = mu.shape[0]
+            out = np.empty((N, n))
+            df_flat = df[:, 0]
+            for i in range(N):
+                out[i] = rng.standard_t(df_flat[i], size=n)
+            return mu + sigma * out
         raise NotImplementedError(f"sample not implemented for backing={self.backing}")
 
     # NOTE: expected_payoff is intentionally NOT here. Each ContractAdapter
@@ -490,18 +629,18 @@ class DistributionForecast:
     def to_quantiles(self, taus: np.ndarray) -> DistributionForecast:
         """Returns new dist with quantile backing. Records lossy conversion
         into provenance.conversion_chain."""
-        ...
+        raise NotImplementedError("DistributionForecast.to_quantiles — not yet implemented")
 
     def to_brackets(self, edges: np.ndarray) -> DistributionForecast:
-        ...
+        raise NotImplementedError("DistributionForecast.to_brackets — not yet implemented")
 
     def to_normal(self) -> DistributionForecast:
         """Moment match. Lossy for fat-tailed or skewed inputs."""
-        ...
+        raise NotImplementedError("DistributionForecast.to_normal — not yet implemented")
 
     def is_lossless_to(self, target_backing: Backing) -> bool:
         """True iff conversion to target_backing preserves all information."""
-        ...
+        raise NotImplementedError("DistributionForecast.is_lossless_to — not yet implemented")
 
 
 def _resolve_tail_kinds(tail_policy) -> tuple[str, str]:
@@ -555,4 +694,4 @@ class ContractForecast:
     ) -> ContractForecast:
         """Contract-space recalibration (§8.4). Distinct from
         DistributionForecast-level calibration."""
-        ...
+        raise NotImplementedError("ContractForecast.calibrate — not yet implemented")

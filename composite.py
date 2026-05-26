@@ -36,7 +36,7 @@ class LiftedForecaster(BaseEstimator):
     Pipeline supplies base_oof from its fold structure. Standalone callers
     compute OOF themselves (cross_val_predict → PointForecast → .fit).
 
-    No hidden inner CV. No secret pipeline-state coupling. Rule #0.5.
+    No hidden inner CV. No secret pipeline-state coupling.
     """
 
     def __init__(

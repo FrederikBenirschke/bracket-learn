@@ -130,12 +130,16 @@ class PipelineResult:
                 if m == "crps":
                     if dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.NORMAL:
                         row["crps"] = float(scoremod.crps_gaussian(dist, y_oof).mean())
+                    elif dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.MIXTURE_NORMAL:
+                        # Monte-Carlo CRPS (energy form). 2000 samples is a
+                        # speed/accuracy tradeoff that keeps the leaderboard
+                        # responsive without distorting rank order.
+                        row["crps"] = float(scoremod.crps_mixture_normal(dist, y_oof).mean())
                     elif dist.backing == Backing.BRACKET:
                         row["crps"] = float(scoremod.crps_bracket(dist, y_oof).mean())
                     elif dist.backing == Backing.QUANTILE:
                         row["crps"] = float(scoremod.crps_quantile(dist, y_oof).mean())
                     else:
-                        # Mixture: no closed-form CRPS; skip.
                         row["crps"] = float("nan")
                 elif m == "log_score":
                     if dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.NORMAL:
@@ -144,6 +148,9 @@ class PipelineResult:
                         row["log_score"] = float(scoremod.log_score_mixture_normal(dist, y_oof).mean())
                     elif dist.backing == Backing.BRACKET:
                         row["log_score"] = float(scoremod.log_score_bracket(dist, y_oof).mean())
+                    elif dist.backing == Backing.QUANTILE:
+                        # Piecewise-linear CDF → piecewise-constant density.
+                        row["log_score"] = float(scoremod.log_score_quantile(dist, y_oof).mean())
                     else:
                         row["log_score"] = float("nan")
                 elif m in ("pit", "pit_mean"):
@@ -761,10 +768,25 @@ def _predict_with_deps(
     ts: np.ndarray,
     deps_oof: dict[str, DistributionForecast],
 ) -> DistributionForecast:
+    """Call predict_dist with ``deps_oof`` if the signature accepts it.
+
+    We introspect the signature instead of using a bare ``except TypeError``
+    (which would swallow real bugs raised inside predict_dist).
+    """
+    import inspect
+
     try:
+        sig = inspect.signature(forecaster.predict_dist)
+        params = sig.parameters
+    except (TypeError, ValueError):
+        params = {}
+    accepts_deps = (
+        "deps_oof" in params
+        or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    )
+    if accepts_deps:
         return forecaster.predict_dist(X, ids=ids, timestamps=ts, deps_oof=deps_oof)
-    except TypeError:
-        return forecaster.predict_dist(X, ids=ids, timestamps=ts)
+    return forecaster.predict_dist(X, ids=ids, timestamps=ts)
 
 
 def _stitch_folds(

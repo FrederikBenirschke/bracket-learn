@@ -318,7 +318,97 @@ for i, (name, c, ls, sk) in enumerate(rows, 1):
     print(f"{i:<5}{name:<18}{c:>10.4f}{ls_s}{sk:>+10.3f}")
 
 # %% [markdown]
-# Skill bars for the leaderboard:
+# ## Bridge to classical ML: point-forecast benchmark
+#
+# Probabilistic models can be collapsed to a point forecast by taking the
+# mean (or median, or mode) of the predicted distribution. Once you have
+# a single number per row, you can use the metrics regression people
+# already know — RMSE, MAE, MAPE — and compare against a sklearn
+# regressor trained with the same CV.
+#
+# This is the "OK but does it beat sklearn?" check.
+
+# %%
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.model_selection import KFold
+
+from bracketlearn.score import to_point
+
+# Refit each leaderboard pipeline; collapse OOF dist to mean → RMSE/MAE.
+def _dist_to_point_metrics(stage_name, forecaster):
+    p = ForecastPipeline(
+        steps=[(stage_name, forecaster)],
+        cv="kfold", n_folds=5, shuffle=True, random_state=0,
+        refit_on_full=False,
+    )
+    r = p.fit_predict(X, y, ids=ids, timestamps=ts)
+    dist = r[stage_name]
+    y_oof = y[dist.ids.astype(int)]
+    mu = to_point(dist, how="mean")
+    return {
+        "RMSE": float(np.sqrt(mean_squared_error(y_oof, mu))),
+        "MAE":  float(mean_absolute_error(y_oof, mu)),
+    }
+
+
+# Two classical-ML baselines using the same k-fold split (no
+# distributional output — just RMSE / MAE per row of the OOF predict).
+def _sklearn_oof_metrics(model):
+    kf = KFold(n_splits=5, shuffle=True, random_state=0)
+    oof_pred = np.empty_like(y)
+    for tr, te in kf.split(X):
+        m = type(model)(**model.get_params())
+        m.fit(X[tr], y[tr])
+        oof_pred[te] = m.predict(X[te])
+    return {
+        "RMSE": float(np.sqrt(mean_squared_error(y, oof_pred))),
+        "MAE":  float(mean_absolute_error(y, oof_pred)),
+    }
+
+
+from lightgbm import LGBMRegressor
+
+point_lb = {
+    # Probabilistic → mean.
+    "Empirical (→mean)":      _dist_to_point_metrics("e", EmpiricalDistribution()),
+    "Ridge+GR (→mean)":       _dist_to_point_metrics("r", LiftedForecaster(
+        SklearnPoint(RidgeCV()), GlobalResidual(), name="r",
+    )),
+    "MixtureNormals (→mean)": _dist_to_point_metrics("m", MixtureNormals()),
+    "QuantileReg (→mean)":    _dist_to_point_metrics("q", QuantileReg(
+        n_estimators=200, learning_rate=0.05, random_seed=0,
+    )),
+    # Classical regressors (no distribution at all).
+    "sklearn RidgeCV":        _sklearn_oof_metrics(RidgeCV()),
+    "LightGBM":               _sklearn_oof_metrics(LGBMRegressor(
+        n_estimators=200, learning_rate=0.05, verbose=-1, random_state=0,
+    )),
+}
+
+rows_pt = sorted(point_lb.items(), key=lambda kv: kv[1]["RMSE"])
+print(f"{'rank':<5}{'model':<26}{'RMSE':>10}{'MAE':>10}")
+print("-" * 51)
+for i, (name, m) in enumerate(rows_pt, 1):
+    print(f"{i:<5}{name:<26}{m['RMSE']:>10.4f}{m['MAE']:>10.4f}")
+
+# Skill bars: RMSE vs the sklearn baseline.
+sk_rmse = point_lb["sklearn RidgeCV"]["RMSE"]
+names_pt = [r[0] for r in rows_pt if r[0] != "sklearn RidgeCV"]
+skills_pt = [1 - r[1]["RMSE"]/sk_rmse for r in rows_pt if r[0] != "sklearn RidgeCV"]
+fig, ax = plt.subplots(figsize=(9, 4.5))
+colors_pt = ["#4878a8" if s > 0 else "#d57646" for s in skills_pt]
+ax.barh(names_pt, skills_pt, color=colors_pt)
+ax.axvline(0, color="black", linewidth=0.5)
+ax.invert_yaxis()
+ax.set_xlabel(f"1 − RMSE / RMSE(sklearn RidgeCV={sk_rmse:.3f})")
+ax.set_title("Point-forecast skill vs sklearn RidgeCV baseline")
+for i, s in enumerate(skills_pt):
+    ax.text(s + (0.005 if s > 0 else -0.005), i, f"{s:+.3f}",
+            va="center", ha="left" if s > 0 else "right")
+plt.tight_layout(); plt.show()
+
+# %% [markdown]
+# Skill bars for the **distributional** leaderboard:
 
 # %%
 names = [r[0] for r in rows if r[0] != "Empirical"]

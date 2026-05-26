@@ -320,7 +320,8 @@ lb = {
         n_estimators=200, learning_rate=0.05, random_seed=0,
     ), x_in=X),
     "CumBinary":      _score_one("cum", CumulativeBinary(
-        cutpoints=cuts, n_estimators=80,
+        cutpoints=cuts, outer_edges=(float(edges[0]), float(edges[-1])),
+        n_estimators=80,
     ), x_in=X),
 }
 
@@ -347,4 +348,86 @@ for i, s in enumerate(skills):
     ax.text(s + (0.005 if s > 0 else -0.005), i,
             f"{s:+.3f}", va="center",
             ha="left" if s > 0 else "right")
+plt.tight_layout(); plt.show()
+
+# %% [markdown]
+# ## Point-forecast benchmark — classical regression view
+#
+# Collapse each predictive distribution to its mean → score with RMSE/MAE
+# and compare against sklearn's `Ridge` and LightGBM trained with the
+# same expanding-window splits. This is the "does my probabilistic stack
+# beat plain regression on classical metrics?" check.
+
+# %%
+from lightgbm import LGBMRegressor
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.model_selection import TimeSeriesSplit
+
+from bracketlearn.score import to_point
+
+# Reuse the dists from the leaderboard pipelines above where convenient;
+# for sklearn baselines walk the same expanding splits the pipeline used.
+def _point_metrics_from_dist(dist, y_full):
+    y_oof = y_full[dist.ids.astype(int)]
+    mu = to_point(dist, how="mean")
+    return {
+        "RMSE": float(np.sqrt(mean_squared_error(y_oof, mu))),
+        "MAE":  float(mean_absolute_error(y_oof, mu)),
+    }
+
+
+# We already have OOF dists for emp, persist24, emos_iso, qreg in `result`.
+prob_point = {
+    "Empirical (→mean)":   _point_metrics_from_dist(result["emp"], y),
+    "Persist-24 (→mean)":  _point_metrics_from_dist(result["persist24"], y),
+    "EMOS+Iso (→mean)":    _point_metrics_from_dist(result["emos_iso"], y),
+    "QuantileReg (→mean)": _point_metrics_from_dist(result["qreg"], y),
+}
+
+
+# Classical sklearn regressors over the same expanding-window splits the
+# pipeline uses internally. TimeSeriesSplit is the sklearn equivalent.
+def _sklearn_oof(model_factory, X_in):
+    tss = TimeSeriesSplit(n_splits=5)
+    preds = np.full(y.size, np.nan)
+    for tr, te in tss.split(X_in):
+        m = model_factory()
+        m.fit(X_in[tr], y[tr])
+        preds[te] = m.predict(X_in[te])
+    mask = ~np.isnan(preds)
+    return {
+        "RMSE": float(np.sqrt(mean_squared_error(y[mask], preds[mask]))),
+        "MAE":  float(mean_absolute_error(y[mask], preds[mask])),
+    }
+
+
+prob_point["sklearn Ridge"] = _sklearn_oof(
+    lambda: Ridge(alpha=1.0), X,    # raw feature matrix, not the X_ens
+)
+prob_point["LightGBM"] = _sklearn_oof(
+    lambda: LGBMRegressor(n_estimators=200, learning_rate=0.05,
+                          verbose=-1, random_state=0),
+    X,
+)
+
+rows_pt = sorted(prob_point.items(), key=lambda kv: kv[1]["RMSE"])
+print(f"{'rank':<5}{'model':<24}{'RMSE':>10}{'MAE':>10}")
+print("-" * 49)
+for i, (name, m) in enumerate(rows_pt, 1):
+    print(f"{i:<5}{name:<24}{m['RMSE']:>10.2f}{m['MAE']:>10.2f}")
+
+sk_rmse = prob_point["sklearn Ridge"]["RMSE"]
+names_pt = [r[0] for r in rows_pt if r[0] != "sklearn Ridge"]
+skills_pt = [1 - r[1]["RMSE"]/sk_rmse for r in rows_pt if r[0] != "sklearn Ridge"]
+fig, ax = plt.subplots(figsize=(9, 4.5))
+colors_pt = ["#4878a8" if s > 0 else "#d57646" for s in skills_pt]
+ax.barh(names_pt, skills_pt, color=colors_pt)
+ax.axvline(0, color="black", linewidth=0.5)
+ax.invert_yaxis()
+ax.set_xlabel(f"1 − RMSE / RMSE(sklearn Ridge={sk_rmse:.1f})")
+ax.set_title("Point-forecast skill vs sklearn Ridge")
+for i, s in enumerate(skills_pt):
+    ax.text(s + (0.005 if s > 0 else -0.005), i, f"{s:+.3f}",
+            va="center", ha="left" if s > 0 else "right")
 plt.tight_layout(); plt.show()

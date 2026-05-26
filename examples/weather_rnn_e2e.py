@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import os
 
-# Set before torch import (per Rule #0 in rnn_hourly.py): macOS libomp clash.
+# Set before torch import: macOS libomp clash.
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import warnings

@@ -1,7 +1,7 @@
 """DistributionForecast backing invariants.
 
 Each backing must satisfy:
-- Construction rejects malformed input loudly (Rule #0.5).
+- Construction rejects malformed input loudly.
 - CDF is monotone non-decreasing in y.
 - CDF → 0 at -inf, → 1 at +inf (or at bounded support edges).
 - Bracket probs sum to 1; quantile qvals are non-decreasing in tau.
@@ -64,6 +64,74 @@ class TestFromNormal:
         # cdf returns (N, len(ys)); pick row 0.
         assert np.all(np.diff(cdfs) >= -1e-12)
         assert cdfs[0] < 0.01 and cdfs[-1] > 0.99
+
+
+# ---------------------------------------------------------------------------
+# Student-t backing
+# ---------------------------------------------------------------------------
+
+
+class TestFromStudentT:
+    def test_basic_construction(self, prov, ids_ts):
+        ids, ts = ids_ts(3)
+        d = DistributionForecast.from_student_t(
+            mu=np.array([0.0, 1.0, 2.0]),
+            sigma=np.array([1.0, 1.0, 2.0]),
+            df=np.array([5.0, 5.0, 8.0]),
+            ids=ids, timestamps=ts, provenance=prov,
+        )
+        assert d.backing == Backing.PARAMETRIC
+        assert d.family == ParametricFamily.STUDENT_T
+        assert d.tail_support == "full"
+
+    def test_scalar_df_broadcasts(self, prov, ids_ts):
+        ids, ts = ids_ts(3)
+        d = DistributionForecast.from_student_t(
+            mu=np.zeros(3), sigma=np.ones(3), df=np.array(6.0),
+            ids=ids, timestamps=ts, provenance=prov,
+        )
+        np.testing.assert_array_equal(d.params["df"], np.full(3, 6.0))
+
+    def test_rejects_low_df(self, prov, ids_ts):
+        ids, ts = ids_ts(2)
+        with pytest.raises(ValueError, match="df"):
+            DistributionForecast.from_student_t(
+                mu=np.zeros(2), sigma=np.ones(2),
+                df=np.array([5.0, 1.5]),       # 1.5 < 2 → infinite variance
+                ids=ids, timestamps=ts, provenance=prov,
+            )
+
+    def test_cdf_ppf_roundtrip(self, prov, ids_ts):
+        ids, ts = ids_ts(1)
+        d = DistributionForecast.from_student_t(
+            mu=np.array([2.0]), sigma=np.array([1.5]), df=np.array([5.0]),
+            ids=ids, timestamps=ts, provenance=prov,
+        )
+        taus = np.array([0.1, 0.25, 0.5, 0.75, 0.9])
+        q = d.ppf(taus)[0]
+        back = d.cdf(q)[0]
+        np.testing.assert_allclose(back, taus, atol=1e-9)
+
+    def test_variance_formula(self, prov, ids_ts):
+        ids, ts = ids_ts(1)
+        sigma, df = 2.0, 5.0
+        d = DistributionForecast.from_student_t(
+            mu=np.array([0.0]), sigma=np.array([sigma]), df=np.array([df]),
+            ids=ids, timestamps=ts, provenance=prov,
+        )
+        expected = sigma ** 2 * df / (df - 2.0)
+        np.testing.assert_allclose(d.variance(), expected, rtol=1e-12)
+
+    def test_sample_matches_moments(self, prov, ids_ts):
+        ids, ts = ids_ts(1)
+        d = DistributionForecast.from_student_t(
+            mu=np.array([0.0]), sigma=np.array([1.0]), df=np.array([10.0]),
+            ids=ids, timestamps=ts, provenance=prov,
+        )
+        rng = np.random.default_rng(0)
+        samples = d.sample(20000, rng)[0]
+        # Var ≈ 1 · 10/8 = 1.25
+        assert abs(samples.var() - 1.25) < 0.1
 
 
 # ---------------------------------------------------------------------------

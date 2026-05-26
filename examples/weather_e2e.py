@@ -114,7 +114,10 @@ def main() -> None:
                                     ConformalCalibrate(),
                                     name="qreg_conformal")),
             ("qforest",         QuantileForest(n_estimators=200, random_seed=0)),
-            ("cumbin",          CumulativeBinary(cutpoints=inner_cutpoints)),
+            ("cumbin",          CumulativeBinary(
+                                    cutpoints=inner_cutpoints,
+                                    outer_edges=(float(edges[0]), float(edges[-1])),
+                                )),
             ("tail_specialist", TailSpecialist(edges=edges, upstream="emos")),
             # Tier 3
             ("online_agg",      LiftedForecaster(

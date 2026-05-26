@@ -56,12 +56,19 @@ def main() -> None:
     ids = np.arange(X.shape[0])
     ts = ids.astype(float)                          # synthetic ordering — k-fold
 
-    # Bracket ladder over the realistic price range: 8 buckets from $50k → $500k.
-    # In $100k units that's [0.5, 5.0] → 0.5-wide bins.
-    edges = np.array([0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0])
+    # Bracket ladder over the realistic price range. Outer edges set wide
+    # (-100 and 100) so the ladder covers the full distribution support
+    # for every row, including the high-end tail where qreg's stored
+    # quantiles plateau at ~5.0 (the California housing target is capped)
+    # AND the occasional pathological RidgeCV prediction in the deep
+    # negative range. Inner bins are 0.5-wide from $50k → $500k.
+    edges = np.array(
+        [-100.0, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 100.0]
+    )
     ladder = BracketLadder(edges=edges)
     print(f"ladder: {len(edges)-1} brackets covering "
-          f"${edges[0]*100:.0f}k to ${edges[-1]*100:.0f}k")
+          f"${edges[0]*100:.0f}k to ${edges[-1]*100:.0f}k "
+          f"(outer bins absorb tail mass)")
 
     print("fitting pipeline (kfold, 5 folds) …")
     pipeline = ForecastPipeline(
@@ -105,7 +112,7 @@ def main() -> None:
     print("\n=== example bracket prices for 3 held-out rows ===")
     bracket_labels = [f"{lo:.1f}–{hi:.1f}" for lo, hi
                       in zip(edges[:-1], edges[1:], strict=True)]
-    header = "  ".join(f"{lbl:>9}" for lbl in bracket_labels)
+    header = "  ".join(f"{lbl:>11}" for lbl in bracket_labels)
     print(f"{'stage / row':<24}{header}")
     pred = pipeline.predict(X[:3], ids=np.arange(3),
                             timestamps=np.arange(3, dtype=float))
@@ -115,7 +122,7 @@ def main() -> None:
         prices = contracts.fair_price.reshape(-1, B)
         for row in range(3):
             row_str = f"{stage_name} row {row}  y={y[row]:.2f}"
-            cells = "  ".join(f"{p:9.2f}" for p in prices[row])
+            cells = "  ".join(f"{p:11.2f}" for p in prices[row])
             print(f"{row_str:<24}{cells}")
 
     print("\ndone.")

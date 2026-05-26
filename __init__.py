@@ -22,15 +22,19 @@ from bracketlearn.protocols import (
     StepLearner,
 )
 from bracketlearn.tail import TailPolicy, TailRule
+from bracketlearn.trainers import CDFBoostBracket, DistAsFeatures, LinearPoolDist
 
 __all__ = [
+    "CDFBoostBracket",
     "Calibrator",
     "ContractForecast",
+    "DistAsFeatures",
     "DistForecaster",
     "DistributionForecast",
     "EmpiricalDistribution",
     "Forecaster",
     "Lifter",
+    "LinearPoolDist",
     "Persistence",
     "PointForecast",
     "PointForecaster",

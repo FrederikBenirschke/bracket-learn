@@ -238,3 +238,81 @@ for i, s in enumerate(skills):
     ax.text(s - 0.003, i, f"{s:+.3f}", va="center", ha="right",
             color="white")
 plt.tight_layout(); plt.show()
+
+# %% [markdown]
+# ## Point-forecast benchmark — RMSE / MAE vs sklearn
+#
+# Collapse `best_pipeline_`'s OOF distribution to its mean → RMSE/MAE
+# and compare against plain `RidgeCV` and `LGBMRegressor` trained with
+# the same k-fold split. Are the probabilistic models also competitive
+# on classical point-prediction metrics?
+
+# %%
+from lightgbm import LGBMRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.model_selection import KFold
+
+from bracketlearn.score import to_point
+
+# Refit the best pipeline with refit_on_full=False to get clean OOF dists.
+best_eval = ForecastPipeline(
+    steps=[("qreg", QuantileReg(
+        n_estimators=search.best_params_["qreg__n_estimators"],
+        learning_rate=search.best_params_["qreg__learning_rate"],
+        random_seed=0,
+    ))],
+    cv="kfold", n_folds=4, shuffle=True, random_state=0,
+    refit_on_full=False,
+).fit_predict(X, y, ids=ids, timestamps=ts)
+dist = best_eval["qreg"]
+y_oof = y[dist.ids.astype(int)]
+mu_best = to_point(dist, how="mean")
+mu_med = to_point(dist, how="median")
+
+
+def _sklearn_oof(model_factory):
+    kf = KFold(n_splits=4, shuffle=True, random_state=0)
+    preds = np.empty_like(y)
+    for tr, te in kf.split(X):
+        m = model_factory()
+        m.fit(X[tr], y[tr])
+        preds[te] = m.predict(X[te])
+    return preds
+
+
+sk_ridge_pred = _sklearn_oof(lambda: RidgeCV())
+sk_lgb_pred = _sklearn_oof(lambda: LGBMRegressor(
+    n_estimators=200, learning_rate=0.05, verbose=-1, random_state=0,
+))
+
+
+def _metrics(name, pred, y_ref):
+    return (name,
+            float(np.sqrt(mean_squared_error(y_ref, pred))),
+            float(mean_absolute_error(y_ref, pred)))
+
+
+point_rows = [
+    _metrics("QReg-best (→mean)",   mu_best, y_oof),
+    _metrics("QReg-best (→median)", mu_med, y_oof),
+    _metrics("sklearn RidgeCV",     sk_ridge_pred, y),
+    _metrics("LightGBM",            sk_lgb_pred, y),
+]
+point_rows.sort(key=lambda r: r[1])
+
+print(f"{'rank':<5}{'model':<22}{'RMSE':>10}{'MAE':>10}")
+print("-" * 47)
+for i, (n, r, a) in enumerate(point_rows, 1):
+    print(f"{i:<5}{n:<22}{r:>10.4f}{a:>10.4f}")
+
+fig, ax = plt.subplots(figsize=(8, 4))
+xs = np.arange(len(point_rows))
+w = 0.35
+ax.bar(xs - w/2, [r[1] for r in point_rows], w, color="#4878a8", label="RMSE")
+ax.bar(xs + w/2, [r[2] for r in point_rows], w, color="#d57646", label="MAE")
+ax.set_xticks(xs); ax.set_xticklabels([r[0] for r in point_rows],
+                                       rotation=20, ha="right")
+ax.set_ylabel("error ($100k units)")
+ax.set_title("Point-forecast metrics — probabilistic mean vs classical regressors")
+ax.legend()
+plt.tight_layout(); plt.show()

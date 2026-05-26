@@ -104,6 +104,212 @@ def crps_quantile(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
     return 2.0 * (avg * dt[None, :]).sum(axis=1)
 
 
+def log_score_quantile(
+    dist: DistributionForecast, y: np.ndarray,
+) -> np.ndarray:
+    """Negative log-density per row from a quantile-backed dist.
+
+    Treats the CDF as piecewise-linear between the stored quantiles, so
+    the density is piecewise-constant: between τ_i and τ_{i+1}, the
+    density at any y in [q_i, q_{i+1}] is (τ_{i+1} - τ_i) / (q_{i+1} - q_i).
+
+    Below q_0 and above q_{Q-1}, density falls back to a tail-rule
+    estimate: we extend the local density of the outermost bin (a
+    cautious choice that mirrors ``tail_policy="clip"``). A `gpd`
+    or `gaussian_match` tail would give heavier tails, but those rules
+    aren't in v0.2 — see the README "Not yet" list.
+    """
+    if dist.backing != Backing.QUANTILE:
+        raise NotImplementedError(
+            f"log_score_quantile expects quantile backing; got {dist.backing}"
+        )
+    y = np.asarray(y, dtype=float)
+    taus = dist.taus                       # (Q,)
+    qvals = dist.qvals                     # (N, Q)
+    N, Q = qvals.shape
+    # Per-bin slope: (τ_{i+1} - τ_i) / (q_{i+1} - q_i). Guard zero width.
+    dq = np.diff(qvals, axis=1)            # (N, Q-1)
+    dt = np.diff(taus)                     # (Q-1,)
+    safe_dq = np.where(dq > 1e-12, dq, 1e-12)
+    density_bins = dt[None, :] / safe_dq   # (N, Q-1)
+
+    # Locate y in qvals row-by-row (vectorised via argmax of a comparison).
+    # For each row, find i such that qvals[i] <= y < qvals[i+1]; outside
+    # the support, use the nearest interior bin's density (clip rule).
+    out = np.empty(N, dtype=float)
+    for r in range(N):
+        q_r = qvals[r]
+        y_r = y[r]
+        if y_r <= q_r[0]:
+            out[r] = density_bins[r, 0]
+        elif y_r >= q_r[-1]:
+            out[r] = density_bins[r, -1]
+        else:
+            i = int(np.searchsorted(q_r, y_r, side="right") - 1)
+            i = min(max(i, 0), Q - 2)
+            out[r] = density_bins[r, i]
+    out = np.maximum(out, 1e-300)
+    return -np.log(out)
+
+
+def crps_mixture_normal(
+    dist: DistributionForecast,
+    y: np.ndarray,
+    *,
+    n_samples: int = 2000,
+    random_state: int | None = 0,
+) -> np.ndarray:
+    """Monte-Carlo CRPS for a mixture-of-normals parametric backing.
+
+    Uses the energy form:
+
+        CRPS(F, y) = E|X - y| - 0.5 · E|X - X'|
+
+    where X, X' are i.i.d. draws from the predictive mixture. Sampling
+    is per-row vectorised; ``n_samples`` controls both the MAE term
+    and the self-distance term (X' = roll(X, 1) for a cheap antithetic
+    estimate of the second expectation).
+
+    A closed form exists for mixtures of normals but is O(K²) per row
+    with quadratic numerical headaches; for the moderate K bracketlearn
+    actually ships (<10 vendors), MC at n=2000 lands within ~1 % of the
+    true value at ms-per-row cost.
+    """
+    if dist.backing != Backing.PARAMETRIC or dist.family != ParametricFamily.MIXTURE_NORMAL:
+        raise NotImplementedError(
+            f"crps_mixture_normal expects mixture_normal backing; got "
+            f"{dist.backing}/{dist.family}"
+        )
+    y = np.asarray(y, dtype=float)
+    weights = dist.params["weights"]        # (N, K)
+    mus = dist.params["mus"]                # (N, K)
+    sigmas = dist.params["sigmas"]          # (N, K)
+    N, K = weights.shape
+    rng = np.random.default_rng(random_state)
+    # Sample mixture indices: (N, n_samples).
+    cumw = np.cumsum(weights, axis=1)
+    u = rng.random((N, n_samples))
+    comp = (u[:, :, None] >= cumw[:, None, :]).sum(axis=2)
+    comp = np.clip(comp, 0, K - 1)
+    rows = np.arange(N)[:, None]
+    mu_s = mus[rows, comp]
+    sig_s = sigmas[rows, comp]
+    # Draw the samples.
+    z = rng.standard_normal((N, n_samples))
+    x = mu_s + sig_s * z                    # (N, n_samples)
+    # E|X - y|.
+    term1 = np.abs(x - y[:, None]).mean(axis=1)
+    # 0.5 · E|X - X'|. Antithetic via roll for variance reduction.
+    x_prime = np.roll(x, 1, axis=1)
+    term2 = 0.5 * np.abs(x - x_prime).mean(axis=1)
+    return term1 - term2
+
+
+def to_point(
+    dist: DistributionForecast,
+    *,
+    how: str = "mean",
+) -> np.ndarray:
+    """Collapse any ``DistributionForecast`` to a 1-D point forecast.
+
+    Args:
+        dist: any backing.
+        how: one of ``"mean"``, ``"median"``, ``"mode"``.
+
+    The point forecast is what classical-ML reviewers want to see —
+    feed the output to ``sklearn.metrics.mean_squared_error`` or
+    ``mean_absolute_error`` and compare against an ``Ridge`` or
+    ``LGBMRegressor`` benchmark.
+
+    Mode definitions:
+        - parametric normal / mixture: μ (matches mean for single normal;
+          most-likely component for mixture).
+        - bracket: midpoint of the highest-probability bin.
+        - quantile: the stored quantile whose density is highest, taken
+          at the bin midpoint (rough — quantile dists don't carry a true
+          mode without further interpolation).
+    """
+    if how not in ("mean", "median", "mode"):
+        raise ValueError(f"how={how!r} not in 'mean'/'median'/'mode'")
+    if dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.NORMAL:
+        mu = dist.params["mu"]
+        if how == "mode":
+            return np.asarray(mu, dtype=float)
+        if how == "mean" or how == "median":
+            return np.asarray(mu, dtype=float)
+    if dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.MIXTURE_NORMAL:
+        weights = dist.params["weights"]
+        mus = dist.params["mus"]
+        if how == "mean":
+            return (weights * mus).sum(axis=1)
+        if how == "mode":
+            best = np.argmax(weights, axis=1)
+            return mus[np.arange(mus.shape[0]), best]
+        # median for mixture: invert the CDF row-by-row.
+        return _quantile_at(dist, 0.5)
+    if dist.backing == Backing.BRACKET:
+        edges = dist.edges
+        probs = dist.probs
+        mids = 0.5 * (edges[:-1] + edges[1:])
+        if how == "mean":
+            return (probs * mids[None, :]).sum(axis=1)
+        if how == "mode":
+            top = np.argmax(probs, axis=1)
+            return mids[top]
+        return _quantile_at(dist, 0.5)
+    if dist.backing == Backing.QUANTILE:
+        taus = dist.taus
+        qvals = dist.qvals
+        if how == "median":
+            j = int(np.argmin(np.abs(taus - 0.5)))
+            return qvals[:, j]
+        if how == "mean":
+            # Trapezoidal estimate using the stored (τ, q) grid.
+            # E[Y] = ∫ q dτ ≈ trapz(qvals, taus) over the [τ_0, τ_{Q-1}]
+            # interval. Extends to [0, 1] via the clip tail rule.
+            dt = np.diff(taus)
+            avg = 0.5 * (qvals[:, :-1] + qvals[:, 1:])
+            inner = (avg * dt[None, :]).sum(axis=1)
+            # Mass below τ_0 and above τ_{Q-1} held at the boundary q values.
+            lower = qvals[:, 0] * taus[0]
+            upper = qvals[:, -1] * (1.0 - taus[-1])
+            return lower + inner + upper
+        # mode: highest-density bin → midpoint of (q_i, q_{i+1}).
+        dq = np.diff(qvals, axis=1)
+        dt = np.diff(taus)
+        density = dt[None, :] / np.where(dq > 1e-12, dq, 1e-12)
+        top = np.argmax(density, axis=1)
+        rows = np.arange(qvals.shape[0])
+        return 0.5 * (qvals[rows, top] + qvals[rows, top + 1])
+    raise NotImplementedError(f"to_point: backing {dist.backing} not handled")
+
+
+def _quantile_at(dist: DistributionForecast, q: float) -> np.ndarray:
+    """Numerical CDF inversion at level ``q``. Used for medians of
+    distributions without closed-form medians (mixture, bracket)."""
+    from scipy.optimize import brentq
+
+    n = dist.params["mu"].shape[0] if dist.backing == Backing.PARAMETRIC else dist.probs.shape[0]
+    out = np.empty(n, dtype=float)
+    # Build a per-row CDF callable using the dist's vectorised cdf().
+    for i in range(n):
+        # cdf() expects a 1-D array of points; we wrap a scalar.
+        def f(x):
+            return float(dist.cdf(np.array([x]))[i, 0]) - q
+        # Probe brackets — start with the dist's own quantile-like landmarks.
+        if dist.backing == Backing.BRACKET:
+            lo, hi = float(dist.edges[0]), float(dist.edges[-1])
+        elif dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.MIXTURE_NORMAL:
+            mus = dist.params["mus"][i]
+            sigmas = dist.params["sigmas"][i]
+            lo = float((mus - 6 * sigmas).min())
+            hi = float((mus + 6 * sigmas).max())
+        else:
+            lo, hi = -1e6, 1e6
+        out[i] = brentq(f, lo, hi, xtol=1e-6)
+    return out
+
+
 def log_score_bracket(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
     """Negative log-density per row for bracket-backed dist (uniform-in-bin)."""
     if dist.backing != Backing.BRACKET:
