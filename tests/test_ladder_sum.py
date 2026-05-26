@@ -25,7 +25,6 @@ from bracketlearn.adapters import BracketLadder
 from bracketlearn.forecast import DistributionForecast
 from bracketlearn.tail import TailPolicy, TailRule
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -159,7 +158,6 @@ def test_quantile_clip_ladder_warns_when_ladder_doesnt_cover_qvals(
     Scenario mirrors the housing example: edges[-1]=5.0 but qvals[i][-1]
     plateaus at 5.04 for some rows → ~50% of mass missed for those rows.
     """
-    import warnings as _w
     N = 1
     ids, ts = ids_ts(N)
     taus = np.linspace(0.05, 0.95, 11)

@@ -61,12 +61,18 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/fbenirschke/bracketlearn"
-Issues = "https://github.com/fbenirschke/bracketlearn/issues"
+Homepage = "https://github.com/FrederikBenirschke/bracketlearn"
+Issues = "https://github.com/FrederikBenirschke/bracketlearn/issues"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["bracketlearn*"]
+# The bracketlearn source files live alongside this pyproject.toml (flat
+# layout where the project dir *is* the package dir). Map the package name
+# explicitly to "." so setuptools picks up adapters.py / forecast.py / ...
+# as bracketlearn.adapters / bracketlearn.forecast / ... .
+[tool.setuptools]
+packages = ["bracketlearn"]
+
+[tool.setuptools.package-dir]
+bracketlearn = "."
 
 [tool.setuptools.package-data]
 bracketlearn = ["py.typed"]

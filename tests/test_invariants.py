@@ -24,24 +24,18 @@ import numpy as np
 import pytest
 
 from bracketlearn import (
+    EMOS,
     BaseEstimator,
     BracketLadder,
     CalibratedForecaster,
-    ConformalCalibrate,
     DistributionForecast,
-    EMOS,
     EmpiricalDistribution,
     GlobalResidual,
     Isotonic,
-    LiftedForecaster,
-    MixtureNormals,
     Persistence,
     SklearnPoint,
-    Stacking,
-    StudentTResidual,
     clone,
 )
-
 
 # ---------------------------------------------------------------------------
 # 5a — clone equality across every BaseEstimator subclass

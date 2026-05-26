@@ -33,7 +33,7 @@ html_theme = "furo"
 html_static_path = ["_static"]
 html_title = f"{project} v{release}"
 html_theme_options = {
-    "source_repository": "https://github.com/frederikbenirschke/bracketlearn",
+    "source_repository": "https://github.com/FrederikBenirschke/bracketlearn",
     "source_branch": "main",
     "source_directory": "docs/",
 }

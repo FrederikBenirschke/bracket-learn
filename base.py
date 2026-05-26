@@ -120,9 +120,12 @@ class BaseEstimator(_SklearnBaseEstimator):
         check_is_fitted(est)`` work on bracketlearn estimators.
         """
         for name in vars(self):
-            if name.endswith("_") and not name.endswith("__"):
-                if getattr(self, name, None) is not None:
-                    return True
+            if (
+                name.endswith("_")
+                and not name.endswith("__")
+                and getattr(self, name, None) is not None
+            ):
+                return True
         return False
 
     def _record_input_signature(self, X) -> None:
@@ -139,10 +142,9 @@ class BaseEstimator(_SklearnBaseEstimator):
         if hasattr(X, "shape") and len(X.shape) >= 2:
             self.n_features_in_ = int(X.shape[1])  # type: ignore[attr-defined]
         if hasattr(X, "columns"):
-            try:
+            import contextlib
+            with contextlib.suppress(TypeError, ValueError):
                 self.feature_names_in_ = np.asarray(X.columns, dtype=object)  # type: ignore[attr-defined]
-            except (TypeError, ValueError):
-                pass
 
     @classmethod
     def _get_param_names(cls) -> list[str]:

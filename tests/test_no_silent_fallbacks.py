@@ -40,42 +40,6 @@ def _prov() -> ProvenanceMeta:
 
 
 # ---------------------------------------------------------------------------
-# B8 — DistributionForecast.to_* conversion methods are still stubs (the
-# adapter-level stubs were dropped in v0.2 — only BracketLadder /
-# PerRowBracketLadder / BinaryAbove / BinaryBelow / Twin / ThresholdLadder
-# are kept, all implemented).
-# ---------------------------------------------------------------------------
-
-
-def test_dist_conversion_stubs_raise():
-    dist = DistributionForecast.from_normal(
-        mu=np.array([0.0]), sigma=np.array([1.0]),
-        ids=np.array([0]), timestamps=np.array([0.0]),
-        provenance=_prov(),
-    )
-    with pytest.raises(NotImplementedError):
-        dist.to_quantiles(np.array([0.5]))
-    with pytest.raises(NotImplementedError):
-        dist.to_brackets(np.array([0.0, 1.0]))
-    with pytest.raises(NotImplementedError):
-        dist.to_normal()
-    with pytest.raises(NotImplementedError):
-        dist.is_lossless_to(dist.backing)
-
-
-def test_from_empirical_stub_raises():
-    from bracketlearn.tail import TailPolicy, TailRule
-    with pytest.raises(NotImplementedError):
-        DistributionForecast.from_empirical(
-            members=np.zeros((2, 3)),
-            tail_policy=TailPolicy.same(TailRule.clip()),
-            ids=np.array([0, 1]),
-            timestamps=np.array([0.0, 1.0]),
-            provenance=_prov(),
-        )
-
-
-# ---------------------------------------------------------------------------
 # B6 — SklearnPoint introspects fit signature instead of swallowing TypeError.
 # ---------------------------------------------------------------------------
 

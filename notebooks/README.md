@@ -28,6 +28,15 @@ The notebooks are paired with `.py` source files in
 Edit either side and run `jupytext --sync notebooks/<name>.ipynb` to
 keep them in sync. Diffs are much cleaner against the `.py` source.
 
+All four notebooks share a single style module
+[`_src/_style.py`](_src/_style.py) — rcParams, a `tab10`-based
+model-family palette, and four plot helpers:
+`predicted_vs_realized_grid` (sklearn-style scatter grid headline plot),
+`reliability_with_histogram`, `cdf_overlay_for_examples`, and
+`leaderboard_bar`. The convention is: no bare bar charts unless they
+encode at least a dozen models. For one or two numbers, annotate them
+inside a scatter panel instead.
+
 To rebuild the `.ipynb` from scratch after editing the `.py`:
 
 ```bash

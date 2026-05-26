@@ -15,7 +15,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Re-exports
 # ---------------------------------------------------------------------------
@@ -58,14 +57,16 @@ def test_top_level_estimator_imports():
 
 
 def test_base_estimator_inherits_from_sklearn():
-    from bracketlearn import BaseEstimator
     from sklearn.base import BaseEstimator as SkBase
+
+    from bracketlearn import BaseEstimator
     assert issubclass(BaseEstimator, SkBase)
 
 
 def test_concrete_estimator_isinstance_of_sklearn_base():
     """A concrete bracketlearn estimator passes isinstance(est, sklearn BaseEstimator)."""
     from sklearn.base import BaseEstimator as SkBase
+
     from bracketlearn import EMOS, EmpiricalDistribution, QuantileReg
     for cls in (EMOS, EmpiricalDistribution, QuantileReg):
         assert isinstance(cls(), SkBase), f"{cls.__name__} not isinstance of sklearn BaseEstimator"
@@ -74,6 +75,7 @@ def test_concrete_estimator_isinstance_of_sklearn_base():
 def test_sklearn_clone_works_on_bracketlearn_estimator():
     """sklearn.base.clone produces an unfitted copy."""
     from sklearn.base import clone as sk_clone
+
     from bracketlearn import EMOS
     est = EMOS()
     cloned = sk_clone(est)
@@ -88,6 +90,7 @@ def test_sklearn_clone_works_on_bracketlearn_estimator():
 
 def test_sklearn_point_fit_predict_without_ids_or_timestamps():
     from sklearn.linear_model import Ridge
+
     from bracketlearn import SklearnPoint
     X = np.random.default_rng(0).standard_normal((20, 4))
     y = np.zeros(20)
@@ -112,6 +115,7 @@ def test_empirical_distribution_predict_without_ids():
 def test_explicit_ids_still_honored_when_provided():
     """If caller passes ids/timestamps, they win over the auto-fill defaults."""
     from sklearn.linear_model import Ridge
+
     from bracketlearn import SklearnPoint
     X = np.random.default_rng(0).standard_normal((10, 2))
     y = np.zeros(10)
@@ -129,8 +133,9 @@ def test_explicit_ids_still_honored_when_provided():
 
 def test_is_fitted_flips_after_fit():
     """check_is_fitted should detect post-fit state via the underscore convention."""
-    from sklearn.utils.validation import check_is_fitted
     from sklearn.exceptions import NotFittedError
+    from sklearn.utils.validation import check_is_fitted
+
     from bracketlearn import EmpiricalDistribution
 
     ed = EmpiricalDistribution()
@@ -145,6 +150,7 @@ def test_is_fitted_flips_after_fit():
 
 def test_is_fitted_for_sklearn_point():
     from sklearn.linear_model import Ridge
+
     from bracketlearn import SklearnPoint
     sp = SklearnPoint(Ridge())
     assert not sp.__sklearn_is_fitted__()
@@ -159,6 +165,7 @@ def test_is_fitted_for_sklearn_point():
 
 def test_n_features_in_set_by_sklearn_point():
     from sklearn.linear_model import Ridge
+
     from bracketlearn import SklearnPoint
     sp = SklearnPoint(Ridge())
     sp.fit(np.zeros((8, 5)), np.zeros(8))
@@ -169,6 +176,7 @@ def test_feature_names_in_set_when_x_is_dataframe():
     pytest.importorskip("pandas")
     import pandas as pd
     from sklearn.linear_model import Ridge
+
     from bracketlearn import SklearnPoint
 
     X = pd.DataFrame(

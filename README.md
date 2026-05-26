@@ -21,12 +21,18 @@ price the resulting contracts.
 
 ## Install
 
-```bash
-pip install bracketlearn
+bracketlearn is not yet on PyPI. Install from source:
 
-# With the full set of optional trainers:
-pip install "bracketlearn[demo]"
+```bash
+git clone https://github.com/FrederikBenirschke/bracketlearn
+pip install -e ./bracketlearn
+
+# With the full set of optional trainers (LightGBM, NGBoost, torch, ...):
+pip install -e "./bracketlearn[demo]"
 ```
+
+PyPI publication is planned for the `v0.2.0` tag; once live the install
+becomes `pip install bracketlearn` / `pip install "bracketlearn[demo]"`.
 
 ## Adapter catalogue — venue → math
 

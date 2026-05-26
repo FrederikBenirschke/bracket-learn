@@ -17,48 +17,7 @@ Quick start::
 
 from __future__ import annotations
 
-# ---------------------------------------------------------------------------
-# Base machinery
-# ---------------------------------------------------------------------------
-
-from bracketlearn.base import BaseEstimator, clone
-
-# ---------------------------------------------------------------------------
-# Core data objects
-# ---------------------------------------------------------------------------
-
-from bracketlearn.forecast import (
-    Backing,
-    ContractForecast,
-    ContractSpec,
-    DistributionForecast,
-    ParametricFamily,
-    PointForecast,
-    ProvenanceMeta,
-)
-
-# ---------------------------------------------------------------------------
-# Protocols
-# ---------------------------------------------------------------------------
-
-from bracketlearn.protocols import (
-    Calibrator,
-    DistForecaster,
-    Forecaster,
-    Lifter,
-    PointForecaster,
-    StepLearner,
-)
-
-# ---------------------------------------------------------------------------
-# Tail policy
-# ---------------------------------------------------------------------------
-
-from bracketlearn.tail import TailPolicy, TailPolicyError, TailRule
-
-# ---------------------------------------------------------------------------
-# Contract adapters
-# ---------------------------------------------------------------------------
+__version__ = "0.2.0"
 
 from bracketlearn.adapters import (
     BinaryAbove,
@@ -70,22 +29,45 @@ from bracketlearn.adapters import (
     ThresholdLadder,
     Twin,
 )
-
-# ---------------------------------------------------------------------------
-# Baselines
-# ---------------------------------------------------------------------------
-
+from bracketlearn.base import BaseEstimator, clone
 from bracketlearn.baselines import EmpiricalDistribution, Persistence
-
-# ---------------------------------------------------------------------------
-# Trainers
-# ---------------------------------------------------------------------------
-
+from bracketlearn.composite import CalibratedForecaster, LiftedForecaster
+from bracketlearn.forecast import (
+    Backing,
+    ContractForecast,
+    ContractSpec,
+    DistributionForecast,
+    ParametricFamily,
+    PointForecast,
+    ProvenanceMeta,
+)
+from bracketlearn.lift import (
+    ConformalCalibrate,
+    GARCHResidual,
+    GlobalResidual,
+    Isotonic,
+    StudentTResidual,
+)
+from bracketlearn.multitarget import (
+    MultiOutputForecastPipeline,
+    MultiOutputPipelineResult,
+)
+from bracketlearn.pipeline import ForecastPipeline, PipelineResult
+from bracketlearn.protocols import (
+    Calibrator,
+    DistForecaster,
+    Forecaster,
+    Lifter,
+    PointForecaster,
+    StepLearner,
+)
+from bracketlearn.search import GridSearch
+from bracketlearn.tail import TailPolicy, TailPolicyError, TailRule
 from bracketlearn.trainers import (
+    EMOS,
     CDFBoostBracket,
     CumulativeBinary,
     DistAsFeatures,
-    EMOS,
     LinearPoolDist,
     MixtureNormals,
     NGBoostNormal,
@@ -104,37 +86,8 @@ try:
 except ImportError:  # pragma: no cover
     emos_calibrated = market_ols = ridge = None  # type: ignore[assignment]
 
-# ---------------------------------------------------------------------------
-# Lifters / calibrators
-# ---------------------------------------------------------------------------
-
-from bracketlearn.lift import (
-    ConformalCalibrate,
-    GARCHResidual,
-    GlobalResidual,
-    Isotonic,
-    StudentTResidual,
-)
-
-# ---------------------------------------------------------------------------
-# Composites
-# ---------------------------------------------------------------------------
-
-from bracketlearn.composite import CalibratedForecaster, LiftedForecaster
-
-# ---------------------------------------------------------------------------
-# Pipeline + search + multi-target
-# ---------------------------------------------------------------------------
-
-from bracketlearn.pipeline import ForecastPipeline, PipelineResult
-from bracketlearn.search import GridSearch
-from bracketlearn.multitarget import (
-    MultiOutputForecastPipeline,
-    MultiOutputPipelineResult,
-)
-
-
 __all__ = [
+    "__version__",
     # base
     "BaseEstimator",
     "clone",

@@ -15,7 +15,6 @@ from scipy import stats as _stats
 from bracketlearn.adapters import BinaryAbove, BinaryBelow, ThresholdLadder, Twin
 from bracketlearn.forecast import DistributionForecast
 
-
 # ---------------------------------------------------------------------------
 # BinaryAbove / BinaryBelow.
 # ---------------------------------------------------------------------------

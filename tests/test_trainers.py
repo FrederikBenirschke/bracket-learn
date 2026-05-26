@@ -168,9 +168,10 @@ def test_stacking_recovers_truth_from_perfect_upstream():
     """Two upstreams: a noisy one and a precise one. Stacking should
     weight the precise upstream more. Doesn't require exact recovery —
     just relative ordering of |weights_|."""
+    from datetime import datetime as _dt
+
     from bracketlearn.forecast import DistributionForecast, ProvenanceMeta
     from bracketlearn.trainers import Stacking
-    from datetime import datetime as _dt
 
     rng = np.random.default_rng(0)
     N = 200
@@ -211,9 +212,10 @@ def test_stacking_passes_sample_weight_through_to_lstsq():
     fit toward those rows. We check by comparing weighted-fit weights
     against unweighted-fit weights — they should differ when the
     upstream μ values differ between the two halves."""
+    from datetime import datetime as _dt
+
     from bracketlearn.forecast import DistributionForecast, ProvenanceMeta
     from bracketlearn.trainers import Stacking
-    from datetime import datetime as _dt
 
     rng = np.random.default_rng(0)
     N = 200
@@ -226,7 +228,8 @@ def test_stacking_passes_sample_weight_through_to_lstsq():
         fold_idx=None, calibration_set_hash=None, random_seed=0,
         code_sha="t", feature_matrix_hash="t", created_at=_dt.now(),
     )
-    ids = np.arange(N); ts = np.arange(N, dtype=float)
+    ids = np.arange(N)
+    ts = np.arange(N, dtype=float)
     d_a = DistributionForecast.from_normal(mu=mu_a, sigma=np.ones(N), ids=ids,
                                            timestamps=ts, provenance=prov)
     d_b = DistributionForecast.from_normal(mu=mu_b, sigma=np.ones(N), ids=ids,
@@ -300,8 +303,8 @@ def test_ridge_factory_emits_distforecaster_via_lift():
 
 
 def test_market_ols_factory_emits_distforecaster_via_lift():
-    from bracketlearn.trainers import market_ols
     from bracketlearn.pipeline import ForecastPipeline
+    from bracketlearn.trainers import market_ols
     X, y, ids, ts = _synthetic()
     p = ForecastPipeline(steps=[("ols", market_ols())], n_folds=3, refit_on_full=False)
     result = p.fit_predict(X, y, ids=ids, timestamps=ts)
@@ -311,8 +314,8 @@ def test_market_ols_factory_emits_distforecaster_via_lift():
 
 
 def test_emos_calibrated_factory_returns_calibrated_forecaster():
-    from bracketlearn.trainers import emos_calibrated
     from bracketlearn.composite import CalibratedForecaster
+    from bracketlearn.trainers import emos_calibrated
     edges = np.linspace(0, 20, 7)
     ec = emos_calibrated(edges=edges)
     assert isinstance(ec, CalibratedForecaster)

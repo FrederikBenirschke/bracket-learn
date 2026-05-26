@@ -8,6 +8,8 @@ minor release; patch releases are bug-fixes and additive tests.
 
 ### Added
 
+- `bracketlearn.__version__` (top-level + `__all__`) so callers can
+  introspect the installed version without parsing package metadata.
 - `adapters.BinaryAbove` — `P(X > k)` priced as `1 - dist.cdf(k)`. Maps
   to single-threshold Kalshi / Polymarket contracts.
 - `adapters.BinaryBelow` — `P(X ≤ k)` priced as `dist.cdf(k)`.
@@ -20,6 +22,17 @@ minor release; patch releases are bug-fixes and additive tests.
 
 ### Changed
 
+- Packaging: `pyproject.toml` now uses
+  `[tool.setuptools.package-dir]` to map `bracketlearn = "."`, so wheels
+  built from the flat layout actually ship the 15 source modules. The
+  previous `packages.find` config produced a metadata-only wheel that
+  installed no Python code (release blocker).
+- `README.md` and `docs/index.md` install instructions now reflect
+  pre-PyPI status (`pip install -e` from a git clone). Will switch back
+  to `pip install bracketlearn` once published.
+- GitHub URLs in `pyproject.toml` and `docs/conf.py` unified to
+  `FrederikBenirschke/bracketlearn` (previous mismatch: docs used
+  `frederikbenirschke/...`, pyproject used `fbenirschke/...`).
 - `bracketlearn.__all__` extended with `PerRowBracketLadder`, `Twin`,
   `ThresholdLadder` (the per-row ladder was missing from the previous
   release; the new binary/threshold/twin adapters are exported alongside).
@@ -30,6 +43,12 @@ minor release; patch releases are bug-fixes and additive tests.
 
 ### Removed
 
+- Six unimplemented methods on `DistributionForecast` / `ContractForecast`:
+  `from_empirical`, `to_quantiles`, `to_brackets`, `to_normal`,
+  `is_lossless_to`, and `ContractForecast.calibrate`. All six raised
+  `NotImplementedError` and had no callers outside the no-silent-fallbacks
+  tests. The two corresponding stub-tests were dropped. Public class
+  surface now matches what actually works.
 - Unimplemented adapter stubs that raised `NotImplementedError`:
   `Bracket` (single-bin), `VanillaCall`, `VanillaPut`, `LinearCombo`,
   `CallSpread`, `Butterfly`, `Condor`, `PerRow`, `Custom`, `VenueSpec`,
@@ -39,6 +58,25 @@ minor release; patch releases are bug-fixes and additive tests.
 - `test_no_silent_fallbacks.test_adapter_stubs_raise_not_implemented`
   and `test_to_quote_raises_not_implemented` removed alongside the
   stubs they covered.
+
+### Fixed
+
+- Sphinx `-W` build (the CI gate) was failing on three docstring issues
+  in `trainers.py` — `CDFBoostBracket` (definition-list unindent) and
+  `DistAsFeatures` (undefined `|taus|` / `|cuts|` substitutions). Both
+  rewritten with code-literal formulas.
+- `docs/guides/adapters.md` was documenting `BinaryAbove`, `BinaryBelow`,
+  `Twin`, `ThresholdLadder`, `LinearCombo`, `PerRow`, `Custom`,
+  `VanillaCall`, and `VanillaPut` as stubs. The first four are fully
+  implemented and tested; the latter five were deleted earlier this
+  cycle. Rewrote the guide to document each shipping adapter with a
+  working example.
+- `ruff check .` now passes with zero errors (CI lint was red on 31
+  warnings). Manual fixes covered nested-`if` collapses in
+  `base.py:122-128` and `trainers.py:326-334`, a `contextlib.suppress`
+  rewrite in `base.py:141-144`, and a semicolon split in
+  `tests/test_trainers.py:231`. `__init__.py` restored to a single
+  alphabetical import block.
 
 ### Added (continued — earlier in this release cycle)
 

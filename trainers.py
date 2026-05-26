@@ -323,12 +323,15 @@ class Stacking(BaseEstimator):
                     f"Stacking.fit: deps_oof[{name!r}].ids does not match the "
                     f"first upstream's ids — meta-learner rows would be misaligned"
                 )
-        if ids is not None and upstream_ids is not None:
-            if not np.array_equal(np.asarray(ids), upstream_ids):
-                raise ValueError(
-                    "Stacking.fit: caller's ids do not match deps_oof ids — "
-                    "rows would be misaligned"
-                )
+        if (
+            ids is not None
+            and upstream_ids is not None
+            and not np.array_equal(np.asarray(ids), upstream_ids)
+        ):
+            raise ValueError(
+                "Stacking.fit: caller's ids do not match deps_oof ids — "
+                "rows would be misaligned"
+            )
         cols = [deps_oof[name].params["mu"] for name in self.depends_on]
         Z = np.column_stack(cols)  # (N, K)
         # OLS with intercept (weighted if sample_weight given).
@@ -1529,7 +1532,7 @@ class DistAsFeatures(BaseEstimator):
         - variance (if ``include_variance=True``)
         - CDF at ``tail_cutpoints`` (tail-mass features)
 
-    Total per row: K · (|taus| + include_mean + include_variance + |cuts|).
+    Total per row: ``K * (len(feature_taus) + include_mean + include_variance + len(tail_cutpoints))``.
 
     The downstream forecaster sees ONLY dist-derived features, not raw X.
     If you also want raw X, build a separate node — keeping this class
@@ -1814,17 +1817,16 @@ class LinearPoolDist(BaseEstimator):
 class CDFBoostBracket(BaseEstimator):
     """B LightGBM binary classifiers over upstream-CDF features.
 
-    Construction:
-        edges: (B+1,)  — bracket ladder. B = len(edges) - 1 bins.
-        deps:  K upstream DistForecaster names.
+    Construction
+        - ``edges`` (B+1,): bracket ladder. B = ``len(edges) - 1`` bins.
+        - ``deps``: K upstream DistForecaster names.
 
     Feature matrix per row (passed to all B heads): the CDF of each upstream
-    dist evaluated at every ladder edge → shape (K · (B+1),). Optionally
+    dist evaluated at every ladder edge → shape ``(K * (B+1),)``. Optionally
     concat raw X with ``include_raw_X=True`` (off by default — keeps the
     "dist features only" framing clean).
 
-    Training: for each bin b, classifier_b predicts
-        y_b = 1[edges[b] ≤ y < edges[b+1]]
+    Training: for each bin b, classifier_b predicts ``y_b = 1[edges[b] <= y < edges[b+1]]``.
     Outputs (N, B) probabilities, row-renormalised → bracket-backed dist.
 
     Why this rather than linear stacking on upstream µ:

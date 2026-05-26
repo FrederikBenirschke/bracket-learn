@@ -17,23 +17,25 @@
 # # California housing → bracket-contract prices
 #
 # Take a regression dataset, predict a **distribution** over house prices,
-# then price a ladder of binary contracts ("will this house sell above $X?")
-# against the forecast distribution.
+# then price a ladder of binary contracts ("will this house sell above
+# $X?") against the forecast distribution.
 #
-# This notebook builds the visual story behind
-# [`examples/housing_brackets.py`](../examples/housing_brackets.py):
-#
-# 1. Fit `EmpiricalDistribution` (baseline), `Ridge + GlobalResidual`, and
-#    `QuantileReg` inside a `ForecastPipeline` with k-fold CV.
+# 1. Fit three forecasters inside a `ForecastPipeline`: `Empirical`
+#    (baseline), `Ridge + GlobalResidual`, `QuantileReg`.
 # 2. Score them on distribution-level (CRPS, PIT) and contract-level
 #    (Brier, log-loss) metrics.
-# 3. Plot what those numbers actually mean.
-# 4. Run a wider **leaderboard** over many trainers and rank them.
+# 3. Show *what those numbers actually mean* with diagnostic plots that
+#    each carry their own conclusion.
+# 4. Run a wider **leaderboard** and rank everything.
 
 # %%
+import sys
 import warnings
+from pathlib import Path
 
-import matplotlib.pyplot as plt
+# Make the paired _src/ helpers importable when executing the .ipynb.
+sys.path.insert(0, str(Path.cwd() / "_src"))
+
 import numpy as np
 from sklearn.datasets import fetch_california_housing
 from sklearn.linear_model import RidgeCV
@@ -43,23 +45,30 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
+import matplotlib.pyplot as plt
+
+# Shared style (rcParams + palette + plot helpers).
+from _style import (
+    cdf_overlay_for_examples,
+    color_for,
+    leaderboard_bar,
+    predicted_vs_realized_grid,
+    reliability_with_histogram,
+)
 from bracketlearn.adapters import BracketLadder
 from bracketlearn.baselines import EmpiricalDistribution
 from bracketlearn.composite import LiftedForecaster
 from bracketlearn.lift import GlobalResidual
 from bracketlearn.pipeline import ForecastPipeline
-from bracketlearn.score import pit
+from bracketlearn.score import pit, to_point
 from bracketlearn.trainers import QuantileReg, SklearnPoint
-
-plt.rcParams["figure.figsize"] = (10, 5)
-plt.rcParams["axes.grid"] = True
-plt.rcParams["grid.alpha"] = 0.3
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 # %% [markdown]
 # ## Data
 #
-# California housing — sklearn-bundled, 20 640 rows, target is median house
-# value in units of $100k. We subsample to 4 000 rows for notebook speed.
+# California housing — sklearn-bundled, 20 640 rows, target = median house
+# value in $100k units. We subsample to 4 000 rows for notebook speed.
 
 # %%
 data = fetch_california_housing()
@@ -75,22 +84,16 @@ print(f"X shape: {X.shape}   y range: ${y.min()*100:.0f}k–${y.max()*100:.0f}k"
 # %% [markdown]
 # ## Bracket ladder
 #
-# 8 buckets spanning $50k–$500k. The pipeline's forecasts get priced
-# against this ladder as binary contracts ("price falls into bracket k?").
+# 8 buckets covering the realistic price range. Each forecast gets priced
+# against this ladder as a binary contract per bucket.
 
 # %%
 edges = np.array([0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0])
 ladder = BracketLadder(edges=edges)
-bracket_labels = [f"${lo*100:.0f}–${hi*100:.0f}k"
-                  for lo, hi in zip(edges[:-1], edges[1:], strict=True)]
 print(f"{len(edges)-1} brackets covering ${edges[0]*100:.0f}k–${edges[-1]*100:.0f}k")
 
 # %% [markdown]
 # ## Fit the headline pipeline
-#
-# Three stages: marginal-y **baseline**, a Ridge + Gaussian residual, and a
-# LightGBM quantile-regression forecast. The pipeline clones each stage
-# per fold (k-fold CV with shuffle) so the user's instances stay clean.
 
 # %%
 pipeline = ForecastPipeline(
@@ -108,101 +111,166 @@ result = pipeline.fit_predict(X, y, ids=ids, timestamps=ts)
 print(result.to_table(y, metrics=["crps", "log_score", "pit"]))
 
 # %% [markdown]
-# ## Skill score vs the baseline
+# ## Headline diagnostic — predicted vs realized
 #
-# CRPSS = 1 − CRPS / CRPS_baseline. Positive = beats the marginal-y
-# floor; > 0.5 = strong.
+# This is the "OK but does the model actually work?" plot, modelled on
+# sklearn's
+# [`plot_stack_predictors`](https://scikit-learn.org/stable/auto_examples/ensemble/plot_stack_predictors.html)
+# example. One scatter panel per model; each panel has:
+#
+# - dots for `(realized, predicted-mean)` per row
+# - a black dashed diagonal — perfect prediction
+# - the model's CRPS / RMSE / MAE annotated inside the panel
+#
+# Points clinging to the diagonal = good. Wide vertical scatter at one
+# *x*-value = the model isn't separating that range. Drift away from the
+# diagonal = bias.
 
 # %%
 crps_scores = result.score(y, metrics=["crps"])
-baseline = crps_scores["emp"]["crps"]
-stage_names, skills, crps_vals = [], [], []
-for stage, row in crps_scores.items():
-    if stage == "emp":
-        continue
-    stage_names.append(stage)
-    skills.append(1.0 - row["crps"] / baseline)
-    crps_vals.append(row["crps"])
+panels = []
+for name in ["emp", "ridge", "qreg"]:
+    dist = result[name]
+    y_oof = y[dist.ids.astype(int)]
+    mu = to_point(dist, how="mean")
+    rmse = float(np.sqrt(mean_squared_error(y_oof, mu)))
+    mae = float(mean_absolute_error(y_oof, mu))
+    crps = float(crps_scores[name]["crps"])
+    panels.append((name, mu, y_oof,
+                   {"CRPS": crps, "RMSE": rmse, "MAE": mae}))
 
-fig, ax = plt.subplots(figsize=(8, 4))
-bars = ax.bar(stage_names, skills, color=["#4878a8", "#d57646"])
-ax.axhline(0, color="black", linewidth=0.5)
-ax.set_ylabel("CRPS skill score vs Empirical baseline")
-ax.set_title(f"CRPSS (baseline Empirical CRPS = {baseline:.4f})")
-for bar, val in zip(bars, skills, strict=True):
-    ax.text(bar.get_x() + bar.get_width() / 2, val + 0.01,
-            f"{val:+.3f}", ha="center", va="bottom")
-plt.tight_layout(); plt.show()
+fig = predicted_vs_realized_grid(
+    panels, ncols=3, units="$100k",
+    title="Predicted vs realized — all three models, OOF predictions",
+)
+plt.show()
 
 # %% [markdown]
-# ## PIT histogram
+# **Read it:** `emp` predicts the same number for every row (the marginal
+# mean), so all dots collapse onto one horizontal stripe — instructive
+# floor. `ridge` shows clear linear structure but underpredicts at the
+# top end. `qreg` tracks the diagonal across the full range.
+
+# %% [markdown]
+# ## PIT histograms — is each forecast *calibrated*?
 #
 # The Probability Integral Transform of the realized y under the forecast
-# CDF should be uniform on [0, 1] if the forecast is well-calibrated.
-# A U-shape = overconfident (forecasts too narrow); an inverted-U =
-# underconfident.
+# CDF should be **uniform on [0, 1]** if the model is well-calibrated.
+# - **U-shape** = overconfident (forecasts too narrow).
+# - **inverted-U** = underconfident.
+# - **left/right peak** = biased.
 
 # %%
-fig, axes = plt.subplots(1, 3, figsize=(13, 4), sharey=True)
+fig, axes = plt.subplots(1, 3, figsize=(11, 3.6), sharey=True)
 for ax, name in zip(axes, ["emp", "ridge", "qreg"], strict=True):
     dist = result[name]
     y_oof = y[dist.ids.astype(int)]
     pit_vals = pit(dist, y_oof)
-    ax.hist(pit_vals, bins=20, color="#4878a8", edgecolor="white", density=True)
-    ax.axhline(1.0, color="red", linestyle="--", linewidth=1, label="uniform")
-    ax.set_title(f"{name}  (mean={pit_vals.mean():.2f}, std={pit_vals.std():.2f})")
+    ax.hist(pit_vals, bins=20, color=color_for(name),
+            edgecolor="white", density=True, alpha=0.85)
+    ax.axhline(1.0, color="black", linestyle="--", linewidth=0.8)
+    # Quick shape diagnosis.
+    p25, p50, p75 = np.percentile(pit_vals, [25, 50, 75])
+    diagnosis = (
+        "U-shaped (overconfident)" if (pit_vals < 0.1).mean() + (pit_vals > 0.9).mean() > 0.25
+        else "inverted-U (underconfident)" if (pit_vals > 0.4).mean() < 0.15
+        else "approx. uniform"
+    )
+    ax.set_title(f"{name}\nshape: {diagnosis}", fontsize=10)
     ax.set_xlabel("PIT")
-    ax.legend(loc="upper right")
 axes[0].set_ylabel("density")
-plt.suptitle("PIT histograms — uniform = well-calibrated", y=1.02)
-plt.tight_layout(); plt.show()
+fig.tight_layout()
+plt.show()
 
 # %% [markdown]
-# ## Quantile fan: predictions vs realized
+# ## Quantile fan vs the feature most correlated with price
 #
-# For the QuantileReg stage, plot the predicted median + 10/90 % envelope
-# against realized prices on a sorted subset. A well-calibrated forecast
-# has ~80 % of dots inside the band and the median tracks the realized
-# value.
+# For QuantileReg, plot the 10/50/90 % predictive band as a function of
+# the feature most correlated with the target — here `MedInc` (median
+# income, by far the dominant signal in California housing). A
+# well-calibrated forecast has ~80 % of realised dots inside the band.
 
 # %%
-dist = result["qreg"]
-y_oof = y[dist.ids.astype(int)]
-# Sort by predicted median for a clean fan plot.
-median_idx = np.argmin(np.abs(dist.taus - 0.5))
-lo_idx = np.argmin(np.abs(dist.taus - 0.1))
-hi_idx = np.argmin(np.abs(dist.taus - 0.9))
-order = np.argsort(dist.qvals[:, median_idx])
-sub = order[::20]   # 1 in 20 for legibility
-xs = np.arange(sub.size)
+dist_qreg = result["qreg"]
+y_oof = y[dist_qreg.ids.astype(int)]
+# Feature with highest |corr| with y.
+corrs = np.array([np.corrcoef(X[dist_qreg.ids.astype(int), j], y_oof)[0, 1]
+                  for j in range(X.shape[1])])
+feat_idx = int(np.argmax(np.abs(corrs)))
+feat_name = data.feature_names[feat_idx]
+x_feat = X[dist_qreg.ids.astype(int), feat_idx]
 
-fig, ax = plt.subplots(figsize=(11, 4.5))
-ax.fill_between(xs, dist.qvals[sub, lo_idx], dist.qvals[sub, hi_idx],
-                alpha=0.3, color="#4878a8", label="10–90 % band")
-ax.plot(xs, dist.qvals[sub, median_idx], color="#4878a8", lw=1.5,
-        label="median")
-ax.scatter(xs, y_oof[sub], s=8, color="#d57646", alpha=0.7,
-           label="realized y")
-ax.set_xlabel("rows sorted by predicted median")
-ax.set_ylabel("price ($100k units)")
-ax.set_title("QuantileReg — predicted 10/50/90 % vs realized")
+i_lo = np.argmin(np.abs(dist_qreg.taus - 0.1))
+i_md = np.argmin(np.abs(dist_qreg.taus - 0.5))
+i_hi = np.argmin(np.abs(dist_qreg.taus - 0.9))
+
+# Bin x_feat into 25 buckets, take mean / quantile mean within each.
+n_bins = 25
+bins = np.linspace(x_feat.min(), x_feat.max(), n_bins + 1)
+bin_idx = np.clip(np.searchsorted(bins, x_feat) - 1, 0, n_bins - 1)
+band_lo = np.array([dist_qreg.qvals[bin_idx == b, i_lo].mean() if (bin_idx == b).any() else np.nan
+                    for b in range(n_bins)])
+band_md = np.array([dist_qreg.qvals[bin_idx == b, i_md].mean() if (bin_idx == b).any() else np.nan
+                    for b in range(n_bins)])
+band_hi = np.array([dist_qreg.qvals[bin_idx == b, i_hi].mean() if (bin_idx == b).any() else np.nan
+                    for b in range(n_bins)])
+bin_centres = 0.5 * (bins[:-1] + bins[1:])
+
+fig, ax = plt.subplots(figsize=(9, 4.5))
+ax.fill_between(bin_centres, band_lo, band_hi,
+                alpha=0.25, color=color_for("qreg"),
+                label="QReg 10–90 % band (bin mean)")
+ax.plot(bin_centres, band_md, color=color_for("qreg"), lw=1.5,
+        label="QReg median (bin mean)")
+ax.scatter(x_feat, y_oof, s=6, color="black", alpha=0.15, label="realized")
+ax.set_xlabel(f"{feat_name}  (feature index {feat_idx}, "
+              f"|corr| with y = {abs(corrs[feat_idx]):.2f})")
+ax.set_ylabel("price ($100k)")
+ax.set_title(f"QuantileReg conditional band along {feat_name}")
 ax.legend(loc="upper left")
-plt.tight_layout(); plt.show()
+fig.tight_layout()
+plt.show()
 
 # %% [markdown]
-# ## Reliability diagram (per bracket)
+# ## Per-house CDFs (replaces grouped bars)
 #
-# For each bracket, group rows by their predicted probability of landing
-# in that bracket, then plot mean predicted probability vs the empirical
-# hit rate. Points on the diagonal = perfectly calibrated bracket prices.
+# Pick three held-out houses with **distinct** realised prices (one
+# cheap, one median, one expensive). For each house, overlay each
+# model's predicted CDF and mark the realised price. A model whose CDF
+# crosses 0.5 near the realised value got the *centre* right; a model
+# with a steeper CDF was more confident.
 
 # %%
-def reliability(dist, ladder, y_oof, n_bins=10):
-    """Pool all (row, bracket) cells, bin by predicted probability,
-    return (mean_pred, hit_rate, count) per bin."""
+# Pick three rows with realised prices at the 10 %, 50 %, 90 %
+# quantiles of y so they're visually distinct.
+q_targets = np.quantile(y, [0.1, 0.5, 0.9])
+example_ids = [int(np.argmin(np.abs(y - q))) for q in q_targets]
+print(f"example house indices: {example_ids}  realised: "
+      + ", ".join(f"${y[i]*100:.0f}k" for i in example_ids))
+
+pred = pipeline.predict(
+    X[example_ids],
+    ids=np.arange(len(example_ids)),
+    timestamps=np.arange(len(example_ids), dtype=float),
+)
+fig = cdf_overlay_for_examples(
+    {"emp": pred["emp"], "ridge": pred["ridge"], "qreg": pred["qreg"]},
+    row_indices=list(range(len(example_ids))),
+    y_realized=y[example_ids],
+    edges=edges,
+    units="$100k",
+    title="Forecast CDFs vs realized price — three example houses",
+)
+plt.show()
+
+# %% [markdown]
+# ## Reliability — bracket probabilities calibrated?
+
+# %%
+def _reliability(dist, ladder, y_oof, n_bins=10):
     cdf_hi = dist.cdf(ladder.edges[1:])
     cdf_lo = dist.cdf(ladder.edges[:-1])
-    probs = np.clip(cdf_hi - cdf_lo, 0, 1)            # (N, B)
+    probs = np.clip(cdf_hi - cdf_lo, 0, 1)
     bin_idx = np.searchsorted(ladder.edges, y_oof, side="right") - 1
     bin_idx = np.clip(bin_idx, 0, probs.shape[1] - 1)
     realized = np.zeros_like(probs)
@@ -210,69 +278,32 @@ def reliability(dist, ladder, y_oof, n_bins=10):
     p_flat = probs.reshape(-1)
     r_flat = realized.reshape(-1)
     edges_p = np.linspace(0, 1, n_bins + 1)
-    means, hits, counts = [], [], []
+    means, hits = [], []
     for i in range(n_bins):
         mask = (p_flat >= edges_p[i]) & (p_flat < edges_p[i + 1] + (i == n_bins - 1))
         if mask.sum() < 5:
             continue
         means.append(p_flat[mask].mean())
         hits.append(r_flat[mask].mean())
-        counts.append(int(mask.sum()))
-    return np.array(means), np.array(hits), np.array(counts)
+    return np.array(means), np.array(hits)
 
 
-fig, ax = plt.subplots(figsize=(7, 6))
-for name, color in zip(["emp", "ridge", "qreg"],
-                       ["gray", "#4878a8", "#d57646"], strict=True):
+series = []
+for name in ["emp", "ridge", "qreg"]:
     dist = result[name]
     y_oof = y[dist.ids.astype(int)]
-    mp, hr, cnt = reliability(dist, ladder, y_oof)
-    ax.plot(mp, hr, "o-", label=f"{name} (n={cnt.sum()})", color=color)
-ax.plot([0, 1], [0, 1], "k--", lw=0.5, label="perfect")
-ax.set_xlabel("mean predicted bracket probability")
-ax.set_ylabel("empirical hit rate")
-ax.set_title("Reliability diagram (all stages, all brackets pooled)")
-ax.legend()
-plt.tight_layout(); plt.show()
+    mp, hr = _reliability(dist, ladder, y_oof)
+    series.append((name, mp, hr))
+fig = reliability_with_histogram(
+    series, title="Bracket-probability reliability (all rows × all brackets pooled)",
+)
+plt.show()
 
 # %% [markdown]
-# ## Bracket prices for 3 held-out houses
+# ## Wider leaderboard
 #
-# Empirical assigns the same probabilities to every row (no features
-# used). Ridge spreads mass around its central prediction with one
-# global σ. QReg captures heteroscedasticity — narrow distributions for
-# easy rows, wide for hard ones.
-
-# %%
-pred = pipeline.predict(X[:3], ids=np.arange(3),
-                        timestamps=np.arange(3, dtype=float))
-B = edges.shape[0] - 1
-fig, axes = plt.subplots(3, 1, figsize=(11, 7), sharex=True, sharey=True)
-for row_idx, ax in enumerate(axes):
-    actual = y[row_idx]
-    for offset, (name, color) in enumerate(
-        zip(["emp", "ridge", "qreg"],
-            ["gray", "#4878a8", "#d57646"], strict=True),
-    ):
-        contracts = ladder.price(pred[name])
-        prices = contracts.fair_price.reshape(-1, B)[row_idx]
-        xs = np.arange(B) + offset * 0.25
-        ax.bar(xs, prices, width=0.22, color=color, label=name)
-    ax.axvline(np.searchsorted(edges, actual) - 1.5, color="red",
-               linestyle="--", linewidth=2, label=f"realized {actual:.2f}")
-    ax.set_ylabel("contract price")
-    ax.set_title(f"house {row_idx}  realized = ${actual*100:.0f}k")
-    if row_idx == 0:
-        ax.legend(loc="upper right")
-axes[-1].set_xticks(np.arange(B) + 0.25)
-axes[-1].set_xticklabels(bracket_labels, rotation=20)
-plt.tight_layout(); plt.show()
-
-# %% [markdown]
-# ## Leaderboard: wider model zoo
-#
-# Score a broader set of trainers on the same data + CV. Skill is reported
-# vs the Empirical baseline. Anything above zero is doing real work.
+# Same five-fold CV, ranked by CRPS. Skill score (CRPSS) is reported
+# against the `Empirical` floor.
 
 # %%
 from bracketlearn.trainers import NGBoostNormal, QuantileForest
@@ -285,154 +316,100 @@ def _score_one(stage_name, forecaster):
         refit_on_full=False,
     )
     r = p.fit_predict(X, y, ids=ids, timestamps=ts)
-    return r.score(y, metrics=["crps", "log_score"])[stage_name]
-
-
-# Not in this leaderboard (and why):
-# - ``MixtureNormals`` treats every column of X as a vendor point forecast
-#   of y. California-housing columns (MedInc, HouseAge, Latitude…) aren't
-#   price predictions, so the implied mixture is centred on nonsense and
-#   CRPS blows up. It belongs in ensemble-forecast settings — see the
-#   bike-sharing notebook for a meaningful use.
-# - ``Stacking``, ``DistAsFeatures``, ``LinearPoolDist``, ``CDFBoostBracket``,
-#   ``TailSpecialist`` all need upstream ``deps_oof``. See the
-#   ``leaderboard_zoo.ipynb`` notebook for a multi-stage pipeline.
-
-leaderboard = {}
-leaderboard["Empirical"] = _score_one("emp", EmpiricalDistribution())
-leaderboard["Ridge+GR"] = _score_one("ridge", LiftedForecaster(
-    SklearnPoint(RidgeCV()), GlobalResidual(), name="ridge",
-))
-leaderboard["NGBoostNormal"] = _score_one("ngb", NGBoostNormal(
-    n_estimators=200, random_seed=0,
-))
-leaderboard["QuantileReg"] = _score_one("qreg", QuantileReg(
-    n_estimators=200, learning_rate=0.05, random_seed=0,
-))
-leaderboard["QuantileForest"] = _score_one("qf", QuantileForest(
-    n_estimators=200, random_seed=0,
-))
-
-base_crps = leaderboard["Empirical"]["crps"]
-rows = []
-for name, m in leaderboard.items():
-    rows.append((name, m["crps"], m.get("log_score", float("nan")),
-                 1.0 - m["crps"] / base_crps))
-rows.sort(key=lambda r: r[1])    # ascending CRPS
-
-print(f"{'rank':<5}{'model':<18}{'CRPS':>10}{'log_score':>14}{'CRPSS':>10}")
-print("-" * 57)
-for i, (name, c, ls, sk) in enumerate(rows, 1):
-    ls_s = "    n/a" if not np.isfinite(ls) else f"{ls:14.4f}"
-    print(f"{i:<5}{name:<18}{c:>10.4f}{ls_s}{sk:>+10.3f}")
-
-# %% [markdown]
-# ## Bridge to classical ML: point-forecast benchmark
-#
-# Probabilistic models can be collapsed to a point forecast by taking the
-# mean (or median, or mode) of the predicted distribution. Once you have
-# a single number per row, you can use the metrics regression people
-# already know — RMSE, MAE, MAPE — and compare against a sklearn
-# regressor trained with the same CV.
-#
-# This is the "OK but does it beat sklearn?" check.
-
-# %%
-from bracketlearn.score import to_point
-from sklearn.metrics import mean_absolute_error, mean_squared_error
-from sklearn.model_selection import KFold
-
-
-# Refit each leaderboard pipeline; collapse OOF dist to mean → RMSE/MAE.
-def _dist_to_point_metrics(stage_name, forecaster):
-    p = ForecastPipeline(
-        steps=[(stage_name, forecaster)],
-        cv="kfold", n_folds=5, shuffle=True, random_state=0,
-        refit_on_full=False,
-    )
-    r = p.fit_predict(X, y, ids=ids, timestamps=ts)
+    metrics = r.score(y, metrics=["crps", "log_score"])[stage_name]
     dist = r[stage_name]
     y_oof = y[dist.ids.astype(int)]
     mu = to_point(dist, how="mean")
     return {
-        "RMSE": float(np.sqrt(mean_squared_error(y_oof, mu))),
-        "MAE":  float(mean_absolute_error(y_oof, mu)),
+        "crps": float(metrics["crps"]),
+        "log_score": float(metrics["log_score"]),
+        "rmse": float(np.sqrt(mean_squared_error(y_oof, mu))),
+        "mae":  float(mean_absolute_error(y_oof, mu)),
     }
 
 
-# Two classical-ML baselines using the same k-fold split (no
-# distributional output — just RMSE / MAE per row of the OOF predict).
-def _sklearn_oof_metrics(model):
-    kf = KFold(n_splits=5, shuffle=True, random_state=0)
-    oof_pred = np.empty_like(y)
-    for tr, te in kf.split(X):
-        m = type(model)(**model.get_params())
-        m.fit(X[tr], y[tr])
-        oof_pred[te] = m.predict(X[te])
-    return {
-        "RMSE": float(np.sqrt(mean_squared_error(y, oof_pred))),
-        "MAE":  float(mean_absolute_error(y, oof_pred)),
-    }
-
-
-from lightgbm import LGBMRegressor
-
-point_lb = {
-    # Probabilistic → mean.
-    "Empirical (→mean)":      _dist_to_point_metrics("e", EmpiricalDistribution()),
-    "Ridge+GR (→mean)":       _dist_to_point_metrics("r", LiftedForecaster(
-        SklearnPoint(RidgeCV()), GlobalResidual(), name="r",
+leaderboard = {
+    "Empirical":     _score_one("emp", EmpiricalDistribution()),
+    "Ridge+GR":      _score_one("ridge", LiftedForecaster(
+        SklearnPoint(RidgeCV()), GlobalResidual(), name="ridge",
     )),
-    "NGBoost (→mean)":        _dist_to_point_metrics("n", NGBoostNormal(
+    "NGBoostNormal": _score_one("ngb", NGBoostNormal(
         n_estimators=200, random_seed=0,
     )),
-    "QuantileReg (→mean)":    _dist_to_point_metrics("q", QuantileReg(
+    "QuantileReg":   _score_one("qreg", QuantileReg(
         n_estimators=200, learning_rate=0.05, random_seed=0,
     )),
-    # Classical regressors (no distribution at all).
-    "sklearn RidgeCV":        _sklearn_oof_metrics(RidgeCV()),
-    "LightGBM":               _sklearn_oof_metrics(LGBMRegressor(
-        n_estimators=200, learning_rate=0.05, verbose=-1, random_state=0,
+    "QuantileForest": _score_one("qf", QuantileForest(
+        n_estimators=200, random_seed=0,
     )),
 }
 
-rows_pt = sorted(point_lb.items(), key=lambda kv: kv[1]["RMSE"])
-print(f"{'rank':<5}{'model':<26}{'RMSE':>10}{'MAE':>10}")
-print("-" * 51)
-for i, (name, m) in enumerate(rows_pt, 1):
-    print(f"{i:<5}{name:<26}{m['RMSE']:>10.4f}{m['MAE']:>10.4f}")
+base_crps = leaderboard["Empirical"]["crps"]
+rows = sorted(leaderboard.items(), key=lambda kv: kv[1]["crps"])
+print(f"{'rank':<5}{'model':<18}{'CRPS':>10}{'log_score':>11}{'RMSE':>8}{'CRPSS':>9}")
+print("-" * 62)
+for i, (n, m) in enumerate(rows, 1):
+    print(f"{i:<5}{n:<18}{m['crps']:>10.4f}{m['log_score']:>11.4f}"
+          f"{m['rmse']:>8.3f}{1 - m['crps']/base_crps:>+9.3f}")
 
-# Skill bars: RMSE vs the sklearn baseline.
-sk_rmse = point_lb["sklearn RidgeCV"]["RMSE"]
-names_pt = [r[0] for r in rows_pt if r[0] != "sklearn RidgeCV"]
-skills_pt = [1 - r[1]["RMSE"]/sk_rmse for r in rows_pt if r[0] != "sklearn RidgeCV"]
-fig, ax = plt.subplots(figsize=(9, 4.5))
-colors_pt = ["#4878a8" if s > 0 else "#d57646" for s in skills_pt]
-ax.barh(names_pt, skills_pt, color=colors_pt)
-ax.axvline(0, color="black", linewidth=0.5)
-ax.invert_yaxis()
-ax.set_xlabel(f"1 − RMSE / RMSE(sklearn RidgeCV={sk_rmse:.3f})")
-ax.set_title("Point-forecast skill vs sklearn RidgeCV baseline")
-for i, s in enumerate(skills_pt):
-    ax.text(s + (0.005 if s > 0 else -0.005), i, f"{s:+.3f}",
-            va="center", ha="left" if s > 0 else "right")
-plt.tight_layout(); plt.show()
+fig = leaderboard_bar(
+    [(n, m["crps"]) for n, m in rows],
+    baseline_name="Empirical", baseline_value=base_crps,
+    skill_label="CRPSS",
+    title="California housing — CRPSS vs Empirical baseline",
+)
+plt.show()
 
 # %% [markdown]
-# Skill bars for the **distributional** leaderboard:
+# ## Does it beat sklearn on the point-prediction metric?
+#
+# Collapse each distribution to its mean and compare RMSE / MAE against
+# plain regressors. Same headline scatter grid, but now including two
+# classical baselines.
 
 # %%
-names = [r[0] for r in rows if r[0] != "Empirical"]
-skills = [r[3] for r in rows if r[0] != "Empirical"]
-fig, ax = plt.subplots(figsize=(9, 4.5))
-colors = ["#4878a8" if s > 0 else "#d57646" for s in skills]
-ax.barh(names, skills, color=colors)
-ax.axvline(0, color="black", linewidth=0.5)
-ax.invert_yaxis()
-ax.set_xlabel(f"CRPSS vs Empirical (CRPS={base_crps:.3f})")
-ax.set_title("Leaderboard — CRPS skill score, higher is better")
-for i, s in enumerate(skills):
-    ax.text(s + (0.005 if s > 0 else -0.005), i,
-            f"{s:+.3f}", va="center",
-            ha="left" if s > 0 else "right")
-plt.tight_layout(); plt.show()
+from lightgbm import LGBMRegressor
+from sklearn.model_selection import KFold
+
+
+def _sklearn_oof(model_factory):
+    kf = KFold(n_splits=5, shuffle=True, random_state=0)
+    preds = np.empty_like(y)
+    for tr, te in kf.split(X):
+        m = model_factory()
+        m.fit(X[tr], y[tr])
+        preds[te] = m.predict(X[te])
+    return preds
+
+
+ridge_pred = _sklearn_oof(lambda: RidgeCV())
+lgb_pred = _sklearn_oof(lambda: LGBMRegressor(
+    n_estimators=200, learning_rate=0.05, verbose=-1, random_state=0,
+))
+
+# Three probabilistic models (best of family) + two classical regressors.
+point_panels = []
+for name, mu, y_ref in [
+    ("Ridge+GR", to_point(pipeline.predict(
+        X, ids=ids, timestamps=ts)["ridge"], how="mean"), y),
+    ("QReg", to_point(pipeline.predict(
+        X, ids=ids, timestamps=ts)["qreg"], how="mean"), y),
+    ("sklearn RidgeCV", ridge_pred, y),
+    ("LightGBM",        lgb_pred,    y),
+]:
+    rmse = float(np.sqrt(mean_squared_error(y_ref, mu)))
+    mae = float(mean_absolute_error(y_ref, mu))
+    point_panels.append((name, mu, y_ref, {"RMSE": rmse, "MAE": mae}))
+
+fig = predicted_vs_realized_grid(
+    point_panels, ncols=4, units="$100k",
+    figsize_per_panel=(3.2, 3.2),
+    title="Probabilistic-model means vs classical regressors",
+)
+plt.show()
+
+# %% [markdown]
+# The probabilistic models give you everything `LGBMRegressor` gives you
+# (point prediction, comparable RMSE) **plus** a full forecast
+# distribution — which is the only thing you can use to price the
+# bracket contracts in this notebook.

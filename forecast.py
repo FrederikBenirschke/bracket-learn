@@ -329,21 +329,6 @@ class DistributionForecast:
         )
 
     @classmethod
-    def from_empirical(
-        cls,
-        members: np.ndarray,            # (N, K)
-        *,
-        tail_policy: TailPolicy,      # REQUIRED
-        ids: np.ndarray,
-        timestamps: np.ndarray,
-        provenance: ProvenanceMeta,
-    ) -> DistributionForecast:
-        raise NotImplementedError(
-            "DistributionForecast.from_empirical — empirical backing not "
-            "yet implemented. Use from_quantiles or from_brackets."
-        )
-
-    @classmethod
     def from_brackets(
         cls,
         edges: np.ndarray,              # (B+1,)
@@ -829,24 +814,6 @@ class DistributionForecast:
     # owns its own price() per backing (§5/§8). MC lives only in the
     # `Custom` adapter.
 
-    # ----------------------------------------------------------- conversions
-
-    def to_quantiles(self, taus: np.ndarray) -> DistributionForecast:
-        """Returns new dist with quantile backing. Records lossy conversion
-        into provenance.conversion_chain."""
-        raise NotImplementedError("DistributionForecast.to_quantiles — not yet implemented")
-
-    def to_brackets(self, edges: np.ndarray) -> DistributionForecast:
-        raise NotImplementedError("DistributionForecast.to_brackets — not yet implemented")
-
-    def to_normal(self) -> DistributionForecast:
-        """Moment match. Lossy for fat-tailed or skewed inputs."""
-        raise NotImplementedError("DistributionForecast.to_normal — not yet implemented")
-
-    def is_lossless_to(self, target_backing: Backing) -> bool:
-        """True iff conversion to target_backing preserves all information."""
-        raise NotImplementedError("DistributionForecast.is_lossless_to — not yet implemented")
-
 
 def _resolve_tail_kinds(tail_policy) -> tuple[str, str]:
     """Return (left_kind, right_kind) for the tail policy.
@@ -891,12 +858,3 @@ class ContractForecast:
                     self.fair_price, self.group_id):
             arr.setflags(write=False)
 
-    def calibrate(
-        self,
-        method: Literal["platt", "isotonic", "beta"],
-        *,
-        realized: np.ndarray,
-    ) -> ContractForecast:
-        """Contract-space recalibration (§8.4). Distinct from
-        DistributionForecast-level calibration."""
-        raise NotImplementedError("ContractForecast.calibrate — not yet implemented")

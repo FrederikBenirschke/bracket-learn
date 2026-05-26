@@ -25,7 +25,6 @@ from bracketlearn.forecast import (
     ProvenanceMeta,
 )
 
-
 # ---------------------------------------------------------------------------
 # Edge semantics (§8.1 — replaces v0.1's stringly-typed "closed-open").
 # ---------------------------------------------------------------------------

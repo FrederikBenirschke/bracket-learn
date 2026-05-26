@@ -54,11 +54,12 @@ notebook.
 
 ## Install
 
-```bash
-pip install bracketlearn
+Pre-PyPI — install from source:
 
-# With the full set of optional trainers (LightGBM, NGBoost, torch, ...):
-pip install "bracketlearn[demo]"
+```bash
+git clone https://github.com/FrederikBenirschke/bracketlearn
+pip install -e ./bracketlearn
+pip install -e "./bracketlearn[demo]"   # with optional trainers
 ```
 
 ## sklearn contract

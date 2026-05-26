@@ -1,10 +1,10 @@
 # Tail policies
 
 A `TailPolicy` declares what the CDF should do beyond the outermost
-stored quantile of a `DistributionForecast`. It's required for any
-*finite* backing — `from_quantiles`, `from_empirical` — and unused for
-parametric backings (`normal`, `student_t`, `mixture_normal`) whose CDFs
-are defined on all of ℝ.
+stored quantile of a `DistributionForecast`. It's required for the
+quantile-backed factory `from_quantiles` and unused for parametric
+backings (`normal`, `student_t`, `mixture_normal`) whose CDFs are
+defined on all of ℝ.
 
 Tail policies are **asymmetric**: a `TailPolicy` carries one `TailRule`
 for the left tail and one for the right. The shorthand `TailPolicy.same(rule)`
