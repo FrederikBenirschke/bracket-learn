@@ -301,21 +301,42 @@ past predict-a-distribution"; today it stops there. Missing:
 
 ## 6. Test coverage gaps
 
-### T1. Untested estimators
-- `Stacking` (only negative-path tests), `TailSpecialist` (none),
-  `market_ols` / `emos_calibrated` factories (none).
+### T1. Untested estimators — FIXED 2026-05-25
+- `Stacking`: new `test_stacking_recovers_truth_from_perfect_upstream`
+  (weights the precise upstream higher) and
+  `test_stacking_passes_sample_weight_through_to_lstsq` (weighted vs
+  unweighted lstsq diverge).
+- `TailSpecialist`: new
+  `test_tail_specialist_emits_bracket_with_classifier_tails` —
+  upstream EMOS + classifier tails → bracket-backed dist with row
+  sums == 1; surfaces the §1.B4 narrow-ladder warning as a side
+  effect (expected behaviour given the synthetic data).
+- Factories: `ridge`, `market_ols`, and `emos_calibrated` each get
+  a positive-path test (instantiated, fit through a one-step
+  `ForecastPipeline`, output backing/family verified).
 
-### T2. Missing edge cases (every trainer)
-- B=1, B=2 ladders.
-- Single-row fit.
-- NaN-in-X (only OnlineAggregator has a NaN test, failure path).
-- `sample_weight` on baselines + 8 trainers.
-- Multi-target × quantile-backing × bracket-scoring.
+### T2. Missing edge cases (every trainer) — PARTIALLY FIXED 2026-05-25
+- `sample_weight` respect tests landed for `SklearnPoint` (Ridge
+  coef diverges), `EMOS` (a_/b_ diverge), and `EmpiricalDistribution`
+  (weighted median above unweighted). Still deferred for 8 trainers
+  (LightGBM-quantile, NGBoost, mixture, RNN, online aggregator,
+  cumulative-binary, tail-specialist, quantile-forest) — these
+  honor sample_weight to varying degrees depending on the upstream
+  library's contract, so the lock-in needs per-trainer tolerance.
+- B=1 and B=2 ladders already covered by
+  `test_invariants.py::test_bracket_ladder_b1_*` /
+  `test_bracket_ladder_b2_*`.
+- Single-row fit, NaN-in-X across trainers, multi-target ×
+  quantile × bracket-scoring still deferred — documented as
+  per-trainer follow-ups.
 
-### T3. Property tests missing
-- `sum(BracketLadder.price(dist)) == 1.0` for every (backing, tail_policy).
-- Monotonicity of quantiles after fit.
-- `clone(est).get_params() == est.get_params()`.
+### T3. Property tests — DONE in item 5 (audit lock-in tests).
+- `sum(BracketLadder.price(dist)) == 1.0` for every (backing,
+  tail_policy) — in `test_ladder_sum.py`.
+- Monotonicity of quantiles after fit / CDF monotone in x —
+  in `test_invariants.py`.
+- `clone(est).get_params() == est.get_params()` —
+  in `test_invariants.py`.
 
 ---
 
