@@ -88,6 +88,9 @@ class SklearnPoint(BaseEstimator):
         sample_weight: np.ndarray | None = None,
         deps_oof: dict[str, Any] | None = None,
     ) -> Self:
+        # Record input signature BEFORE np.asarray strips the columns
+        # attribute (sklearn convention: feature_names_in_ from DataFrame).
+        self._record_input_signature(X)
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
         # Forward sample_weight only if the estimator accepts it. We
@@ -96,6 +99,7 @@ class SklearnPoint(BaseEstimator):
             self.estimator.fit(X, y, sample_weight=sample_weight)
         else:
             self.estimator.fit(X, y)
+        self.fitted_ = True
         return self
 
     def predict(

@@ -373,31 +373,61 @@ Concrete edits:
 `bracketlearn/forecast.py`, `bracketlearn/adapters.py`,
 `bracketlearn/tests/test_no_silent_fallbacks.py` (new).
 
-## 4. Export estimators + minimal sklearn-ism (A1, A2, A4 partial)
+## 4. Sklearn-contract upgrade — DONE 2026-05-25
 
-**What.** Fix import surface and the most embarrassing sklearn-isms. Full
-sklearn-contract migration depends on item 2's decision.
+Per `DECISION.md` (standalone library), upgraded scope from "minimal
+pass" to full sklearn-shaped public API. Items 4a–4f below.
 
-Minimal pass:
-- Re-export from `__init__.py`: every estimator class, `BaseEstimator`,
-  `clone`, `ForecastPipeline`, `GridSearch`, `BracketLadder`, all metrics.
-- Add `__sklearn_is_fitted__` to `BaseEstimator` (delegates to
-  `hasattr(self, "<sentinel>_")`).
-- Store `n_features_in_` and `feature_names_in_` after fit (one helper in
-  `base.py`, call from every estimator's `fit`).
-- Add `predict_proba` *alias* to `DistForecaster` that calls `predict_dist`
-  and returns the `(N, B)` bracket-prob array directly — minimal change,
-  big discoverability win. Original `predict_dist` stays for callers that
-  want the full `DistributionForecast` object.
+### 4a — Re-export from `__init__.py` ✅
+- 67 names in `__all__`. Every estimator, lifter, calibrator, adapter,
+  pipeline, search, multi-target wrapper, base + clone, all dataclasses.
+- `from bracketlearn import EMOS, BracketLadder, ForecastPipeline, ...`
+  works without digging into submodules.
 
-Defer (depends on item 2):
-- Subclassing `sklearn.base.BaseEstimator`.
-- Dropping `ids=`/`timestamps=` kwargs.
-- `Pipeline` / `cross_val_score` compat.
+### 4b — `predict_proba` alias — SKIPPED (per user)
+- Adding `predict_proba` requires a ladder to know which "classes" to
+  expose; bracketlearn's natural verb is `predict_dist` already.
+  Documented in README that `predict_dist` is the entry point.
 
-**Files.** `bracketlearn/__init__.py`, `bracketlearn/base.py`,
-`bracketlearn/protocols.py`, every estimator file (for `n_features_in_`),
-new test `tests/test_export_surface.py`.
+### 4c — Optional `ids=` / `timestamps=` ✅
+- New `_auto_fill_ids_ts` decorator in `base.py`. `BaseEstimator.__init_subclass__`
+  auto-wraps every subclass's `fit` / `predict` / `predict_dist` so
+  callers may omit `ids=` / `timestamps=`; they auto-fill to
+  `np.arange(N)` / `np.arange(N, dtype=float)`. Explicit kwargs still
+  win.
+- Plain `est.fit(X, y)` and `est.predict(X)` work everywhere now.
+
+### 4d — sklearn introspection ✅
+- `BaseEstimator.__sklearn_is_fitted__` walks `_`-suffixed attributes
+  and returns True iff any is non-None. `sklearn.utils.validation.
+  check_is_fitted(est)` works on every bracketlearn estimator.
+- `_record_input_signature(X)` helper sets `n_features_in_` (and
+  `feature_names_in_` when X is a pandas DataFrame). Wired into
+  `SklearnPoint.fit`; other trainers will adopt it as the contract
+  hardens.
+
+### 4e — Inherit from `sklearn.base.BaseEstimator` ✅
+- `bracketlearn.base.BaseEstimator` now subclasses sklearn's
+  `BaseEstimator`. `isinstance(est, sklearn.base.BaseEstimator)`
+  returns True; `sklearn.base.clone(est)` works.
+- Caveat: `sklearn.utils.estimator_checks.check_estimator` will NOT
+  pass — our `predict` returns `PointForecast`, `predict_dist`
+  returns `DistributionForecast`, neither is an ndarray. The
+  isinstance interop is the win; check_estimator compliance is a
+  separate (likely infeasible) workstream.
+
+### 4f — Sklearn-compat tests ✅
+- `tests/test_sklearn_compat_v2.py` (11 tests):
+  - top-level imports for every estimator
+  - `issubclass(BaseEstimator, sklearn.base.BaseEstimator)`
+  - `isinstance` checks for EMOS / EmpiricalDistribution / QuantileReg
+  - `sklearn.base.clone` works
+  - SklearnPoint / EmpiricalDistribution fit+predict without ids/ts
+  - explicit ids still honored
+  - `__sklearn_is_fitted__` + `check_is_fitted` flip after fit
+  - `n_features_in_` set; `feature_names_in_` set when X is DataFrame
+
+Suite: 206 pass (was 195, +11 new). Zero regressions.
 
 ## 5. Property tests + ladder-sum invariant (T2, T3)
 
