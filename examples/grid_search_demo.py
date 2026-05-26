@@ -1,0 +1,94 @@
+"""GridSearch over a QuantileReg pipeline on California housing.
+
+Searches a small 2-D grid of LightGBM hyperparameters using bracketlearn's
+own time-aware CV inside each grid point (see ``bracketlearn.search`` —
+sklearn's ``GridSearchCV`` would silently destroy time ordering).
+
+Run::
+
+    conda run -n weathermarkets python -m bracketlearn.examples.grid_search_demo
+
+What this script demonstrates:
+
+- ``GridSearch`` with two stage-level params (``qreg__n_estimators`` and
+  ``qreg__learning_rate``) using sklearn's ``__``-nested syntax.
+- The result table sorted by CRPS so the user can see the whole landscape,
+  not just the winner.
+- ``best_pipeline_`` is a fitted ``ForecastPipeline`` ready for
+  ``.predict()`` on new rows — no extra refit needed.
+"""
+
+from __future__ import annotations
+
+import warnings
+
+import numpy as np
+from sklearn.datasets import fetch_california_housing
+
+warnings.filterwarnings(
+    "ignore", message="X does not have valid feature names.*",
+    category=UserWarning,
+)
+
+from bracketlearn.pipeline import ForecastPipeline
+from bracketlearn.search import GridSearch
+from bracketlearn.trainers import QuantileReg
+
+
+def main() -> None:
+    print("loading California housing …")
+    data = fetch_california_housing()
+    X = np.asarray(data.data, dtype=float)
+    y = np.asarray(data.target, dtype=float)
+    rng = np.random.default_rng(0)
+    keep = rng.choice(X.shape[0], size=3000, replace=False)
+    X, y = X[keep], y[keep]
+    ids = np.arange(X.shape[0])
+    ts = ids.astype(float)
+
+    prototype = ForecastPipeline(
+        steps=[("qreg", QuantileReg(random_seed=0))],
+        cv="kfold", n_folds=4, shuffle=True, random_state=0,
+        refit_on_full=True,
+    )
+
+    grid = {
+        "qreg__n_estimators": [50, 150, 400],
+        "qreg__learning_rate": [0.03, 0.1],
+    }
+    n_points = sum(1 for _ in range(len(grid["qreg__n_estimators"])
+                                    * len(grid["qreg__learning_rate"])))
+    print(f"\nrunning GridSearch over {n_points} grid points "
+          f"({list(grid)}) …")
+    search = GridSearch(
+        prototype, param_grid=grid,
+        scoring="crps", refit_stage="qreg",
+    )
+    search.fit(X, y, ids=ids, timestamps=ts)
+
+    print("\n=== full grid (sorted by CRPS, lower is better) ===")
+    print(f"{'n_estimators':>14}  {'learning_rate':>14}  {'crps':>10}")
+    for row in sorted(search.results_, key=lambda r: r["crps"]):
+        n_est = row["params"]["qreg__n_estimators"]
+        lr = row["params"]["qreg__learning_rate"]
+        print(f"{n_est:>14d}  {lr:>14.3f}  {row['crps']:>10.4f}")
+
+    print(f"\nbest params : {search.best_params_}")
+    print(f"best CRPS   : {search.best_score_:.4f}")
+
+    # best_pipeline_ is already fitted on full data (refit_on_full=True).
+    pred = search.best_pipeline_.predict(
+        X[:3], ids=np.arange(3), timestamps=np.arange(3, dtype=float),
+    )
+    print("\nthree predicted quantile vectors from best_pipeline_:")
+    qvals = pred["qreg"].qvals       # (3, Q)
+    taus = pred["qreg"].taus
+    print("  τ:    " + "  ".join(f"{t:.2f}" for t in taus))
+    for i in range(3):
+        print(f"  row{i} y={y[i]:.2f}  " + "  ".join(f"{q:.2f}" for q in qvals[i]))
+
+    print("\ndone.")
+
+
+if __name__ == "__main__":
+    main()
