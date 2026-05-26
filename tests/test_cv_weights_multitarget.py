@@ -1,4 +1,4 @@
-"""Phase C tests: CV variants, sample weights, multi-target, grid search.
+"""CV variants, sample weights, multi-target, and grid search.
 
 Each section pins one user-visible guarantee:
 
