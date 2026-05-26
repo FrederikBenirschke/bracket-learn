@@ -43,7 +43,6 @@ from bracketlearn.lift import GlobalResidual
 from bracketlearn.pipeline import ForecastPipeline
 from bracketlearn.search import GridSearch
 from bracketlearn.trainers import (
-    MixtureNormals,
     NGBoostNormal,
     QuantileForest,
     QuantileReg,
@@ -209,7 +208,10 @@ lb = {
     "Ridge+GR":             _score_full("ridge", LiftedForecaster(
         SklearnPoint(RidgeCV()), GlobalResidual(), name="ridge",
     )),
-    "MixtureNormals":       _score_full("mix", MixtureNormals()),
+    # MixtureNormals omitted: it treats X columns as vendor point forecasts
+    # of y. CA housing's columns aren't price predictions, so the mixture
+    # centres are nonsensical. See leaderboard_zoo.ipynb for a meaningful
+    # use built on top of bracketlearn's own upstream OOF predictions.
     "NGBoostNormal":        _score_full("ngb", NGBoostNormal(
         n_estimators=200, random_seed=0,
     )),

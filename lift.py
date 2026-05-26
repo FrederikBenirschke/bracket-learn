@@ -413,27 +413,16 @@ def _bracket_probs_from_dist(
 ) -> np.ndarray:
     """Per-row bracket probabilities from any dist that supports cdf().
 
-    Any row with zero total mass after the numerical clip
-    indicates the bracket grid lies entirely outside the distribution's
-    support (or every bracket is sub-numerical width). Raise rather
-    than substitute 1.0 — the downstream calibrator would just train
-    on zero-mass rows and produce garbage.
+    Thin wrapper over ``forecast.bracket_probs_from_cdf_at_edges``: calls
+    ``dist.cdf(edges)`` once and delegates the clip/normalise/zero-mass
+    check. Kept as a named function because the calibrator's call sites
+    pre-date the consolidation.
     """
-    cdf_hi = dist.cdf(edges[1:])
-    cdf_lo = dist.cdf(edges[:-1])
-    probs = cdf_hi - cdf_lo
-    # Numerical clip — Σ may drift slightly from 1 for parametric backings
-    # because we're discretising an unbounded distribution.
-    probs = np.clip(probs, 0.0, 1.0)
-    row_sum = probs.sum(axis=1, keepdims=True)
-    if np.any(row_sum.ravel() <= 0):
-        n_bad = int((row_sum.ravel() <= 0).sum())
-        raise ValueError(
-            f"_bracket_probs_from_dist: {n_bad}/{probs.shape[0]} rows have "
-            f"zero total bracket mass — the bracket grid does not cover "
-            f"the distribution support. Extend the edges or change the dist."
-        )
-    return probs / row_sum
+    from bracketlearn.forecast import bracket_probs_from_cdf_at_edges
+    cdf_at_edges = dist.cdf(edges)
+    return bracket_probs_from_cdf_at_edges(
+        cdf_at_edges, source="_bracket_probs_from_dist",
+    )
 
 
 @dataclass

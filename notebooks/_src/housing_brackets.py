@@ -275,7 +275,7 @@ plt.tight_layout(); plt.show()
 # vs the Empirical baseline. Anything above zero is doing real work.
 
 # %%
-from bracketlearn.trainers import MixtureNormals, NGBoostNormal, QuantileForest
+from bracketlearn.trainers import NGBoostNormal, QuantileForest
 
 
 def _score_one(stage_name, forecaster):
@@ -288,12 +288,21 @@ def _score_one(stage_name, forecaster):
     return r.score(y, metrics=["crps", "log_score"])[stage_name]
 
 
+# Not in this leaderboard (and why):
+# - ``MixtureNormals`` treats every column of X as a vendor point forecast
+#   of y. California-housing columns (MedInc, HouseAge, Latitude…) aren't
+#   price predictions, so the implied mixture is centred on nonsense and
+#   CRPS blows up. It belongs in ensemble-forecast settings — see the
+#   bike-sharing notebook for a meaningful use.
+# - ``Stacking``, ``DistAsFeatures``, ``LinearPoolDist``, ``CDFBoostBracket``,
+#   ``TailSpecialist`` all need upstream ``deps_oof``. See the
+#   ``leaderboard_zoo.ipynb`` notebook for a multi-stage pipeline.
+
 leaderboard = {}
 leaderboard["Empirical"] = _score_one("emp", EmpiricalDistribution())
 leaderboard["Ridge+GR"] = _score_one("ridge", LiftedForecaster(
     SklearnPoint(RidgeCV()), GlobalResidual(), name="ridge",
 ))
-leaderboard["MixtureNormals"] = _score_one("mix", MixtureNormals())
 leaderboard["NGBoostNormal"] = _score_one("ngb", NGBoostNormal(
     n_estimators=200, random_seed=0,
 ))
@@ -374,7 +383,9 @@ point_lb = {
     "Ridge+GR (→mean)":       _dist_to_point_metrics("r", LiftedForecaster(
         SklearnPoint(RidgeCV()), GlobalResidual(), name="r",
     )),
-    "MixtureNormals (→mean)": _dist_to_point_metrics("m", MixtureNormals()),
+    "NGBoost (→mean)":        _dist_to_point_metrics("n", NGBoostNormal(
+        n_estimators=200, random_seed=0,
+    )),
     "QuantileReg (→mean)":    _dist_to_point_metrics("q", QuantileReg(
         n_estimators=200, learning_rate=0.05, random_seed=0,
     )),

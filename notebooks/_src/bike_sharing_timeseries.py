@@ -285,9 +285,17 @@ plt.tight_layout(); plt.show()
 # Wider model zoo against the two baselines, ranked by CRPS.
 
 # %%
-from bracketlearn.trainers import CumulativeBinary, MixtureNormals
+from bracketlearn.trainers import CumulativeBinary
 
 cuts = edges[1:-1]
+
+# Note: `MixtureNormals` was dropped from this leaderboard. Even though
+# `X_ens` here is built from three jittered temperature columns (a
+# legitimate ensemble shape), the columns predict *temperature*, not
+# the target (rental count). The mixture would centre on temp values
+# in [0, 50] while y is in [0, 977] — uninterpretable. See
+# `leaderboard_zoo.ipynb` for a meaningful use built on top of upstream
+# DistForecaster predictions of y.
 
 
 def _score_one(stage_name, forecaster, x_in=None):
@@ -315,7 +323,6 @@ lb = {
     "EMOS+Iso":       _score_one("emos_iso", CalibratedForecaster(
         EMOS(), Isotonic(edges=edges), name="emos_iso",
     )),
-    "MixtureNormals": _score_one("mix", MixtureNormals()),
     "QuantileReg":    _score_one("qreg", QuantileReg(
         n_estimators=200, learning_rate=0.05, random_seed=0,
     ), x_in=X),

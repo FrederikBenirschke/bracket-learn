@@ -197,26 +197,54 @@ framework**. The current "both" is the root of most issues.
 
 ## 3. Duplication / simplification
 
-### S1. `bracket_probs_from_cdf` reinvented 3×
-- `CumulativeBinary` (trainers.py:847-850), `TailSpecialist` (985-988),
-  `lift.Isotonic` (lift.py:151-153, 176-178). Extract one helper.
+### S1. `bracket_probs_from_cdf` reinvented 3× — FIXED 2026-05-25
+- New `forecast.bracket_probs_from_cdf_at_edges(cdf_at_edges, source)`
+  helper handles the diff → clip → row-sum validation → normalise
+  sequence once. Called from `CumulativeBinary.predict_dist` and
+  `lift._bracket_probs_from_dist` (the latter is now a one-liner that
+  calls `dist.cdf(edges)` then delegates).
+- `TailSpecialist` *deliberately* doesn't use the helper — it diff-clips
+  the upstream CDF, then *overrides* the outer bins with the classifier
+  output and rescales the inner. The shared helper would normalise
+  too early and break the override semantics; this is the intentional
+  exception, called out in a code comment.
 
-### S2. Per-row Python loops where vectorized works
-- Isotonic-repair: `trainers.py:628-629, 713-714, 824-825` →
-  `np.maximum.accumulate(arr, axis=1)`.
-- Bracket `cdf`/`pdf`: `forecast.py:339-350, 426-432` → `searchsorted`.
-- Quantile `cdf`: `forecast.py:361-373` (defensive monotone check inside the
-  loop is dead — `from_quantiles` already enforces it).
-- `OnlineAggregator.predict`: `trainers.py:1114-1122`.
+### S2. Per-row Python loops where vectorized works — FIXED 2026-05-25
+- Isotonic-repair in `QuantileReg.predict_dist`,
+  `QuantileForest.predict_dist`, `CumulativeBinary.predict_dist` now
+  use one vectorised `np.maximum.accumulate(arr, axis=1)` call apiece.
+  The `_isotonic_repair_row` helper became unused and was deleted.
+- Bracket `cdf` / `pdf` collapsed from a per-x-query Python loop to a
+  single `np.searchsorted` call; below/above-support handled by mask
+  on the output. New `cdf_at` quantile branch follows the same pattern.
+- Quantile `cdf` (and `cdf_at`): dead defensive `np.maximum.accumulate`
+  inside the per-row loop removed — `from_quantiles` already enforces
+  monotone qvals at construction time.
+- `OnlineAggregator.predict`: per-row Python loop replaced with one
+  pass of element-wise multiplies (awake mask × weight broadcast) and
+  a row-wise sum. The error-on-coverage-hole logic is preserved.
 
-### S3. Score registry hardcoded
-- `PipelineResult.score` (`pipeline.py:129-167`) is if/elif over metric
-  names. `bracketlearn.score` has CRPS/log-score/PIT/Brier as raw functions
-  but no `make_scorer`-style registry.
+### S3. Score registry hardcoded — FIXED 2026-05-25
+- New module-level dispatch helpers `_metric_crps`, `_metric_log_score`,
+  `_compute_metric` in `pipeline.py`. `PipelineResult.score` is now a
+  3-line outer loop that delegates per-metric work to the registry.
+- Adding a new backing means touching one function (`_metric_crps` or
+  `_metric_log_score`), not four if/elif blocks.
+- A future `make_scorer`-style public API would build on the same
+  helpers; out of scope for this pass.
 
-### S4. `GridSearch` is parallel to sklearn's
-- Rationale (search.py:1-9) is real but partial: wrap a custom `cv` object
-  instead of rewriting the loop.
+### S4. `GridSearch` is parallel to sklearn's — DECLINED 2026-05-25
+- The audit suggested wrapping a custom `cv` object instead of
+  rewriting the loop. On closer inspection, our `ForecastPipeline`
+  owns its CV internally (expanding/rolling-window/kfold) and does
+  not expose a sklearn-compatible splitter object. Passing CV via
+  `cv=` would require restructuring the pipeline first — a larger
+  change than the duplication it would remove.
+- The 198-line `search.py` is self-contained, has its own grid-search
+  tests, and the docstring explicitly justifies the choice
+  ("sklearn.GridSearchCV would re-split with its own KFold, destroying
+  time ordering").
+- Keep as-is.
 
 ---
 

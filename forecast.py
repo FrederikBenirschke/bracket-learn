@@ -20,6 +20,48 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# Shared helper — three trainers / calibrators independently derived this
+# pattern in v0.1 (CumulativeBinary, TailSpecialist, lift._bracket_probs_from_dist).
+# Consolidated 2026-05-25 as part of audit §3.S1.
+# ---------------------------------------------------------------------------
+
+
+def bracket_probs_from_cdf_at_edges(
+    cdf_at_edges: np.ndarray,
+    *,
+    source: str,
+) -> np.ndarray:
+    """Convert a per-row CDF evaluated at the bracket edges into normalised
+    bracket probabilities. Returns shape (N, B) where B = edges-1.
+
+    Args:
+        cdf_at_edges: (N, B+1) array of CDF values, including the
+            boundary points. Must be (approximately) monotone non-decreasing
+            in the column axis; small negative diffs from numerical noise
+            are clipped to zero.
+        source: name of the caller — used only in the error message when a
+            row has zero total mass. Pass ``"CumulativeBinary.predict_dist"``,
+            ``"TailSpecialist.predict_dist"``, etc.
+
+    Raises:
+        ValueError: any row sums to zero after the clip. Indicates the
+            bracket grid does not cover the distribution (or the classifier
+            output is fully degenerate) — refusing to fabricate a uniform
+            distribution silently.
+    """
+    probs = np.diff(cdf_at_edges, axis=1)
+    probs = np.clip(probs, 0.0, 1.0)
+    row_sum = probs.sum(axis=1, keepdims=True)
+    if np.any(row_sum.ravel() <= 0):
+        n_bad = int((row_sum.ravel() <= 0).sum())
+        raise ValueError(
+            f"{source}: {n_bad}/{probs.shape[0]} rows produced zero total "
+            f"bracket mass. Refusing to substitute a uniform distribution."
+        )
+    return probs / row_sum
+
+
+# ---------------------------------------------------------------------------
 # ProvenanceMeta — audit/reproducibility schema (§5.4)
 # ---------------------------------------------------------------------------
 
@@ -366,23 +408,26 @@ class DistributionForecast:
             # Assume uniform within each bin (default interpolation).
             edges = self.edges
             probs = self.probs       # (N, B)
-            B = probs.shape[1]
-            out = np.zeros((probs.shape[0], x_arr.shape[0]))
+            N_rows, B = probs.shape
             cum = np.concatenate(
-                [np.zeros((probs.shape[0], 1)), np.cumsum(probs, axis=1)], axis=1
+                [np.zeros((N_rows, 1)), np.cumsum(probs, axis=1)], axis=1
             )  # (N, B+1)
-            for j, xv in enumerate(x_arr):
-                if xv <= edges[0]:
-                    out[:, j] = 0.0
-                elif xv >= edges[-1]:
-                    out[:, j] = 1.0
-                else:
-                    # find bin index k such that edges[k] <= xv < edges[k+1]
-                    k = int(np.searchsorted(edges, xv, side="right") - 1)
-                    k = max(0, min(k, B - 1))
-                    width = edges[k + 1] - edges[k]
-                    frac = (xv - edges[k]) / width if width > 0 else 0.0
-                    out[:, j] = cum[:, k] + frac * probs[:, k]
+            # Vectorise over the M query points: one searchsorted call gives
+            # the bin index for every xv at once. Below/above support are
+            # handled by clamping and an explicit mask on the output.
+            k = np.searchsorted(edges, x_arr, side="right") - 1
+            below = x_arr <= edges[0]
+            above = x_arr >= edges[-1]
+            k_clipped = np.clip(k, 0, B - 1)
+            widths = edges[k_clipped + 1] - edges[k_clipped]
+            safe_w = np.where(widths > 0, widths, 1.0)
+            frac = np.where(widths > 0, (x_arr - edges[k_clipped]) / safe_w, 0.0)
+            # cum[:, k_clipped] is (N, M); probs[:, k_clipped] is (N, M).
+            out = cum[:, k_clipped] + frac[None, :] * probs[:, k_clipped]
+            if below.any():
+                out[:, below] = 0.0
+            if above.any():
+                out[:, above] = 1.0
         elif self.backing == Backing.QUANTILE:
             # Piecewise-linear CDF through (qvals, taus). Outside qvals[0]/qvals[-1]
             # apply tail policy. Tier 2: only "clip" implemented (0 / 1 outside).
@@ -393,14 +438,14 @@ class DistributionForecast:
             # Per-row interp: for each row i, x → F(x) by interpolating taus on qvals[i].
             # Use np.interp row-by-row (no good vectorized version for non-shared knots).
             left_rule, right_rule = _resolve_tail_kinds(self.tail_policy)
+            # qvals are monotone non-decreasing per row by from_quantiles
+            # construction — no defensive repair needed.
             for i in range(N):
-                xq = qvals[i]
-                # ensure monotone increasing (defensive — caller should ensure)
-                if np.any(np.diff(xq) < 0):
-                    xq = np.maximum.accumulate(xq)
-                interp = np.interp(x_arr, xq, taus,
-                                   left=0.0 if left_rule == "clip" else np.nan,
-                                   right=1.0 if right_rule == "clip" else np.nan)
+                interp = np.interp(
+                    x_arr, qvals[i], taus,
+                    left=0.0 if left_rule == "clip" else np.nan,
+                    right=1.0 if right_rule == "clip" else np.nan,
+                )
                 if np.any(np.isnan(interp)):
                     raise NotImplementedError(
                         f"tail policy {left_rule!r}/{right_rule!r} not implemented yet"
@@ -471,11 +516,8 @@ class DistributionForecast:
             left_rule, right_rule = _resolve_tail_kinds(self.tail_policy)
             out = np.empty(N_rows, dtype=float)
             for i in range(N_rows):
-                xq = qvals[i]
-                if np.any(np.diff(xq) < 0):
-                    xq = np.maximum.accumulate(xq)
                 v = np.interp(
-                    y_arr[i:i + 1], xq, taus,
+                    y_arr[i:i + 1], qvals[i], taus,
                     left=0.0 if left_rule == "clip" else np.nan,
                     right=1.0 if right_rule == "clip" else np.nan,
                 )
@@ -619,14 +661,13 @@ class DistributionForecast:
             # density inside bin k = probs[:, k] / (edges[k+1] - edges[k])
             widths = np.diff(self.edges)         # (B,)
             density = self.probs / widths[None, :]  # (N, B)
-            out = np.zeros((self.probs.shape[0], x_arr.shape[0]))
-            for j, xv in enumerate(x_arr):
-                if xv < self.edges[0] or xv >= self.edges[-1]:
-                    out[:, j] = 0.0
-                else:
-                    k = int(np.searchsorted(self.edges, xv, side="right") - 1)
-                    k = max(0, min(k, density.shape[1] - 1))
-                    out[:, j] = density[:, k]
+            B = density.shape[1]
+            k = np.searchsorted(self.edges, x_arr, side="right") - 1
+            inside = (x_arr >= self.edges[0]) & (x_arr < self.edges[-1])
+            k_clipped = np.clip(k, 0, B - 1)
+            out = density[:, k_clipped]                 # (N, M)
+            if (~inside).any():
+                out[:, ~inside] = 0.0
         else:
             raise NotImplementedError(f"pdf not implemented for backing={self.backing}")
 

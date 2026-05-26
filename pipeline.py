@@ -48,6 +48,72 @@ from bracketlearn.protocols import (
     Calibrator,
 )
 
+# ---------------------------------------------------------------------------
+# Metric dispatch registry. Used by PipelineResult.score (and downstream
+# leaderboard helpers) to turn a (metric_name, distribution) pair into a
+# scalar mean. The registry is keyed by metric; per-backing dispatch lives
+# inside each entry so adding a new backing means touching one table, not
+# four if/elif blocks (audit item §3.S3).
+# ---------------------------------------------------------------------------
+
+
+def _metric_crps(dist, y, scoremod) -> float:
+    from bracketlearn.forecast import Backing, ParametricFamily
+    if dist.backing == Backing.PARAMETRIC:
+        if dist.family == ParametricFamily.NORMAL:
+            return float(scoremod.crps_gaussian(dist, y).mean())
+        if dist.family == ParametricFamily.MIXTURE_NORMAL:
+            # Monte-Carlo CRPS (energy form). 2000 samples is a
+            # speed/accuracy tradeoff that keeps the leaderboard
+            # responsive without distorting rank order.
+            return float(scoremod.crps_mixture_normal(dist, y).mean())
+    if dist.backing == Backing.BRACKET:
+        return float(scoremod.crps_bracket(dist, y).mean())
+    if dist.backing == Backing.QUANTILE:
+        return float(scoremod.crps_quantile(dist, y).mean())
+    return float("nan")
+
+
+def _metric_log_score(dist, y, scoremod) -> float:
+    from bracketlearn.forecast import Backing, ParametricFamily
+    if dist.backing == Backing.PARAMETRIC:
+        if dist.family == ParametricFamily.NORMAL:
+            return float(scoremod.log_score_gaussian(dist, y).mean())
+        if dist.family == ParametricFamily.MIXTURE_NORMAL:
+            return float(scoremod.log_score_mixture_normal(dist, y).mean())
+    if dist.backing == Backing.BRACKET:
+        return float(scoremod.log_score_bracket(dist, y).mean())
+    if dist.backing == Backing.QUANTILE:
+        # Piecewise-linear CDF → piecewise-constant density.
+        return float(scoremod.log_score_quantile(dist, y).mean())
+    return float("nan")
+
+
+def _compute_metric(
+    metric: str, dist, y, *, ladder, scoremod,
+) -> dict[str, float]:
+    """Dispatch one (metric, distribution) pair to a scalar value, or to
+    a small dict (PIT contributes both mean and std).
+    """
+    if metric == "crps":
+        return {"crps": _metric_crps(dist, y, scoremod)}
+    if metric == "log_score":
+        return {"log_score": _metric_log_score(dist, y, scoremod)}
+    if metric in ("pit", "pit_mean", "pit_std"):
+        pits = scoremod.pit(dist, y)
+        return {"pit_mean": float(pits.mean()), "pit_std": float(pits.std())}
+    if metric == "log_loss_bracket":
+        contracts = ladder.price(dist)
+        return {"log_loss_bracket": scoremod.log_loss_bracket(
+            contracts, ladder.edges, y,
+        )}
+    if metric == "brier_bracket":
+        contracts = ladder.price(dist)
+        return {"brier_bracket": scoremod.brier_bracket(
+            contracts, ladder.edges, y,
+        )}
+    raise ValueError(f"unknown metric: {metric!r}")
+
 
 @dataclass
 class _Stage:
@@ -121,57 +187,11 @@ class PipelineResult:
                 f"metrics {needs_ladder & set(metrics)} require ladder=..."
             )
 
-        from bracketlearn.forecast import Backing, ParametricFamily
-
         for name, dist in self.forecasts.items():
             y_oof = y[dist.ids.astype(int)]
             row: dict[str, float] = {"n_oof": int(dist.ids.shape[0])}
             for m in metrics:
-                if m == "crps":
-                    if dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.NORMAL:
-                        row["crps"] = float(scoremod.crps_gaussian(dist, y_oof).mean())
-                    elif dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.MIXTURE_NORMAL:
-                        # Monte-Carlo CRPS (energy form). 2000 samples is a
-                        # speed/accuracy tradeoff that keeps the leaderboard
-                        # responsive without distorting rank order.
-                        row["crps"] = float(scoremod.crps_mixture_normal(dist, y_oof).mean())
-                    elif dist.backing == Backing.BRACKET:
-                        row["crps"] = float(scoremod.crps_bracket(dist, y_oof).mean())
-                    elif dist.backing == Backing.QUANTILE:
-                        row["crps"] = float(scoremod.crps_quantile(dist, y_oof).mean())
-                    else:
-                        row["crps"] = float("nan")
-                elif m == "log_score":
-                    if dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.NORMAL:
-                        row["log_score"] = float(scoremod.log_score_gaussian(dist, y_oof).mean())
-                    elif dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.MIXTURE_NORMAL:
-                        row["log_score"] = float(scoremod.log_score_mixture_normal(dist, y_oof).mean())
-                    elif dist.backing == Backing.BRACKET:
-                        row["log_score"] = float(scoremod.log_score_bracket(dist, y_oof).mean())
-                    elif dist.backing == Backing.QUANTILE:
-                        # Piecewise-linear CDF → piecewise-constant density.
-                        row["log_score"] = float(scoremod.log_score_quantile(dist, y_oof).mean())
-                    else:
-                        row["log_score"] = float("nan")
-                elif m in ("pit", "pit_mean"):
-                    pits = scoremod.pit(dist, y_oof)
-                    row["pit_mean"] = float(pits.mean())
-                    row["pit_std"] = float(pits.std())
-                elif m == "pit_std":
-                    pits = scoremod.pit(dist, y_oof)
-                    row["pit_std"] = float(pits.std())
-                elif m == "log_loss_bracket":
-                    contracts = ladder.price(dist)
-                    row["log_loss_bracket"] = scoremod.log_loss_bracket(
-                        contracts, ladder.edges, y_oof,
-                    )
-                elif m == "brier_bracket":
-                    contracts = ladder.price(dist)
-                    row["brier_bracket"] = scoremod.brier_bracket(
-                        contracts, ladder.edges, y_oof,
-                    )
-                else:
-                    raise ValueError(f"unknown metric: {m!r}")
+                row.update(_compute_metric(m, dist, y_oof, ladder=ladder, scoremod=scoremod))
             out[name] = row
         return out
 
@@ -473,7 +493,10 @@ class ForecastPipeline:
                 f.lifter.fit(base_pt_oof, y[half:])
             return f.predict_dist(X, ids=ids, timestamps=ts)
         if deps:
-            _fit_with_optional_weight(f, X, y, sample_weight, deps_oof=deps)
+            _fit_with_optional_weight(
+                f, X, y, sample_weight,
+                ids=ids, timestamps=ts, deps_oof=deps,
+            )
             return _predict_with_deps(f, X, ids, ts, deps)
         _fit_with_optional_weight(f, X, y, sample_weight)
         return f.predict_dist(X, ids=ids, timestamps=ts)
@@ -691,7 +714,13 @@ class ForecastPipeline:
             return dist_train, dist_test
 
         if deps_for_fit:
-            _fit_with_optional_weight(f, X_tr, y_tr, sw_tr, deps_oof=deps_for_fit)
+            # Pass ids/timestamps explicitly so trainers that check
+            # row-alignment against deps_oof.ids (e.g. Stacking) see the
+            # fold-relative ids, not the auto-filled arange(N).
+            _fit_with_optional_weight(
+                f, X_tr, y_tr, sw_tr,
+                ids=ids_tr, timestamps=ts_tr, deps_oof=deps_for_fit,
+            )
             dist_train = _predict_with_deps(f, X_tr, ids_tr, ts_tr, deps_for_fit)
             dist_test = _predict_with_deps(f, X_te, ids_te, ts_te, deps_for_pred)
         else:
@@ -730,35 +759,38 @@ def _fit_with_optional_weight(
     sample_weight: np.ndarray | None,
     **extra: Any,
 ) -> None:
-    """Call ``forecaster.fit`` with ``sample_weight`` if the signature accepts
-    it; otherwise drop it silently. Extra kwargs (e.g. ``deps_oof``) pass
-    through verbatim.
+    """Call ``forecaster.fit`` with the kwargs the signature actually accepts.
 
-    Why: trainers that genuinely support weights take ``sample_weight=`` as
-    a keyword; those that don't (online-learning trainers like
-    OnlineAggregator, or pure-sequence trainers like RNNHourly) shouldn't
-    crash a pipeline that happens to thread weights through. The detection
-    is signature-based, not TypeError-based, so a missing kwarg doesn't
-    mask an unrelated bug in the trainer.
+    Drops ``sample_weight`` if not supported (online-learning trainers like
+    ``OnlineAggregator`` and pure-sequence trainers like ``RNNHourly``).
+    Also drops other extras (``ids``, ``timestamps``, ``deps_oof``) that
+    a particular trainer doesn't declare — keeps callers free to pass the
+    full row-alignment context without worrying about each trainer's API.
+
+    Detection is signature-based, not TypeError-based, so a missing kwarg
+    doesn't mask an unrelated bug.
     """
     import inspect
 
-    if sample_weight is None:
-        forecaster.fit(X, y, **extra)
-        return
     try:
         sig = inspect.signature(forecaster.fit)
         params = sig.parameters
     except (TypeError, ValueError):
         params = {}
-    accepts_sw = (
-        "sample_weight" in params
-        or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    accepts_var_kw = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
     )
-    if accepts_sw:
-        forecaster.fit(X, y, sample_weight=sample_weight, **extra)
-    else:
-        forecaster.fit(X, y, **extra)
+
+    def _accepts(name: str) -> bool:
+        return accepts_var_kw or name in params
+
+    call_kwargs: dict[str, Any] = {}
+    if sample_weight is not None and _accepts("sample_weight"):
+        call_kwargs["sample_weight"] = sample_weight
+    for k, v in extra.items():
+        if _accepts(k):
+            call_kwargs[k] = v
+    forecaster.fit(X, y, **call_kwargs)
 
 
 def _predict_with_deps(

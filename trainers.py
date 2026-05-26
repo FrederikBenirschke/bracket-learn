@@ -25,7 +25,12 @@ from typing import Any, Self
 import numpy as np
 
 from bracketlearn.base import BaseEstimator
-from bracketlearn.forecast import DistributionForecast, PointForecast, ProvenanceMeta
+from bracketlearn.forecast import (
+    DistributionForecast,
+    PointForecast,
+    ProvenanceMeta,
+    bracket_probs_from_cdf_at_edges,
+)
 
 
 def _estimator_accepts_sample_weight(estimator: Any) -> bool:
@@ -648,11 +653,6 @@ _DEFAULT_QUANTILES: tuple[float, ...] = (
 )
 
 
-def _isotonic_repair_row(qvals: np.ndarray) -> np.ndarray:
-    """In-place fix for non-monotone quantile crossings (PAV across τ)."""
-    return np.maximum.accumulate(qvals)
-
-
 @dataclass
 class QuantileReg(BaseEstimator):
     """Per-τ LightGBM quantile-regression heads.
@@ -718,9 +718,8 @@ class QuantileReg(BaseEstimator):
             raise RuntimeError("QuantileReg.predict_dist called before fit")
         X = np.asarray(X, dtype=float)
         qvals = np.column_stack([self.models_[t].predict(X) for t in self.taus])
-        # Repair crossings row-by-row.
-        for i in range(qvals.shape[0]):
-            qvals[i] = _isotonic_repair_row(qvals[i])
+        # Repair crossings across rows in one vectorised pass.
+        qvals = np.maximum.accumulate(qvals, axis=1)
         prov = ProvenanceMeta(
             forecaster_name=self.name,
             forecaster_version="0.1",
@@ -803,8 +802,7 @@ class QuantileForest(BaseEstimator):
         # quantile-forest can return shape (N, Q) or (N,) depending on Q==1; coerce.
         if qpred.ndim == 1:
             qpred = qpred.reshape(-1, 1)
-        for i in range(qpred.shape[0]):
-            qpred[i] = _isotonic_repair_row(qpred[i])
+        qpred = np.maximum.accumulate(qpred, axis=1)
         prov = ProvenanceMeta(
             forecaster_name=self.name,
             forecaster_version="0.1",
@@ -931,10 +929,9 @@ class CumulativeBinary(BaseEstimator):
         cut_col = np.tile(cuts, N).reshape(-1, 1)
         X_aug = np.hstack([X_aug, cut_col])
         proba = self.model_.predict_proba(X_aug)[:, 1].reshape(N, cuts.size)
-        # Isotonic repair per row (non-monotonicity is rare with monotone=True
-        # but the LGBM contraint isn't strict for binary).
-        for i in range(N):
-            proba[i] = np.maximum.accumulate(proba[i])
+        # Isotonic repair across rows in one pass (non-monotonicity is rare
+        # with monotone=True but the LGBM constraint isn't strict for binary).
+        proba = np.maximum.accumulate(proba, axis=1)
         # taus = proba values at the cutpoints (per row), but quantile-backed
         # storage assumes shared taus across rows. Reverse the roles: store
         # cutpoints as qvals, and use proba as per-row taus — but that breaks
@@ -948,23 +945,15 @@ class CumulativeBinary(BaseEstimator):
         # edges are explicit constructor args (no invented pad).
         lo, hi = self.outer_edges
         edges = np.concatenate([[lo], cuts, [hi]])
-        # cdf at the inner edges = proba; at the outer edges = 0 and 1.
+        # CDF at the inner edges = classifier proba; at the outer edges = 0 and 1.
         cdf_at_edges = np.column_stack([
             np.zeros(N),
             proba,
             np.ones(N),
         ])
-        probs = np.diff(cdf_at_edges, axis=1)
-        probs = np.clip(probs, 0.0, 1.0)
-        row_sum = probs.sum(axis=1)
-        if np.any(row_sum <= 0):
-            n_bad = int((row_sum <= 0).sum())
-            raise ValueError(
-                f"CumulativeBinary.predict_dist: {n_bad}/{N} rows produced "
-                f"zero total mass (LightGBM classifier output is degenerate). "
-                f"Refusing to substitute uniform distribution."
-            )
-        probs = probs / row_sum[:, None]
+        probs = bracket_probs_from_cdf_at_edges(
+            cdf_at_edges, source="CumulativeBinary.predict_dist",
+        )
         prov = ProvenanceMeta(
             forecaster_name=self.name,
             forecaster_version="0.1",
@@ -1263,16 +1252,16 @@ class OnlineAggregator(BaseEstimator):
                 f"OnlineAggregator: predict X has K={X.shape[1]}, train had K={self.K_}"
             )
         N = X.shape[0]
+        awake = ~np.isnan(X)                      # (N, K) bool
+        # Weight matrix: final_w_ broadcast against awake mask.
+        w_mat = self.final_w_[None, :] * awake    # (N, K) — zeroes on asleep
+        x_mat = np.where(awake, X, 0.0)
+        num = (w_mat * x_mat).sum(axis=1)         # (N,)
+        denom = w_mat.sum(axis=1)                 # (N,)
+        awake_counts = awake.sum(axis=1)          # (N,)
+        ok = (awake_counts >= self.min_experts) & (denom > 0)
         mu = np.full(N, np.nan)
-        for t in range(N):
-            awake = ~np.isnan(X[t])
-            if int(awake.sum()) < self.min_experts:
-                continue
-            w = self.final_w_[awake]
-            s = w.sum()
-            if s <= 0:
-                continue
-            mu[t] = float(np.dot(w / s, X[t][awake]))
+        mu[ok] = num[ok] / denom[ok]
         # Leftover NaNs are a real coverage hole — raise.
         if np.isnan(mu).any():
             n_miss = int(np.isnan(mu).sum())
