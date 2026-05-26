@@ -45,14 +45,16 @@ def _prov() -> ProvenanceMeta:
 def _normal_dist(mu, sigma):
     mu = np.asarray(mu, dtype=float)
     sigma = np.asarray(sigma, dtype=float)
-    ids = np.arange(mu.size); ts = ids.astype(float)
+    ids = np.arange(mu.size)
+    ts = ids.astype(float)
     return DistributionForecast.from_normal(mu, sigma, ids=ids, timestamps=ts,
                                             provenance=_prov())
 
 
 def _quantile_dist(taus, qvals):
     qvals = np.asarray(qvals, dtype=float)
-    ids = np.arange(qvals.shape[0]); ts = ids.astype(float)
+    ids = np.arange(qvals.shape[0])
+    ts = ids.astype(float)
     return DistributionForecast.from_quantiles(
         taus=np.asarray(taus, dtype=float), qvals=qvals,
         tail_policy=TailPolicy.same(TailRule.clip()),
@@ -64,7 +66,8 @@ def _mixture_dist(weights, mus, sigmas):
     weights = np.asarray(weights, dtype=float)
     mus = np.asarray(mus, dtype=float)
     sigmas = np.asarray(sigmas, dtype=float)
-    ids = np.arange(weights.shape[0]); ts = ids.astype(float)
+    ids = np.arange(weights.shape[0])
+    ts = ids.astype(float)
     return DistributionForecast.from_mixture_normal(
         weights=weights, mus=mus, sigmas=sigmas,
         ids=ids, timestamps=ts, provenance=_prov(),
@@ -74,7 +77,8 @@ def _mixture_dist(weights, mus, sigmas):
 def _bracket_dist(edges, probs):
     edges = np.asarray(edges, dtype=float)
     probs = np.asarray(probs, dtype=float)
-    ids = np.arange(probs.shape[0]); ts = ids.astype(float)
+    ids = np.arange(probs.shape[0])
+    ts = ids.astype(float)
     return DistributionForecast.from_brackets(
         edges=edges, probs=probs, ids=ids, timestamps=ts, provenance=_prov(),
     )

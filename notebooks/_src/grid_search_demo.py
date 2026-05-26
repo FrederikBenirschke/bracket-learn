@@ -248,11 +248,10 @@ plt.tight_layout(); plt.show()
 # on classical point-prediction metrics?
 
 # %%
+from bracketlearn.score import to_point
 from lightgbm import LGBMRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.model_selection import KFold
-
-from bracketlearn.score import to_point
 
 # Refit the best pipeline with refit_on_full=False to get clean OOF dists.
 best_eval = ForecastPipeline(

@@ -293,9 +293,10 @@ def _quantile_at(dist: DistributionForecast, q: float) -> np.ndarray:
     out = np.empty(n, dtype=float)
     # Build a per-row CDF callable using the dist's vectorised cdf().
     for i in range(n):
-        # cdf() expects a 1-D array of points; we wrap a scalar.
-        def f(x):
-            return float(dist.cdf(np.array([x]))[i, 0]) - q
+        # cdf() expects a 1-D array of points; bind i with a default arg so
+        # the closure doesn't re-capture the loop variable.
+        def f(x, _i=i):
+            return float(dist.cdf(np.array([x]))[_i, 0]) - q
         # Probe brackets — start with the dist's own quantile-like landmarks.
         if dist.backing == Backing.BRACKET:
             lo, hi = float(dist.edges[0]), float(dist.edges[-1])

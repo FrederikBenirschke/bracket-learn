@@ -359,12 +359,12 @@ plt.tight_layout(); plt.show()
 # beat plain regression on classical metrics?" check.
 
 # %%
+from bracketlearn.score import to_point
 from lightgbm import LGBMRegressor
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.model_selection import TimeSeriesSplit
 
-from bracketlearn.score import to_point
 
 # Reuse the dists from the leaderboard pipelines above where convenient;
 # for sklearn baselines walk the same expanding splits the pipeline used.

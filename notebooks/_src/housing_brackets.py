@@ -329,10 +329,10 @@ for i, (name, c, ls, sk) in enumerate(rows, 1):
 # This is the "OK but does it beat sklearn?" check.
 
 # %%
+from bracketlearn.score import to_point
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.model_selection import KFold
 
-from bracketlearn.score import to_point
 
 # Refit each leaderboard pipeline; collapse OOF dist to mean → RMSE/MAE.
 def _dist_to_point_metrics(stage_name, forecaster):
