@@ -47,6 +47,17 @@ Shows: nested `stage__field` param syntax, full results table sorted by
 CRPS, fitted `best_pipeline_` ready for `.predict()` on new data. Runs
 in ~3 min.
 
+## Notebooks (recommended)
+
+Each of the three public-dataset examples also ships as a Jupyter
+notebook with plots — PIT histograms, quantile fans, reliability
+diagrams, bracket-price bars, skill-score bars, and a **leaderboard**
+ranking multiple trainers against baselines.
+
+See [`bracketlearn/notebooks/`](https://github.com/frederikbenirschke/bracketlearn/tree/main/bracketlearn/notebooks).
+Source for each notebook lives as a `.py` file under `notebooks/_src/`
+(via [jupytext](https://jupytext.readthedocs.io)) so diffs stay clean.
+
 ## Synthetic-data examples
 
 These predate the public-dataset ports and stress more trainers per
