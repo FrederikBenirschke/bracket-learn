@@ -18,6 +18,7 @@ guides/weights
 guides/multitarget
 guides/search
 guides/persistence
+guides/scoring
 guides/examples
 ```
 
