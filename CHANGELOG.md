@@ -8,6 +8,54 @@ minor release; patch releases are bug-fixes and additive tests.
 
 ### Added
 
+- `adapters.BinaryAbove` — `P(X > k)` priced as `1 - dist.cdf(k)`. Maps
+  to single-threshold Kalshi / Polymarket contracts.
+- `adapters.BinaryBelow` — `P(X ≤ k)` priced as `dist.cdf(k)`.
+- `adapters.Twin` — paired YES/NO at one strike. Two rows per entity
+  sharing `group_id`, `fair_price` sums to 1.0 by construction. Maps to
+  prediction-market spread / total contracts (`Eagles -3.5`,
+  `Over 47.5 total points`).
+- `adapters.ThresholdLadder` — survival function evaluated at S strikes
+  (`[P(X > k_i)]_i`). Maps to single-side Kalshi multi-threshold ladders.
+
+### Changed
+
+- `bracketlearn.__all__` extended with `PerRowBracketLadder`, `Twin`,
+  `ThresholdLadder` (the per-row ladder was missing from the previous
+  release; the new binary/threshold/twin adapters are exported alongside).
+- README rewritten with a prediction-market-first pitch, an adapter
+  catalogue mapping each adapter to real venue contracts, and a
+  synthetic NYC-max-temperature worked example showing all four
+  contract shapes priced from one EMOS forecast.
+
+### Removed
+
+- Unimplemented adapter stubs that raised `NotImplementedError`:
+  `Bracket` (single-bin), `VanillaCall`, `VanillaPut`, `LinearCombo`,
+  `CallSpread`, `Butterfly`, `Condor`, `PerRow`, `Custom`, `VenueSpec`,
+  `to_quote`. These covered options-style payoffs that don't exist on
+  the prediction-market venues this library is built for. Drop net:
+  ~250 lines of stubs plus their "raises NotImplementedError" tests.
+- `test_no_silent_fallbacks.test_adapter_stubs_raise_not_implemented`
+  and `test_to_quote_raises_not_implemented` removed alongside the
+  stubs they covered.
+
+### Added (continued — earlier in this release cycle)
+
+- `DistributionForecast.cdf_at_grid(y)` — per-row CDF on a *per-row*
+  evaluation grid. Input `y` shape `(N, M)` → output `(N, M)`, where row
+  `i` uses its own grid `y[i, :]`. NaN entries round-trip as NaN so
+  callers can pad ragged grids. Generalises `cdf_at` (which is the M=1
+  case in spirit) and avoids the `(N, M_global)` cross-product of `cdf`
+  when each row needs different query points.
+- `adapters.PerRowBracketLadder` — bracket ladder with a *per-row* edge
+  vector. Motivated by Kalshi-style daily-rotating temperature brackets
+  (NYC max-temp etc.). Storage is ragged (`edges_per_row: list[ndarray]`,
+  per-row `B_i` allowed to vary). `include_tail_buckets=True` emits
+  explicit "below edges[0]" and "above edges[-1]" rows so per-entity
+  prices sum to exactly 1.0; otherwise the existing coverage check
+  (warn / strict-raise) gates against silent tail leakage. Built on
+  `cdf_at_grid` so parametric backings stay fully vectorised.
 - `DistributionForecast.cdf_at(y)` — per-row CDF for any backing.
   Replaces the O(N²) `np.diag(dist.cdf(y))` pattern; drops `score.pit`
   memory from ~800 MB to ~80 KB at N=10k.

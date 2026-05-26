@@ -41,7 +41,8 @@ def test_top_level_estimator_imports():
         # pipeline + search
         "ForecastPipeline", "PipelineResult", "GridSearch",
         # adapters
-        "BracketLadder", "BinaryAbove", "BinaryBelow",
+        "BracketLadder", "PerRowBracketLadder",
+        "BinaryAbove", "BinaryBelow", "Twin", "ThresholdLadder",
         # base
         "BaseEstimator", "clone",
     }

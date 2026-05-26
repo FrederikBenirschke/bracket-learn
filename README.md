@@ -1,19 +1,23 @@
 # bracketlearn
 
-Sklearn-style framework for **probabilistic forecasting** + **bracket-contract pricing**.
+**Train a probabilistic forecast for a continuous quantity, then price the
+prediction-market contracts (Kalshi / Polymarket binaries, brackets,
+spreads, totals) that pay off on it.**
 
-Built for the case where you predict a continuous quantity (temperature, score
-margin, asset return) and need to price a ladder of binary contracts
-("HIGH > 75°F?", "score in [10, 20)?") against the forecast distribution.
+`bracketlearn` is an sklearn-style framework that does the two things you
+need when trading prediction markets on a continuous underlying:
 
-## Why
+1. **Forecast a distribution** — `EMOS`, `NGBoostNormal`, `QuantileReg`,
+   `MixtureNormals`, `CumulativeBinary`, `TailSpecialist` and friends,
+   with sklearn-compatible CV, calibration, and conformal correction.
+2. **Convert that distribution into fair prices** for the venue's listed
+   contracts — single-threshold binaries, paired YES/NO twins, fixed
+   bracket ladders, and per-row varying brackets (the daily-rotating
+   ladders Kalshi runs on temperature / GDP / Fed-decision contracts).
 
-Most probabilistic forecasting libraries stop at "predict a distribution."
-bracketlearn keeps going: every forecast has a typed `DistributionForecast`
-that knows how to convert itself onto a bracket ladder and price the
-resulting contracts. Calibration, conformal correction, and tail
-specialisation are first-class transformer stages — not glue code in your
-notebook.
+Most probabilistic-forecasting libraries stop at "predict a distribution."
+Here every forecast is a typed `DistributionForecast` that knows how to
+price the resulting contracts.
 
 ## Install
 
@@ -24,17 +28,119 @@ pip install bracketlearn
 pip install "bracketlearn[demo]"
 ```
 
-## Quick start
+## Adapter catalogue — venue → math
+
+| Adapter                | Pricing                            | Maps to (examples)                                          |
+|------------------------|------------------------------------|-------------------------------------------------------------|
+| `BinaryAbove(k)`       | `P(X > k)`                         | Kalshi "high above 80°F", "S&P > 5000 by Friday"            |
+| `BinaryBelow(k)`       | `P(X ≤ k)`                         | Kalshi "GDP ≤ 2.5%", "low below freezing"                   |
+| `Twin(k)`              | paired `P(X > k)` / `P(X ≤ k)`     | Polymarket spread (`Eagles -3.5`), total (`Over 47.5`)      |
+| `ThresholdLadder(ks)`  | `[P(X > k_i)]` per strike          | Kalshi multi-threshold temperature ladders                  |
+| `BracketLadder(edges)` | `[P(lo ≤ X < hi)]` shared edges    | Polymarket weather brackets, fixed weekly contracts         |
+| `PerRowBracketLadder`  | per-row edges (each row its own)   | Kalshi daily-rotating brackets (edges shift day-by-day)     |
+
+All six adapters take any `DistributionForecast` (normal / student-t /
+mixture-normal / quantile / bracket backings) and emit a long-form
+`ContractForecast` with `fair_price`, `entity_ids`, `group_id`,
+`contract_spec`, and provenance.
+
+## Worked example — synthetic NYC max-temperature contracts
+
+A 10-line demo: synthetic weather features → fit EMOS → price the four
+prediction-market shapes you'd actually see on the venue → flag +EV.
+
+```python
+import numpy as np
+from bracketlearn import (
+    EMOS, BracketLadder, PerRowBracketLadder, BinaryAbove, Twin,
+)
+
+# --- synthetic NYC max-temperature data ---
+rng = np.random.default_rng(0)
+N = 200
+day = np.arange(N)
+season = 70 + 15 * np.sin(2 * np.pi * day / 365.0)
+prior_high = season + rng.normal(0, 4, N)
+X = np.column_stack([prior_high, season])
+y = season + 0.6 * (prior_high - season) + rng.normal(0, 5, N)
+X_tr, X_te, y_tr = X[:150], X[150:], y[:150]
+
+# --- fit EMOS (ensemble-mean + spread regression) ---
+emos = EMOS().fit(X_tr, y_tr)
+dist = emos.predict_dist(
+    X_te,
+    ids=np.arange(50),
+    timestamps=np.arange(50, dtype=float),
+)
+# dist.params["mu"], dist.params["sigma"] now hold (50,) forecasts.
+
+# --- price the contracts you'd see on a prediction market ---
+
+# (1) Single threshold: "high above 75°F today"
+fair = BinaryAbove(strike=75.0).price(dist).fair_price[0]
+market = 0.55                       # what the venue is quoting
+print(f"BinaryAbove(75)   fair={fair:.3f}  market={market:.3f}  edge={fair-market:+.3f}")
+# → fair=0.648  market=0.550  edge=+0.098  ← BUY YES
+
+# (2) Paired YES/NO at 70°F (spread / total style)
+twin = Twin(strike=70.0).price(dist)
+yes = twin.fair_price[twin.contract_ids == 0][0]
+no  = twin.fair_price[twin.contract_ids == 1][0]
+print(f"Twin(70)          yes={yes:.3f}  no={no:.3f}  (sum=1.000)")
+
+# (3) Fixed bracket ladder (Polymarket-style weekly contracts)
+edges = np.array([0.0, 60.0, 70.0, 80.0, 90.0, 100.0])
+ladder = BracketLadder(edges=edges).price(dist)
+# 5 contracts per entity: P([0,60)), P([60,70)), P([70,80)), ...
+
+# (4) Kalshi-style daily-rotating brackets (edges differ each day)
+edges_per_day = [
+    np.array([mu - 10, mu - 3, mu, mu + 3, mu + 10])
+    for mu in dist.params["mu"]
+]
+per_row = PerRowBracketLadder(
+    edges_per_row=edges_per_day,
+    include_tail_buckets=True,      # add "below" and "above" rows
+).price(dist)
+# Per-entity rows sum to exactly 1.0.
+```
+
+Output for the first entity:
+
+```
+BinaryAbove(75)   fair=0.648  market=0.550  edge=+0.098  ← BUY YES
+Twin(70)          yes=0.912  no=0.088  (sum=1.000)
+
+BracketLadder fair prices for entity 0:
+    [0, 60)   = 0.000
+    [60, 70)  = 0.088
+    [70, 80)  = 0.635
+    [80, 90)  = 0.271
+    [90, 100) = 0.006
+
+PerRowBracketLadder (brackets centered on each day's forecast):
+    < 67.0          = 0.026
+    [67.0, 74.0)    = 0.254
+    [74.0, 77.0)    = 0.220
+    [77.0, 80.0)    = 0.220
+    [80.0, 87.0)    = 0.254
+    > 87.0          = 0.026
+                sum = 1.000
+```
+
+Wrap this in `ForecastPipeline` to get CV, calibration, and conformal
+correction — see the longer example below.
+
+## Pipeline quick start
 
 ```python
 import numpy as np
 from sklearn.linear_model import RidgeCV
 
-from bracketlearn.adapters import BracketLadder
-from bracketlearn.composite import CalibratedForecaster, LiftedForecaster
-from bracketlearn.lift import GlobalResidual, Isotonic
-from bracketlearn.pipeline import ForecastPipeline
-from bracketlearn.trainers import EMOS, QuantileReg, SklearnPoint
+from bracketlearn import (
+    BracketLadder, CalibratedForecaster, EMOS, ForecastPipeline,
+    GlobalResidual, Isotonic, LiftedForecaster, QuantileReg, SklearnPoint,
+)
 
 edges = np.linspace(0, 100, 11)   # 10 brackets
 
@@ -59,7 +165,6 @@ print(result.to_table(y, metrics=["log_loss_bracket", "brier_bracket"],
 
 # Predict on truly unseen data using each stage's full-train refit.
 new_dists = pipeline.predict(X_new, ids=new_ids, timestamps=new_ts)
-print(new_dists["qreg"].params)
 ```
 
 ## sklearn contract
@@ -73,13 +178,13 @@ instances are never mutated and can be safely reused across pipelines.
 
 Five protocols, no inheritance maze:
 
-| Protocol         | Input → Output                         | Examples |
-| ---------------- | -------------------------------------- | -------- |
-| `PointForecaster`| `X → PointForecast` (μ̂)              | `SklearnPoint(Ridge())`, `OnlineAggregator`, `RNNHourly` |
-| `DistForecaster` | `X → DistributionForecast`             | `EMOS`, `NGBoostNormal`, `QuantileReg`, `CumulativeBinary` |
-| `Lifter`         | `PointForecast → DistributionForecast` | `GlobalResidual` |
-| `Calibrator`     | `DistributionForecast → DistributionForecast` | `Isotonic`, `ConformalCalibrate` |
-| `ContractAdapter`| `DistributionForecast → ContractForecast` | `BracketLadder` |
+| Protocol          | Input → Output                                | Examples                                                       |
+|-------------------|-----------------------------------------------|----------------------------------------------------------------|
+| `PointForecaster` | `X → PointForecast` (μ̂)                     | `SklearnPoint(Ridge())`, `OnlineAggregator`, `RNNHourly`       |
+| `DistForecaster`  | `X → DistributionForecast`                    | `EMOS`, `NGBoostNormal`, `QuantileReg`, `CumulativeBinary`     |
+| `Lifter`          | `PointForecast → DistributionForecast`        | `GlobalResidual`, `StudentTResidual`, `GARCHResidual`          |
+| `Calibrator`      | `DistributionForecast → DistributionForecast` | `Isotonic`, `ConformalCalibrate`                               |
+| `ContractAdapter` | `DistributionForecast → ContractForecast`     | `BinaryAbove`, `Twin`, `BracketLadder`, `PerRowBracketLadder`  |
 
 Compose `PointForecaster + Lifter` with `LiftedForecaster`, and
 `DistForecaster + Calibrator` with `CalibratedForecaster`. Pipeline stays a
@@ -87,14 +192,15 @@ flat `[(name, forecaster)]` list — sklearn-style.
 
 ## Distribution backings
 
-A `DistributionForecast` can carry any of four backings; metrics dispatch
-on the type:
+A `DistributionForecast` can carry any of four backings; metrics and
+adapters dispatch on the type:
 
-- **parametric** (`normal`, `mixture_normal`) — closed-form CRPS / log-score / CDF.
-- **quantile** — array of `qvals` at fixed `taus`; CRPS via pinball trapezoidal
-  integral; tail policy controls extrapolation beyond outermost quantile.
+- **parametric** (`normal`, `student_t`, `mixture_normal`) — closed-form
+  CRPS / log-score / CDF.
+- **quantile** — array of `qvals` at fixed `taus`; CRPS via pinball
+  trapezoidal integral; tail policy controls extrapolation beyond
+  outermost quantile.
 - **bracket** — array of `probs` on `edges`; uniform-within-bin density.
-- **empirical** (planned) — array of `members`.
 
 ## CV variants
 
@@ -152,12 +258,14 @@ print(gs.best_params_, gs.best_score_)
 
 v0.2 — protocols, three CV modes (expanding-window / rolling-window / kfold),
 sample-weight threading, multi-target wrapper, grid-search wrapper, 14 trainers,
-4 backings, full distribution and bracket-level scoring. See
-`bracketlearn/examples/` for runnable demos.
+3 backings, 6 prediction-market adapters, full distribution and
+contract-level scoring. See `bracketlearn/examples/` for runnable demos.
 
 Not yet:
-- Empirical + student_t backings
+- Empirical backing
 - `gpd` / `gaussian_match` tail rules (only `clip`)
+- Vanilla options / option-spread adapters (intentionally out of scope —
+  prediction-market binaries only)
 
 ## License
 

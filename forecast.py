@@ -531,6 +531,94 @@ class DistributionForecast:
             f"cdf_at not implemented for backing={self.backing} family={self.family}"
         )
 
+    def cdf_at_grid(self, y: np.ndarray) -> np.ndarray:
+        """Per-row CDF on a per-row grid: ``F_i(y_i,j)``.
+
+        ``y`` shape ``(N, M)``; output shape ``(N, M)``. Row ``i`` evaluates
+        its own CDF at the M points ``y[i, :]`` — different rows may use
+        completely different grids. Generalises :meth:`cdf_at` (which is the
+        ``M = 1`` case in spirit, with a flat ``(N,)`` y).
+
+        Motivating use: pricing a bracket ladder whose edge vector varies
+        per row (Kalshi-style daily-rotating temperature brackets). Avoids
+        the full ``(N, M_global)`` cross-product of :meth:`cdf` and the
+        N-loop of calling :meth:`cdf_at` per column.
+
+        NaN entries in ``y`` are preserved as NaN in the output — callers
+        that pad ragged grids with NaN can mask the unused columns out.
+        """
+        y_arr = np.asarray(y, dtype=float)
+        if y_arr.ndim != 2:
+            raise ValueError(f"cdf_at_grid: y must be 2-D (N, M); got shape {y_arr.shape}")
+        N_rows = self.ids.shape[0]
+        if y_arr.shape[0] != N_rows:
+            raise ValueError(
+                f"cdf_at_grid: y has {y_arr.shape[0]} rows, dist has {N_rows}"
+            )
+        M = y_arr.shape[1]
+        nan_mask = np.isnan(y_arr)
+        # Substitute a finite placeholder so backing math doesn't propagate
+        # NaN through searchsorted / scipy.stats; restore at the end.
+        y_safe = np.where(nan_mask, 0.0, y_arr)
+
+        if self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.NORMAL:
+            mu = self.params["mu"][:, None]
+            sigma = self.params["sigma"][:, None]
+            out = _stats.norm.cdf(y_safe, loc=mu, scale=sigma)
+        elif self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.STUDENT_T:
+            mu = self.params["mu"][:, None]
+            sigma = self.params["sigma"][:, None]
+            df = self.params["df"][:, None]
+            out = _stats.t.cdf(y_safe, df=df, loc=mu, scale=sigma)
+        elif self.backing == Backing.PARAMETRIC and self.family == ParametricFamily.MIXTURE_NORMAL:
+            w = self.params["weights"][:, :, None]      # (N, K, 1)
+            mus = self.params["mus"][:, :, None]
+            sigmas = self.params["sigmas"][:, :, None]
+            cdfs = _stats.norm.cdf(y_safe[:, None, :], loc=mus, scale=sigmas)  # (N, K, M)
+            out = (w * cdfs).sum(axis=1)
+        elif self.backing == Backing.BRACKET:
+            edges = self.edges
+            probs = self.probs
+            B = probs.shape[1]
+            cum = np.concatenate(
+                [np.zeros((N_rows, 1)), np.cumsum(probs, axis=1)], axis=1
+            )  # (N, B+1)
+            k = np.searchsorted(edges, y_safe.ravel(), side="right").reshape(N_rows, M) - 1
+            below = y_safe <= edges[0]
+            above = y_safe >= edges[-1]
+            k_clipped = np.clip(k, 0, B - 1)
+            widths = edges[k_clipped + 1] - edges[k_clipped]
+            safe_w = np.where(widths > 0, widths, 1.0)
+            frac = np.where(widths > 0, (y_safe - edges[k_clipped]) / safe_w, 0.0)
+            rows_idx = np.arange(N_rows)[:, None]
+            out = cum[rows_idx, k_clipped] + frac * probs[rows_idx, k_clipped]
+            out = np.where(below, 0.0, out)
+            out = np.where(above, 1.0, out)
+        elif self.backing == Backing.QUANTILE:
+            taus = self.taus
+            qvals = self.qvals
+            left_rule, right_rule = _resolve_tail_kinds(self.tail_policy)
+            out = np.empty((N_rows, M), dtype=float)
+            for i in range(N_rows):
+                v = np.interp(
+                    y_safe[i], qvals[i], taus,
+                    left=0.0 if left_rule == "clip" else np.nan,
+                    right=1.0 if right_rule == "clip" else np.nan,
+                )
+                if np.isnan(v).any():
+                    raise NotImplementedError(
+                        f"tail policy {left_rule!r}/{right_rule!r} not implemented yet"
+                    )
+                out[i] = v
+        else:
+            raise NotImplementedError(
+                f"cdf_at_grid not implemented for backing={self.backing} family={self.family}"
+            )
+
+        if nan_mask.any():
+            out = np.where(nan_mask, np.nan, out)
+        return out
+
     def ppf(self, tau: np.ndarray | float) -> np.ndarray:
         """Quantile function. Scalar tau → (N,); array tau → (N, len(tau))."""
         tau_arr = np.atleast_1d(np.asarray(tau, dtype=float))

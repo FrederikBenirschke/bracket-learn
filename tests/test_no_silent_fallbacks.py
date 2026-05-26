@@ -19,23 +19,7 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from bracketlearn.adapters import (
-    BinaryAbove,
-    BinaryBelow,
-    Bracket,
-    Custom,
-    LinearCombo,
-    PerRow,
-    ThresholdLadder,
-    Twin,
-    VanillaCall,
-    VanillaPut,
-    VenueSpec,
-    to_quote,
-)
 from bracketlearn.forecast import (
-    ContractForecast,
-    ContractSpec,
     DistributionForecast,
     ProvenanceMeta,
 )
@@ -56,41 +40,11 @@ def _prov() -> ProvenanceMeta:
 
 
 # ---------------------------------------------------------------------------
-# B8 — stubs raise NotImplementedError (not silently return None).
+# B8 — DistributionForecast.to_* conversion methods are still stubs (the
+# adapter-level stubs were dropped in v0.2 — only BracketLadder /
+# PerRowBracketLadder / BinaryAbove / BinaryBelow / Twin / ThresholdLadder
+# are kept, all implemented).
 # ---------------------------------------------------------------------------
-
-
-def test_adapter_stubs_raise_not_implemented():
-    """Every unimplemented adapter.price now raises NotImplementedError."""
-    # A no-op dist that supports .ids attr — these will raise before touching it.
-    dist = None
-    for adapter in [
-        BinaryAbove(strike=1.0),
-        BinaryBelow(strike=1.0),
-        Bracket(lo=0.0, hi=1.0),
-        ThresholdLadder(strikes=np.array([1.0])),
-        Twin(strike=1.0),
-        VanillaCall(strike=1.0),
-        VanillaPut(strike=1.0),
-        LinearCombo(parts=[(1.0, BinaryAbove(strike=1.0))]),
-        Custom(payoff_fn=lambda x: x, support_lo=0.0, support_hi=1.0),
-    ]:
-        with pytest.raises(NotImplementedError):
-            adapter.price(dist)
-
-
-def test_to_quote_raises_not_implemented():
-    cf = ContractForecast(
-        contract_ids=np.array([0]),
-        entity_ids=np.array([0]),
-        timestamps=np.array([0.0]),
-        fair_price=np.array([0.5]),
-        group_id=np.array([0]),
-        contract_spec=ContractSpec(kind="binary"),
-        provenance=_prov(),
-    )
-    with pytest.raises(NotImplementedError):
-        to_quote(cf, VenueSpec(venue="venue_a", ticker="X"))
 
 
 def test_dist_conversion_stubs_raise():
