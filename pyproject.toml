@@ -42,11 +42,15 @@ dependencies = [
 boosting = ["lightgbm>=4.0", "ngboost>=0.5"]
 quantile-forest = ["quantile-forest>=1.3"]
 rnn = ["torch>=2.0"]
-# Everything for the full e2e demo.
+# Everything for the full e2e demo. Inlined (rather than referencing the
+# other extras) so older pip / poetry / pdm resolvers don't choke on
+# self-referencing extras. Keep in sync with [boosting], [quantile-forest],
+# [rnn] above.
 demo = [
-    "bracketlearn[boosting]",
-    "bracketlearn[quantile-forest]",
-    "bracketlearn[rnn]",
+    "lightgbm>=4.0",
+    "ngboost>=0.5",
+    "quantile-forest>=1.3",
+    "torch>=2.0",
 ]
 dev = [
     "pytest>=7",
@@ -86,8 +90,12 @@ addopts = [
     "--strict-config",
 ]
 filterwarnings = [
+    # lightgbm's "[LightGBM] [Warning] No further splits with positive gain"
+    # is a per-fit message we can't suppress at the call site.
     "ignore::UserWarning:lightgbm",
-    "ignore::DeprecationWarning",
+    # Surface all DeprecationWarnings by default so CI catches upstream
+    # (numpy / scikit-learn / scipy) deprecations the day they appear.
+    "default::DeprecationWarning",
 ]
 
 [tool.ruff]

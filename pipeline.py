@@ -839,7 +839,11 @@ def _stitch_folds(
         raise RuntimeError("no folds to stitch — pipeline emitted nothing")
     backings = {d.backing for _, d in folds}
     if len(backings) > 1:
-        raise NotImplementedError(f"mixed backings across folds: {backings}")
+        raise ValueError(
+            f"mixed backings across folds: {backings}. Pipeline folds must "
+            f"share one backing — a single forecaster cannot emit different "
+            f"backings on different folds."
+        )
     backing = next(iter(backings))
 
     all_rows = np.concatenate([rows for rows, _ in folds])
@@ -852,7 +856,10 @@ def _stitch_folds(
     if backing == Backing.PARAMETRIC:
         families = {d.family for _, d in folds}
         if len(families) > 1:
-            raise NotImplementedError(f"mixed parametric families: {families}")
+            raise ValueError(
+                f"mixed parametric families across folds: {families}. All "
+                f"folds must share one parametric family."
+            )
         family = next(iter(families))
         if family == ParametricFamily.NORMAL:
             mu = np.concatenate([d.params["mu"] for _, d in folds])[order]
@@ -873,7 +880,10 @@ def _stitch_folds(
     if backing == Backing.BRACKET:
         edges_set = {tuple(d.edges.tolist()) for _, d in folds}
         if len(edges_set) > 1:
-            raise NotImplementedError("bracket folds with different edges cannot be stitched")
+            raise ValueError(
+                "bracket folds use different edge vectors; all folds must "
+                "share the same bracket ladder."
+            )
         edges = folds[0][1].edges
         probs = np.concatenate([d.probs for _, d in folds], axis=0)[order]
         return DistributionForecast.from_brackets(
@@ -884,7 +894,10 @@ def _stitch_folds(
     if backing == Backing.QUANTILE:
         taus_set = {tuple(d.taus.tolist()) for _, d in folds}
         if len(taus_set) > 1:
-            raise NotImplementedError("quantile folds with different taus cannot be stitched")
+            raise ValueError(
+                "quantile folds use different tau vectors; all folds must "
+                "share the same quantile grid."
+            )
         taus = folds[0][1].taus
         qvals = np.concatenate([d.qvals for _, d in folds], axis=0)[order]
         # Tail policy must agree across folds (all folds in a pipeline come

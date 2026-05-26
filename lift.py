@@ -33,11 +33,22 @@ if TYPE_CHECKING:
 
 @dataclass
 class GlobalResidual(BaseEstimator):
-    """Fits one σ from OOF residuals. Produces parametric normal."""
+    """Fits one σ from OOF residuals. Produces parametric normal.
+
+    Only ``family="normal"`` is supported; other families are reserved
+    for a future release. Invalid values are caught at construction time.
+    """
 
     family: Literal["normal"] = "normal"      # student_t reserved for v0.2
     requires_X: bool = False
     sigma_: float | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        if self.family != "normal":
+            raise ValueError(
+                f"GlobalResidual.family={self.family!r} not supported; "
+                f"only 'normal' is implemented."
+            )
 
     def fit(
         self,
@@ -46,8 +57,6 @@ class GlobalResidual(BaseEstimator):
         *,
         X: Any | None = None,
     ) -> Self:
-        if self.family != "normal":
-            raise NotImplementedError(f"family={self.family} not in v0.1")
         residuals = np.asarray(y, dtype=float) - point_oof.mu
         if residuals.size < 2:
             raise ValueError("need at least 2 OOF residuals to fit σ")
@@ -441,6 +450,13 @@ class ConformalCalibrate(BaseEstimator):
     offsets_: np.ndarray | None = field(default=None, init=False)
     fitted_: bool = field(default=False, init=False)
 
+    def __post_init__(self) -> None:
+        if self.mode != "per-tau":
+            raise ValueError(
+                f"ConformalCalibrate.mode={self.mode!r} not supported; "
+                f"only 'per-tau' is implemented."
+            )
+
     def fit(
         self,
         dist_oof: DistributionForecast,
@@ -449,14 +465,12 @@ class ConformalCalibrate(BaseEstimator):
         from bracketlearn.forecast import Backing
 
         if dist_oof.backing != Backing.QUANTILE:
-            raise NotImplementedError(
+            raise ValueError(
                 f"ConformalCalibrate expects quantile backing; got {dist_oof.backing}"
             )
         y = np.asarray(y, dtype=float)
         taus = dist_oof.taus
         qvals = dist_oof.qvals      # (N, Q)
-        if self.mode != "per-tau":
-            raise NotImplementedError(f"mode={self.mode!r} not in tier-2")
         # δ_τ = quantile of (q̂_τ - y) at level (1-τ).
         residuals = qvals - y[:, None]      # (N, Q)
         offsets = np.zeros(taus.shape[0])
@@ -475,7 +489,7 @@ class ConformalCalibrate(BaseEstimator):
         if not self.fitted_:
             raise RuntimeError("ConformalCalibrate.transform called before fit")
         if dist.backing != Backing.QUANTILE:
-            raise NotImplementedError(
+            raise ValueError(
                 f"ConformalCalibrate expects quantile backing; got {dist.backing}"
             )
         if not np.array_equal(dist.taus, np.arange(self.offsets_.shape[0])) and \
