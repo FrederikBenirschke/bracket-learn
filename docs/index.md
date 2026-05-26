@@ -19,6 +19,9 @@ guides/multitarget
 guides/search
 guides/persistence
 guides/scoring
+guides/adapters
+guides/baselines
+guides/tail_policies
 guides/examples
 ```
 

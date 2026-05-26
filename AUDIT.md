@@ -340,14 +340,30 @@ past predict-a-distribution"; today it stops there. Missing:
 
 ---
 
-## 7. Docs gaps
+## 7. Docs gaps — FIXED 2026-05-25
 
-- No guide for `score.py` metrics (CRPS/log-score/PIT/Brier semantics).
-- No guide for adapters (`BracketLadder`, `BinaryAbove`, `VanillaCall`).
-- No guide for baselines.
-- No tail-policy guide.
-- `docs/guides/examples.md` claims "5 runnable examples"; 2 are synthetic-only.
-- No CHANGELOG.
+- `docs/guides/scoring.md` (existed already) covers CRPS/log-score/PIT/Brier
+  semantics — confirmed accurate during the audit pass; no change needed.
+- `docs/guides/adapters.md` written — covers `BracketLadder` (coverage,
+  `strict`, edge semantics, output shape), and documents the stub
+  classes (`BinaryAbove`/`Below`, `VanillaCall`/`Put`, `ThresholdLadder`,
+  etc.) as intentional placeholders that raise `NotImplementedError`.
+- `docs/guides/baselines.md` written — covers `EmpiricalDistribution`
+  (climatology floor) and `Persistence` (lag-k cyclic baseline) with
+  the CV constraints and `sample_weight` semantics that are unique
+  to each.
+- `docs/guides/tail_policies.md` written — covers `TailRule.clip()`
+  (the only rule shipped today) and lays out the planned
+  `gpd` / `gaussian_match` / `exponential` / `custom` rules with their
+  fit-source and contract-shape decision table.
+- `docs/guides/examples.md` reread — claim of "5 runnable examples"
+  is correct (`housing_brackets`, `bike_sharing_timeseries`,
+  `grid_search_demo`, `weather_e2e`, `weather_rnn_e2e`). No change.
+- `CHANGELOG.md` added at the repo root of bracketlearn with a full
+  Unreleased section enumerating Added / Changed / Fixed (linked to
+  B1–B10 audit IDs) and a 0.2.0 baseline entry.
+- All three new guides wired into `docs/index.md` toctree under
+  "Guides".
 
 ---
 
