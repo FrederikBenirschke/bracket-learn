@@ -433,23 +433,46 @@ Suite: 206 pass (was 195, +11 new). Zero regressions.
 
 **What.** Pin invariants so future refactors don't regress.
 
-- `tests/test_invariants.py`:
-  - For every (estimator, backing) combo: `predict_dist(...).probs` (or
-    derived) rows sum to ~1, are non-negative, quantiles monotone.
-  - `clone(est).get_params() == est.get_params()`, no shared mutable state.
-  - `sum(BracketLadder.price(dist)) == 1.0` (covered by item 1, lifted here
-    as the canonical invariant test).
-- `tests/test_edges.py`:
-  - B=1, B=2 ladders.
-  - Single-row fit.
-  - NaN-in-X for tree-based trainers (tolerate) vs linear (raise).
-- `tests/test_sample_weight.py`:
-  - Each estimator: doubling a row's weight ≈ duplicating the row (within
-    tolerance) for fit-time outputs.
+### DONE 2026-05-25 — `tests/test_invariants.py` (12 tests)
 
-**Files.** `bracketlearn/tests/test_invariants.py` (new),
-`bracketlearn/tests/test_edges.py` (new),
-`bracketlearn/tests/test_sample_weight.py` (new).
+Lock-in tests for the audit-fixed state:
+
+- `test_every_baseestimator_subclass_clones_with_equal_params` —
+  walks every `BaseEstimator` subclass; for each constructable one,
+  asserts `clone(est).get_params(deep=False)` has the same keys as
+  the original.
+- `test_clone_does_not_share_fitted_state` —
+  fitted attribute on the original does not survive `clone()`.
+- `test_clone_deep_copies_nested_estimators` —
+  `CalibratedForecaster(EMOS(), Isotonic())` cloned → both nested
+  estimators are fresh instances.
+- `test_bracket_ladder_b1_single_bracket` / `test_bracket_ladder_b2_*` —
+  degenerate ladder shapes (B=1, B=2) work; row sums == 1.
+- `test_quantile_backing_qvals_monotone` — `from_quantiles` raises on
+  qval crossings.
+- `test_normal_dist_cdf_monotone_in_x` — parametric-normal CDF
+  monotone non-decreasing.
+- `test_bracket_dist_cumulative_probs_monotone` — bracket cumulative
+  bin probs monotone.
+- `test_fit_does_not_mutate_clone_source` — fitting a clone doesn't
+  flip the original's `__sklearn_is_fitted__`.
+- `test_empirical_distribution_clone_fits_independently` — two
+  clones fit on disjoint data produce disjoint qvals.
+- `test_persistence_predict_shape_matches_X` /
+  `test_empirical_dist_predict_emits_same_qvals_per_row` —
+  baseline shape contracts.
+
+**Deferred** (documented in the test file header):
+- `sample_weight` invariance (doubling a row weight ≈ duplicating
+  the row). Linear/OLS estimators honor it exactly; tree-based
+  trainers approximate. Needs dedicated tolerance-tuned suite.
+- Single-row fit. Most trainers fail (ddof=1 σ, k-fold k≥2 …).
+  Document as a known limitation rather than test.
+- NaN-in-X. Behaviour varies by trainer; pin per-trainer in
+  `test_trainers.py` rather than as a cross-cutting invariant.
+
+Ladder-sum invariant (`sum(BracketLadder.price(dist)) == 1.0`) lives
+in `tests/test_ladder_sum.py` from item 1 — not duplicated here.
 
 ---
 
