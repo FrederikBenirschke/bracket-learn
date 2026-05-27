@@ -49,7 +49,8 @@ def test_sklearn_point_introspects_sample_weight_signature():
     without weights; the TypeError that would have fired silently in
     v0.1 never occurs because we don't pass the kwarg in the first place.
     """
-    from bracketlearn.trainers import SklearnPoint, _estimator_accepts_sample_weight
+    from bracketlearn.trainers import SklearnPoint
+    from bracketlearn.trainers._common import _estimator_accepts_sample_weight
 
     class NoWeightFit:
         def fit(self, X, y):
