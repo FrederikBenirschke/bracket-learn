@@ -44,7 +44,7 @@ def emos_calibrated(*, edges: np.ndarray, name: str = "emos_calibrated") -> Any:
 
     return CalibratedForecaster(
         forecaster=EMOS(),
-        calibrator=Isotonic(edges=np.asarray(edges, dtype=float)),
+        calibrator=Isotonic(pre_integrate_edges=np.asarray(edges, dtype=float)),
         name=name,
     )
 

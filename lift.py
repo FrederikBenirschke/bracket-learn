@@ -325,22 +325,43 @@ class GARCHResidual(BaseEstimator):
 class Isotonic(BaseEstimator):
     """Isotonic calibration on bracket probabilities.
 
-    1. Discretise the dist onto `edges` via dist.cdf(edges).
-    2. Flatten to long-form (p_pred, y_hit) pairs across (rows × brackets).
-    3. Fit sklearn.IsotonicRegression on (p_pred, y_hit) with [0, 1] clipping.
-    4. transform(): apply isotonic to bracket probs, renormalise per row,
-       return a bracket-backed DistributionForecast.
+    Inputs and outputs are :class:`BracketForecast` (per-row brackets).
+    A single 1-D isotonic curve is fit on (predicted bracket prob,
+    realized hit) pairs flattened across (rows × brackets). At
+    transform time it's applied independently to every (row, bracket)
+    cell, then each row is renormalised back to sum-to-1.
 
-    Calibrated output is bracket-backed regardless of input backing — the
-    isotonic correction is meaningful only relative to the chosen ladder.
+    v0.3 — drops the ``edges`` constructor arg. Callers that have a
+    non-bracket dist should ``.integrate(edges_per_row)`` first, which
+    works on any subclass and accepts per-row grids natively. The
+    calibrator itself is grid-agnostic because the single isotonic
+    curve maps (predicted-prob → calibrated-prob) without referencing
+    the underlying bracket edges.
 
-    `edges` is required (no default ladder).
+    Convenience: pass ``pre_integrate_edges`` (1-D shared, 2-D dense,
+    or ragged sequence) to have Isotonic auto-integrate non-bracket
+    inputs internally — useful in factories that wrap a parametric
+    forecaster with bracket-prob calibration on a known ladder.
     """
 
-    edges: np.ndarray
+    pre_integrate_edges: Any = None
     iso_: Any = field(default=None, init=False)
     fitted_: bool = field(default=False, init=False)
     n_calib_: int | None = field(default=None, init=False)
+
+    def _maybe_integrate(self, dist: DistributionForecast) -> DistributionForecast:
+        from bracketlearn.forecast import BracketForecast
+
+        if isinstance(dist, BracketForecast):
+            return dist
+        if self.pre_integrate_edges is None:
+            raise TypeError(
+                f"Isotonic expects a BracketForecast input; got "
+                f"{type(dist).__name__}. Either call dist.integrate(edges_per_row) "
+                f"first, or construct Isotonic(pre_integrate_edges=...) so it "
+                f"integrates internally."
+            )
+        return dist.integrate(self.pre_integrate_edges)
 
     def fit(
         self,
@@ -349,20 +370,22 @@ class Isotonic(BaseEstimator):
     ) -> Self:
         from sklearn.isotonic import IsotonicRegression
 
-
+        dist_oof = self._maybe_integrate(dist_oof)
         y = np.asarray(y, dtype=float)
-        edges = np.asarray(self.edges, dtype=float)
-        B = edges.shape[0] - 1
-        # Per-row bracket probs from the dist's CDF.
-        probs = _bracket_probs_from_dist(dist_oof, edges)        # (N, B)
-        # Realized bin per row.
-        bin_idx = np.searchsorted(edges, y, side="right") - 1
-        bin_idx = np.clip(bin_idx, 0, B - 1)
-        # One-hot the realized bins.
-        onehot = np.zeros_like(probs)
-        onehot[np.arange(probs.shape[0]), bin_idx] = 1.0
-        p_long = probs.reshape(-1)
-        y_long = onehot.reshape(-1)
+        probs = dist_oof.probs                  # (N, B_max), NaN-padded for ragged rows
+        bin_idx = dist_oof.realized_bin(y)      # (N,)
+        N, B_max = probs.shape
+        # One-hot the realized bin only over the row's valid prefix.
+        # NaN-padded probs positions stay NaN in onehot, get filtered out
+        # before passing to sklearn.
+        onehot = np.full_like(probs, np.nan)
+        valid_mask = ~np.isnan(probs)
+        onehot[valid_mask] = 0.0
+        onehot[np.arange(N), bin_idx] = 1.0
+        # Flatten and drop NaN positions before fitting.
+        finite_mask = valid_mask.ravel()
+        p_long = probs.ravel()[finite_mask]
+        y_long = onehot.ravel()[finite_mask]
         self.iso_ = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
         self.iso_.fit(p_long, y_long)
         self.n_calib_ = int(y.shape[0])
@@ -375,51 +398,33 @@ class Isotonic(BaseEstimator):
     ) -> DistributionForecast:
         if not self.fitted_:
             raise RuntimeError("Isotonic.transform called before fit")
-        from bracketlearn.forecast import DistributionForecast, ProvenanceMeta
+        from bracketlearn.forecast import BracketForecast, ProvenanceMeta
 
-        edges = np.asarray(self.edges, dtype=float)
-        probs = _bracket_probs_from_dist(dist, edges)
-        cal = self.iso_.predict(probs.reshape(-1)).reshape(probs.shape)
-        row_sum = cal.sum(axis=1, keepdims=True)
-        # row_sum<=0 means isotonic calibration mapped every
-        # bracket to zero — a degenerate calibrator state. Raise instead
-        # of substituting 1.0 (which produces silently-zero rows that
-        # `from_brackets` then rejects, creating a confusing error at the
-        # wrong layer).
+        dist = self._maybe_integrate(dist)
+        probs = dist.probs                      # (N, B_max), NaN-padded
+        finite_mask = ~np.isnan(probs)
+        cal = np.full_like(probs, np.nan)
+        cal[finite_mask] = self.iso_.predict(probs[finite_mask])
+        # Row-wise renorm over the row's valid prefix.
+        row_sum = np.nansum(cal, axis=1, keepdims=True)
         if np.any(row_sum.ravel() <= 0):
             n_bad = int((row_sum.ravel() <= 0).sum())
             raise ValueError(
                 f"Isotonic.transform: {n_bad}/{cal.shape[0]} rows have zero "
                 f"calibrated mass — isotonic fit is degenerate (check fit data)."
             )
-        cal = cal / row_sum
+        with np.errstate(invalid="ignore"):
+            cal = cal / row_sum
         new_prov = ProvenanceMeta(
             **{**dist.provenance.__dict__,
                "conversion_chain": dist.provenance.conversion_chain + ("Isotonic",),
                "created_at": datetime.now()},
         )
-        return DistributionForecast.from_brackets(
-            edges=edges, probs=cal,
+        return BracketForecast.from_arrays(
+            edges=dist.edges, probs=cal,
             ids=dist.ids, timestamps=dist.timestamps,
             provenance=new_prov,
         )
-
-
-def _bracket_probs_from_dist(
-    dist: DistributionForecast, edges: np.ndarray,
-) -> np.ndarray:
-    """Per-row bracket probabilities from any dist that supports cdf().
-
-    Thin wrapper over ``forecast.bracket_probs_from_cdf_at_edges``: calls
-    ``dist.cdf(edges)`` once and delegates the clip/normalise/zero-mass
-    check. Kept as a named function because the calibrator's call sites
-    pre-date the consolidation.
-    """
-    from bracketlearn.forecast import bracket_probs_from_cdf_at_edges
-    cdf_at_edges = dist.cdf(edges)
-    return bracket_probs_from_cdf_at_edges(
-        cdf_at_edges, source="_bracket_probs_from_dist",
-    )
 
 
 @dataclass

@@ -215,7 +215,7 @@ class TestIsotonic:
             ids=np.arange(n), timestamps=np.arange(n, dtype=float),
             provenance=prov,
         )
-        iso = Isotonic(edges=edges).fit(d_oof, y)
+        iso = Isotonic(pre_integrate_edges=edges).fit(d_oof, y)
 
         # Apply to a new dist.
         d_new = DistributionForecast.from_normal(
@@ -233,7 +233,7 @@ class TestIsotonic:
             ids=np.array([0]), timestamps=np.array([0.0]), provenance=prov,
         )
         with pytest.raises(RuntimeError, match="before fit"):
-            Isotonic(edges=np.array([-1.0, 0.0, 1.0])).transform(d)
+            Isotonic(pre_integrate_edges=np.array([-1.0, 0.0, 1.0])).transform(d)
 
 
 # ---------------------------------------------------------------------------

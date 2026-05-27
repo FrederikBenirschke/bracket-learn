@@ -151,12 +151,49 @@ def test_cumulative_binary_emits_bracket():
     _skip_if_missing("lightgbm")
     from bracketlearn.trainers import CumulativeBinary
     X, y, ids, ts = _synthetic(n=80)
-    cb = CumulativeBinary(cutpoints=np.array([8.0, 10.0, 12.0]),
-                          outer_edges=(0.0, 20.0),
-                          n_estimators=20).fit(X, y)
+    # v0.3: per-row cutpoints + outer_edges via id-keyed dicts. Here the
+    # cutpoints happen to be shared across rows but the API requires the
+    # dict — exercises the broadcast path.
+    shared_cuts = np.array([8.0, 10.0, 12.0])
+    cutpoints_by_id = {int(k): shared_cuts for k in ids}
+    outer_edges_by_id = {int(k): (0.0, 20.0) for k in ids}
+    cb = CumulativeBinary(
+        cutpoints_by_id=cutpoints_by_id,
+        outer_edges_by_id=outer_edges_by_id,
+        n_estimators=20,
+    ).fit(X, y, ids=ids)
     d = cb.predict_dist(X, ids=ids, timestamps=ts)
     assert d.backing == Backing.BRACKET
     np.testing.assert_allclose(d.probs.sum(axis=1), 1.0)
+
+
+def test_cumulative_binary_per_row_varying_cutpoints():
+    """Different rows can have different cutpoint counts and grids.
+    Output BracketForecast has NaN-padded ragged columns."""
+    _skip_if_missing("lightgbm")
+    from bracketlearn.trainers import CumulativeBinary
+    X, y, ids, ts = _synthetic(n=60)
+    # Half the rows get 3 cuts, the other half get 5.
+    cuts_a = np.array([8.0, 10.0, 12.0])
+    cuts_b = np.array([6.0, 8.0, 10.0, 12.0, 14.0])
+    cutpoints_by_id = {int(k): (cuts_a if k % 2 == 0 else cuts_b) for k in ids}
+    outer_edges_by_id = {int(k): (0.0, 20.0) for k in ids}
+    cb = CumulativeBinary(
+        cutpoints_by_id=cutpoints_by_id,
+        outer_edges_by_id=outer_edges_by_id,
+        n_estimators=20,
+    ).fit(X, y, ids=ids)
+    d = cb.predict_dist(X, ids=ids, timestamps=ts)
+    assert d.backing == Backing.BRACKET
+    # Per-row valid bin count B_i = K_i + 1: half the rows have 4 bins
+    # (NaN padding in trailing columns), other half have 6.
+    valid_per_row = (~np.isnan(d.probs)).sum(axis=1)
+    even_rows = ids % 2 == 0
+    np.testing.assert_array_equal(valid_per_row[even_rows], 4)   # 3 cuts → 4 bins
+    np.testing.assert_array_equal(valid_per_row[~even_rows], 6)  # 5 cuts → 6 bins
+    # Per-row sum-to-1 (nansum across the row's valid prefix).
+    row_sum = np.nansum(d.probs, axis=1)
+    np.testing.assert_allclose(row_sum, 1.0, atol=1e-9)
 
 
 # ---------------------------------------------------------------------------

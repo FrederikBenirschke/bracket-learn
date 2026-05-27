@@ -66,11 +66,11 @@ def _try_construct(cls: type) -> object | None:
     presets: dict[str, dict] = {
         "Stacking": {"deps": ("a", "b")},
         "CumulativeBinary": {
-            "cutpoints": np.array([1.0, 2.0, 3.0]),
-            "outer_edges": (0.0, 4.0),
+            "cutpoints_by_id": {0: np.array([1.0, 2.0, 3.0])},
+            "outer_edges_by_id": {0: (0.0, 4.0)},
         },
         "TailSpecialist": {"edges": np.linspace(0, 10, 6)},
-        "Isotonic": {"edges": np.linspace(0, 10, 6)},
+        "Isotonic": {"pre_integrate_edges": np.linspace(0, 10, 6)},
         "SklearnPoint": {"estimator": _LinearRegressionFactory()},
         "LiftedForecaster": {
             "base": SklearnPoint(_LinearRegressionFactory()),
@@ -78,7 +78,7 @@ def _try_construct(cls: type) -> object | None:
         },
         "CalibratedForecaster": {
             "forecaster": EMOS(),
-            "calibrator": Isotonic(edges=np.linspace(0, 10, 6)),
+            "calibrator": Isotonic(pre_integrate_edges=np.linspace(0, 10, 6)),
         },
     }
     kwargs = presets.get(cls.__name__, {})
@@ -136,7 +136,7 @@ def test_clone_deep_copies_nested_estimators():
     """clone() should give the nested estimator a fresh instance, not
     share the same object."""
     inner = EMOS()
-    iso = Isotonic(edges=np.linspace(0, 10, 6))
+    iso = Isotonic(pre_integrate_edges=np.linspace(0, 10, 6))
     composite = CalibratedForecaster(forecaster=inner, calibrator=iso)
     cloned = clone(composite)
     # cloned should have its own EMOS and Isotonic

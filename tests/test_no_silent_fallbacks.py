@@ -97,20 +97,26 @@ def test_sklearn_point_raises_genuine_typeerror_inside_fit():
 
 
 def test_cumulative_binary_requires_outer_edges_param():
-    """outer_edges is a required constructor argument (no invented pad)."""
+    """outer_edges_by_id is a required constructor argument (no invented pad)."""
     pytest.importorskip("lightgbm")
     from bracketlearn.trainers import CumulativeBinary
-    with pytest.raises(TypeError, match="outer_edges"):
-        CumulativeBinary(cutpoints=np.array([1.0, 2.0]))  # type: ignore[call-arg]
+    with pytest.raises(TypeError, match="outer_edges_by_id"):
+        CumulativeBinary(cutpoints_by_id={0: np.array([1.0, 2.0])})  # type: ignore[call-arg]
 
 
 def test_cumulative_binary_rejects_inside_outer_edges():
     pytest.importorskip("lightgbm")
     from bracketlearn.trainers import CumulativeBinary
-    with pytest.raises(ValueError, match="outer_edges"):
-        CumulativeBinary(cutpoints=np.array([1.0, 2.0]), outer_edges=(1.5, 3.0))
-    with pytest.raises(ValueError, match="outer_edges"):
-        CumulativeBinary(cutpoints=np.array([1.0, 2.0]), outer_edges=(0.0, 1.5))
+    with pytest.raises(ValueError, match="outer_edges_by_id"):
+        CumulativeBinary(
+            cutpoints_by_id={0: np.array([1.0, 2.0])},
+            outer_edges_by_id={0: (1.5, 3.0)},
+        )
+    with pytest.raises(ValueError, match="outer_edges_by_id"):
+        CumulativeBinary(
+            cutpoints_by_id={0: np.array([1.0, 2.0])},
+            outer_edges_by_id={0: (0.0, 1.5)},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +151,6 @@ def test_rnn_hourly_raises_on_unknown_station_ids():
 
 def test_bracket_probs_from_dist_raises_on_zero_row_sum():
     """Bracket grid that lies entirely outside the distribution support."""
-    from bracketlearn.lift import _bracket_probs_from_dist
     dist = DistributionForecast.from_normal(
         mu=np.array([0.0]), sigma=np.array([0.001]),
         ids=np.array([0]), timestamps=np.array([0.0]),
@@ -153,8 +158,8 @@ def test_bracket_probs_from_dist_raises_on_zero_row_sum():
     )
     # Edges far from the dist's mass: cdf_hi - cdf_lo ≈ 0 everywhere.
     edges = np.array([100.0, 110.0, 120.0])
-    with pytest.raises(ValueError, match="zero total bracket mass"):
-        _bracket_probs_from_dist(dist, edges)
+    with pytest.raises(ValueError, match="zero total mass"):
+        dist.integrate(edges)
 
 
 # ---------------------------------------------------------------------------
