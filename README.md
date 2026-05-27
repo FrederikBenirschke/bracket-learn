@@ -1,23 +1,36 @@
 # bracketlearn
 
-**Train a probabilistic forecast for a continuous quantity, then price the
-prediction-market contracts (Kalshi / Polymarket binaries, brackets,
-spreads, totals) that pay off on it.**
+**Train a calibrated probabilistic forecast for a continuous quantity,
+then price the prediction-market contracts (Kalshi / Polymarket binaries,
+brackets, spreads, totals) that pay off on it.**
 
-`bracketlearn` is an sklearn-style framework that does the two things you
-need when trading prediction markets on a continuous underlying:
+`bracketlearn` is an sklearn-style framework that does three things:
 
 1. **Forecast a distribution** — `EMOS`, `NGBoostNormal`, `QuantileReg`,
    `MixtureNormals`, `CumulativeBinary`, `TailSpecialist` and friends,
    with sklearn-compatible CV, calibration, and conformal correction.
 2. **Convert that distribution into fair prices** for the venue's listed
-   contracts — single-threshold binaries, paired YES/NO twins, fixed
-   bracket ladders, and per-row varying brackets (the daily-rotating
-   ladders Kalshi runs on temperature / GDP / Fed-decision contracts).
+   contracts — single-threshold binaries, paired YES/NO twins, threshold
+   ladders, and bracket ladders with per-row varying edges (the
+   daily-rotating ladders Kalshi runs on temperature / GDP / Fed-decision
+   contracts; pass repeated edges if every row shares the same grid).
+3. **Score those fair prices** against realized outcomes with proper
+   scoring rules (CRPS, log-score, PIT) on the distribution side and
+   Brier / log-loss on the contract side.
 
 Most probabilistic-forecasting libraries stop at "predict a distribution."
 Here every forecast is a typed `DistributionForecast` that knows how to
-price the resulting contracts.
+price the resulting contracts and how to be scored on them.
+
+### Out of scope: trade decisions
+
+The conversion from `fair_price` to a position size is **not** in this
+library and won't be. That conversion is where private signal lives —
+side selection on correlated ladders, liquidity-aware edge gates, group
+Kelly across a bracket, fee schedules, queue assumptions — and shipping
+a default would be either presumptuous (wrong for the next user) or
+alpha-leaking (right for one user who didn't want it public). `bracketlearn`
+gives you the calibrated fair price; the trading layer is yours.
 
 ## Install
 
@@ -42,24 +55,63 @@ becomes `pip install bracketlearn` / `pip install "bracketlearn[demo]"`.
 | `BinaryBelow(k)`       | `P(X ≤ k)`                         | Kalshi "GDP ≤ 2.5%", "low below freezing"                   |
 | `Twin(k)`              | paired `P(X > k)` / `P(X ≤ k)`     | Polymarket spread (`Eagles -3.5`), total (`Over 47.5`)      |
 | `ThresholdLadder(ks)`  | `[P(X > k_i)]` per strike          | Kalshi multi-threshold temperature ladders                  |
-| `BracketLadder(edges)` | `[P(lo ≤ X < hi)]` shared edges    | Polymarket weather brackets, fixed weekly contracts         |
-| `PerRowBracketLadder`  | per-row edges (each row its own)   | Kalshi daily-rotating brackets (edges shift day-by-day)     |
+| `BracketLadder(edges_per_row)` | `[P(lo ≤ X < hi)]` per-row edges | Kalshi daily-rotating brackets; Polymarket weather brackets (pass `[edges]*N`) |
 
-All six adapters take any `DistributionForecast` (normal / student-t /
+All five adapters take any `DistributionForecast` (normal / student-t /
 mixture-normal / quantile / bracket backings) and emit a long-form
 `ContractForecast` with `fair_price`, `entity_ids`, `group_id`,
 `contract_spec`, and provenance.
 
+## Worked mapping — weather markets (Kalshi NYC temperature)
+
+Kalshi lists a daily-rotating bracket ladder on NYC max temperature. The
+brackets shift each day — Monday's might be `{<60, 60–65, 65–70, …}`,
+Tuesday's `{<58, 58–62, 62–66, …}`. Library mapping:
+
+| Venue                                       | Library                                                                  |
+|---------------------------------------------|--------------------------------------------------------------------------|
+| Underlying = today's NYC max temp (°F)      | `y` is a length-N vector of realized temps                               |
+| One ladder per day, edges differ            | `edges_per_row[i]` = day `i`'s edges                                     |
+| 5–7 mutually-exclusive YES contracts        | `BracketLadder(edges_per_row=..., include_tail_buckets=True)`            |
+| Outermost `< X` and `> Y` "tail" contracts  | `include_tail_buckets=True` adds them; per-entity rows then sum to 1.0   |
+| YES pays $1 if temp falls in bracket        | `fair_price` is `P(lo ≤ temp < hi)` for that row                         |
+| Calibration check after settlement          | `score.brier_bracket(contracts, edges, y)` on the realized temps         |
+
+If every day shares the same edges (Polymarket-style weekly weather
+contracts), pass `edges_per_row=[edges] * N` — the inner list holds N
+references to the same array, so there's no memory cost.
+
+## Worked mapping — spread / total markets
+
+An NFL spread of "Eagles −3.5" pays YES if `(Eagles − opp) > 3.5`. A total
+of "Over 47.5" pays YES if `(Eagles + opp) > 47.5`. Both are single-strike
+binaries with paired YES/NO sides:
+
+| Venue                                        | Library                                            |
+|----------------------------------------------|----------------------------------------------------|
+| Underlying = signed margin (spread)          | `y` is the realized margin per game                |
+| Underlying = total points (total)            | `y` is the realized total per game                 |
+| Strike = the spread / total number           | `Twin(strike=3.5)` / `Twin(strike=47.5)`           |
+| YES and NO sides quoted separately on venue  | Two rows per game, shared `group_id`               |
+| YES + NO sum to 1 by construction            | `Twin` rows always sum to 1 within a game          |
+| Calibration check after settlement           | `score.log_loss_bracket(...)` on the YES/NO ladder |
+
+For multi-strike lines ("Eagles −3, −3.5, −4"), price the same `dist`
+through several `Twin` instances at different strikes. For a one-sided
+multi-strike Kalshi temperature ladder ("above 70", "above 75", "above
+80"), use `ThresholdLadder(strikes=[70, 75, 80])` — survival probabilities
+at increasing strikes, monotone but not summing to 1.
+
 ## Worked example — synthetic NYC max-temperature contracts
 
-A 10-line demo: synthetic weather features → fit EMOS → price the four
-prediction-market shapes you'd actually see on the venue → flag +EV.
+A short demo: synthetic weather features → fit EMOS → price the four
+prediction-market shapes you'd actually see on the venue → score the
+fair prices against realized outcomes.
 
 ```python
 import numpy as np
-from bracketlearn import (
-    EMOS, BracketLadder, PerRowBracketLadder, BinaryAbove, Twin,
-)
+from bracketlearn import EMOS, BracketLadder, BinaryAbove, Twin
+from bracketlearn.score import brier_bracket, log_loss_bracket
 
 # --- synthetic NYC max-temperature data ---
 rng = np.random.default_rng(0)
@@ -69,7 +121,7 @@ season = 70 + 15 * np.sin(2 * np.pi * day / 365.0)
 prior_high = season + rng.normal(0, 4, N)
 X = np.column_stack([prior_high, season])
 y = season + 0.6 * (prior_high - season) + rng.normal(0, 5, N)
-X_tr, X_te, y_tr = X[:150], X[150:], y[:150]
+X_tr, X_te, y_tr, y_te = X[:150], X[150:], y[:150], y[150:]
 
 # --- fit EMOS (ensemble-mean + spread regression) ---
 emos = EMOS().fit(X_tr, y_tr)
@@ -83,48 +135,51 @@ dist = emos.predict_dist(
 # --- price the contracts you'd see on a prediction market ---
 
 # (1) Single threshold: "high above 75°F today"
-fair = BinaryAbove(strike=75.0).price(dist).fair_price[0]
-market = 0.55                       # what the venue is quoting
-print(f"BinaryAbove(75)   fair={fair:.3f}  market={market:.3f}  edge={fair-market:+.3f}")
-# → fair=0.648  market=0.550  edge=+0.098  ← BUY YES
+fair_above_75 = BinaryAbove(strike=75.0).price(dist).fair_price
+# fair_above_75[i] = model P(high_i > 75) — feed this into your own
+# trading layer alongside whatever quotes you scraped from the venue.
 
 # (2) Paired YES/NO at 70°F (spread / total style)
 twin = Twin(strike=70.0).price(dist)
 yes = twin.fair_price[twin.contract_ids == 0][0]
 no  = twin.fair_price[twin.contract_ids == 1][0]
-print(f"Twin(70)          yes={yes:.3f}  no={no:.3f}  (sum=1.000)")
+print(f"Twin(70)  yes={yes:.3f}  no={no:.3f}  (sum=1.000)")
 
-# (3) Fixed bracket ladder (Polymarket-style weekly contracts)
+# (3) Bracket ladder, shared edges across all rows (Polymarket weekly style):
 edges = np.array([0.0, 60.0, 70.0, 80.0, 90.0, 100.0])
-ladder = BracketLadder(edges=edges).price(dist)
+ladder = BracketLadder(edges_per_row=[edges] * 50).price(dist)
 # 5 contracts per entity: P([0,60)), P([60,70)), P([70,80)), ...
 
-# (4) Kalshi-style daily-rotating brackets (edges differ each day)
+# (4) Bracket ladder, edges varying per row (Kalshi daily-rotating style):
 edges_per_day = [
     np.array([mu - 10, mu - 3, mu, mu + 3, mu + 10])
     for mu in dist.params["mu"]
 ]
-per_row = PerRowBracketLadder(
+per_row = BracketLadder(
     edges_per_row=edges_per_day,
     include_tail_buckets=True,      # add "below" and "above" rows
 ).price(dist)
 # Per-entity rows sum to exactly 1.0.
+
+# --- score the fair prices against the realized outcomes ---
+# Brier / log-loss on the bracket: are the fair prices calibrated?
+print(f"BracketLadder Brier:    {brier_bracket(ladder, edges, y_te):.4f}")
+print(f"BracketLadder log-loss: {log_loss_bracket(ladder, edges, y_te):.4f}")
 ```
 
 Output for the first entity:
 
 ```
-BinaryAbove(75)   fair=0.648  market=0.550  edge=+0.098  ← BUY YES
-Twin(70)          yes=0.912  no=0.088  (sum=1.000)
+Twin(70)  yes=0.912  no=0.088  (sum=1.000)
 
-BracketLadder fair prices for entity 0:
+BracketLadder fair prices for entity 0 (shared edges):
     [0, 60)   = 0.000
     [60, 70)  = 0.088
     [70, 80)  = 0.635
     [80, 90)  = 0.271
     [90, 100) = 0.006
 
-PerRowBracketLadder (brackets centered on each day's forecast):
+BracketLadder (per-row edges centered on each day's forecast):
     < 67.0          = 0.026
     [67.0, 74.0)    = 0.254
     [74.0, 77.0)    = 0.220
@@ -132,10 +187,20 @@ PerRowBracketLadder (brackets centered on each day's forecast):
     [80.0, 87.0)    = 0.254
     > 87.0          = 0.026
                 sum = 1.000
+
+BracketLadder Brier:    0.4684
+BracketLadder log-loss: 0.7950
 ```
 
-Wrap this in `ForecastPipeline` to get CV, calibration, and conformal
-correction — see the longer example below.
+The output of `.price(dist)` is a `ContractForecast` with a `fair_price`
+array, the typed `entity_ids` / `contract_ids` / `group_id` indexing you
+need to align it with venue quotes, and provenance metadata. What you
+do with those fair prices — gate on edge, size by Kelly, hedge across a
+ladder — is the trading layer you write on top.
+
+Wrap this whole flow in `ForecastPipeline` to get CV, calibration, and
+conformal correction on the distribution before pricing — see the longer
+example below.
 
 ## Pipeline quick start
 
@@ -190,7 +255,7 @@ Five protocols, no inheritance maze:
 | `DistForecaster`  | `X → DistributionForecast`                    | `EMOS`, `NGBoostNormal`, `QuantileReg`, `CumulativeBinary`     |
 | `Lifter`          | `PointForecast → DistributionForecast`        | `GlobalResidual`, `StudentTResidual`, `GARCHResidual`          |
 | `Calibrator`      | `DistributionForecast → DistributionForecast` | `Isotonic`, `ConformalCalibrate`                               |
-| `ContractAdapter` | `DistributionForecast → ContractForecast`     | `BinaryAbove`, `Twin`, `BracketLadder`, `PerRowBracketLadder`  |
+| `ContractAdapter` | `DistributionForecast → ContractForecast`     | `BinaryAbove`, `BinaryBelow`, `Twin`, `ThresholdLadder`, `BracketLadder` |
 
 Compose `PointForecaster + Lifter` with `LiftedForecaster`, and
 `DistForecaster + Calibrator` with `CalibratedForecaster`. Pipeline stays a
