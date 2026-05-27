@@ -6,7 +6,7 @@ QuantileReg (per-tau LightGBM heads), QuantileForest (forest-leaf empirical).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import numpy as np
 
@@ -15,6 +15,36 @@ from bracketlearn.forecast import (
     DistributionForecast,
     ProvenanceMeta,
 )
+
+
+def _repair_quantile_crossings(
+    qvals: np.ndarray, taus: np.ndarray, method: str,
+) -> np.ndarray:
+    """Repair per-row quantile crossings under one of two methods.
+
+    ``maximum_accumulate``: clamp each entry to the running row-max.
+    Fast, monotone, but biased upward at every crossing.
+
+    ``sklearn_pava``: per-row sklearn ``IsotonicRegression`` (pool-adjacent-
+    violators, increasing). Matches the legacy parent-repo trainer
+    convention. Slower (Python loop over rows) but smoother.
+
+    Rows without crossings are left untouched in both methods.
+    """
+    if method == "maximum_accumulate":
+        return np.maximum.accumulate(qvals, axis=1)
+    if method == "sklearn_pava":
+        from sklearn.isotonic import IsotonicRegression
+        out = qvals.copy()
+        for i in range(out.shape[0]):
+            if np.any(np.diff(out[i]) < 0):
+                iso = IsotonicRegression(increasing=True)
+                out[i] = iso.fit_transform(taus, out[i]).astype(float)
+        return out
+    raise ValueError(
+        f"isotonic_method must be 'maximum_accumulate' or 'sklearn_pava'; "
+        f"got {method!r}"
+    )
 
 # ---------------------------------------------------------------------------
 # QuantileReg — per-τ LightGBM heads. Quantile-backed DistForecaster.
@@ -44,6 +74,7 @@ class QuantileReg(BaseEstimator):
     num_leaves: int = 15
     min_child_samples: int = 20
     random_seed: int | None = None
+    isotonic_method: Literal["maximum_accumulate", "sklearn_pava"] = "maximum_accumulate"
     name: str = "QuantileReg"
     depends_on: tuple[str, ...] = ()
     models_: dict[float, Any] = field(default_factory=dict, init=False)
@@ -91,11 +122,11 @@ class QuantileReg(BaseEstimator):
             raise RuntimeError("QuantileReg.predict_dist called before fit")
         X = np.asarray(X, dtype=float)
         qvals = np.column_stack([self.models_[t].predict(X) for t in self.taus])
-        # Repair crossings across rows in one vectorised pass.
-        qvals = np.maximum.accumulate(qvals, axis=1)
+        taus_arr = np.asarray(self.taus, dtype=float)
+        qvals = _repair_quantile_crossings(qvals, taus_arr, self.isotonic_method)
         prov = ProvenanceMeta.placeholder(self.name, sigma_source="native", random_seed=self.random_seed)
         return DistributionForecast.from_quantiles(
-            taus=np.asarray(self.taus, dtype=float),
+            taus=taus_arr,
             qvals=qvals,
             tail_policy=TailPolicy.same(TailRule.clip()),
             ids=np.asarray(ids), timestamps=np.asarray(timestamps),
