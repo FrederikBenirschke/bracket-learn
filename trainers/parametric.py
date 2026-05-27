@@ -6,10 +6,13 @@ Stacking (parametric-normal meta-learner with depends_on).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import numpy as np
+from scipy.optimize import minimize
+from scipy.stats import norm as _scipy_norm
 
 from bracketlearn.base import BaseEstimator
 from bracketlearn.forecast import (
@@ -27,25 +30,97 @@ from bracketlearn.trainers._common import (
 
 @dataclass
 class EMOS(BaseEstimator):
-    """Minimal EMOS:
-        μ̂(x) = a + b·x_mean(features),
-        σ̂²(x) = c + d·var(features)  (clipped to [eps, ∞))
+    """EMOS / NGR distributional regression for an ensemble forecast.
 
-    where 'features' are the columns of X. Treats X as raw ensemble members
-    in the simplest case; in practice users would build X to be the ensemble
-    spread/mean directly.
+    Two fit algorithms are supported, selected by ``fit_method``:
 
-    Coefficients fit by minimising the CRPS of a Gaussian under squared-error
-    on (a + b·μ̄ − y) and a separate non-negative LS on the variance.
-    Simpler v0.1 fit: OLS for (a, b) and method-of-moments for (c, d).
+    ``fit_method="ols"`` (default — bracketlearn's v0.1 method):
+        μ̂(x) = a + b·ens_mean
+        σ̂²(x) = c + d·ens_var      (linear-in-variance)
+        Closed-form: OLS for (a, b); OLS on squared residuals for
+        (c, d). Falls back to constant σ̂² (mean r²) if the linear
+        variance fit emits non-positive variance anywhere in the
+        training range. Fast (single lstsq call per side), no
+        optimiser.
+
+    ``fit_method="crps_nelder_mead"`` (matches the parent repo's
+        ``prediction_market_weather/ml/trainers/emos.py`` snowflake
+        exactly — Gneiting & Raftery 2005, Gneiting et al. 2005):
+        μ̂(x) = a + b·ens_mean
+        σ̂²(x) = exp(c) + exp(d)·ens_std²   (exp-link variance)
+        Coefficients (a, b, c, d) minimise mean closed-form Gaussian
+        CRPS via Nelder-Mead, initialised from OLS for (a, b) and
+        half-split residual-variance for (c, d). Slower (a few seconds
+        on 1k rows) but tightly fits the CRPS surface end-to-end.
+
+    Two input forms via ``input_form``:
+
+    ``input_form="members"`` (default):
+        X holds the per-row ensemble *members* (one column per member).
+        ens_mean/ens_var/ens_std are computed via ``X.mean(axis=1)`` /
+        ``X.var(axis=1, ddof=0)`` / ``np.sqrt(var)``.
+
+    ``input_form="aggregates"``:
+        X already holds the pre-computed aggregates as two columns:
+        ``X[:, 0] = ens_mean`` and ``X[:, 1] = ens_std``. Useful when
+        the upstream pipeline already builds these (e.g. parent-repo
+        weather feature matrix has ``src_<SIDE>_mean`` and
+        ``src_<SIDE>_std`` columns).
+
+    For ``fit_method="crps_nelder_mead"`` the closed-form Gaussian CRPS::
+
+        CRPS(N(μ, σ²), y) = σ · [ z·(2·Φ(z) − 1) + 2·φ(z) − 1/√π ]
+        where z = (y − μ) / σ
+
+    is minimised over ``(a, b, c, d)``. Sample weights are not yet
+    threaded through this fit method (raises if passed).
     """
 
     name: str = "EMOS"
     depends_on: tuple[str, ...] = ()
+    fit_method: Literal["ols", "crps_nelder_mead"] = "ols"
+    input_form: Literal["members", "aggregates"] = "members"
     a_: float | None = field(default=None, init=False)
     b_: float | None = field(default=None, init=False)
     c_: float | None = field(default=None, init=False)
     d_: float | None = field(default=None, init=False)
+
+    # ---------- input adapter ----------
+
+    def _row_aggregates(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return (ens_mean, ens_var, ens_std) per row from X under the
+        configured input_form."""
+        X = np.asarray(X, dtype=float)
+        if self.input_form == "members":
+            if X.ndim != 2:
+                raise ValueError(
+                    f"EMOS(input_form='members'): X must be 2-D; got shape {X.shape}"
+                )
+            ens_mean = X.mean(axis=1)
+            ens_var = X.var(axis=1, ddof=0)
+            ens_std = np.sqrt(ens_var)
+        elif self.input_form == "aggregates":
+            if X.ndim != 2 or X.shape[1] != 2:
+                raise ValueError(
+                    f"EMOS(input_form='aggregates'): X must be (N, 2) with "
+                    f"X[:, 0]=ens_mean, X[:, 1]=ens_std; got shape {X.shape}"
+                )
+            ens_mean = X[:, 0]
+            ens_std = X[:, 1]
+            if np.any(ens_std <= 0):
+                raise ValueError(
+                    "EMOS(input_form='aggregates'): ens_std (X[:, 1]) must be "
+                    "strictly positive."
+                )
+            ens_var = ens_std ** 2
+        else:
+            raise ValueError(
+                f"EMOS.input_form must be 'members' or 'aggregates'; "
+                f"got {self.input_form!r}"
+            )
+        return ens_mean, ens_var, ens_std
+
+    # ---------- fit ----------
 
     def fit(
         self,
@@ -55,15 +130,36 @@ class EMOS(BaseEstimator):
         sample_weight: np.ndarray | None = None,
         deps_oof: dict[str, Any] | None = None,
     ) -> Self:
-        X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
-        ens_mean = X.mean(axis=1)
-        ens_var = X.var(axis=1, ddof=0)
+        ens_mean, ens_var, ens_std = self._row_aggregates(X)
 
+        if self.fit_method == "ols":
+            self._fit_ols(ens_mean, ens_var, y, sample_weight)
+        elif self.fit_method == "crps_nelder_mead":
+            if sample_weight is not None:
+                raise NotImplementedError(
+                    "EMOS(fit_method='crps_nelder_mead'): sample_weight is "
+                    "not threaded through the Nelder-Mead fit. Use "
+                    "fit_method='ols' if you need weighted fitting."
+                )
+            self._fit_crps_nelder_mead(ens_mean, ens_std, y)
+        else:
+            raise ValueError(
+                f"EMOS.fit_method must be 'ols' or 'crps_nelder_mead'; "
+                f"got {self.fit_method!r}"
+            )
+        return self
+
+    def _fit_ols(
+        self,
+        ens_mean: np.ndarray,
+        ens_var: np.ndarray,
+        y: np.ndarray,
+        sample_weight: np.ndarray | None,
+    ) -> None:
         # OLS for μ: y ≈ a + b·ens_mean (weighted if sample_weight given).
         A_mu = np.column_stack([np.ones_like(ens_mean), ens_mean])
         self.a_, self.b_ = _weighted_lstsq2(A_mu, y, sample_weight)
-
         # Squared residuals → σ². Method-of-moments OLS for variance:
         # r² ≈ c + d·ens_var. Unconstrained OLS can return c_<0 or d_<0,
         # which makes σ²(x) negative somewhere in the training range —
@@ -75,8 +171,6 @@ class EMOS(BaseEstimator):
         r2 = resid ** 2
         A_var = np.column_stack([np.ones_like(ens_var), ens_var])
         c_unc, d_unc = _weighted_lstsq2(A_var, r2, sample_weight)
-        # Reject the linear-in-variance fit if it would emit negative
-        # variance anywhere on the *training* spread range.
         var_train = c_unc + d_unc * ens_var
         if c_unc < 0 or d_unc < 0 or np.any(var_train <= 0):
             if sample_weight is None:
@@ -95,7 +189,33 @@ class EMOS(BaseEstimator):
         else:
             self.c_, self.d_ = c_unc, d_unc
             self.sigma_fit_was_constant_ = False
-        return self
+
+    def _fit_crps_nelder_mead(
+        self,
+        ens_mean: np.ndarray,
+        ens_std: np.ndarray,
+        y: np.ndarray,
+    ) -> None:
+        # OLS init for (a, b).
+        A_mu = np.column_stack([np.ones_like(ens_mean), ens_mean])
+        beta, *_ = np.linalg.lstsq(A_mu, y, rcond=None)
+        a0, b0 = float(beta[0]), float(beta[1])
+        resid_var = float(np.var(y - (a0 + b0 * ens_mean)))
+        # Split residual variance half-half between the constant term and
+        # the spread coefficient (scaled by mean ens_std²).
+        mean_spread_sq = float(np.mean(ens_std ** 2))
+        c0 = math.log(max(resid_var / 2.0, 1e-6))
+        d0 = math.log(max(resid_var / (2.0 * max(mean_spread_sq, 1e-6)), 1e-6))
+        x0 = np.array([a0, b0, c0, d0], dtype=float)
+        res = minimize(
+            _crps_nelder_mead_loss, x0,
+            args=(ens_mean, ens_std, y),
+            method="Nelder-Mead",
+            options={"xatol": 1e-5, "fatol": 1e-7, "maxiter": 5000},
+        )
+        self.a_, self.b_, self.c_, self.d_ = (float(v) for v in res.x)
+
+    # ---------- predict ----------
 
     def predict_dist(
         self,
@@ -106,31 +226,61 @@ class EMOS(BaseEstimator):
     ) -> DistributionForecast:
         if self.a_ is None:
             raise RuntimeError("EMOS.predict_dist called before fit")
-        X = np.asarray(X, dtype=float)
-        ens_mean = X.mean(axis=1)
-        ens_var = X.var(axis=1, ddof=0)
+        ens_mean, ens_var, ens_std = self._row_aggregates(X)
         mu = self.a_ + self.b_ * ens_mean
-        var = self.c_ + self.d_ * ens_var
-        # var should be > 0 by construction (fit guards both coefficients
-        # and rechecks on training data). Negative here means the
-        # inference X.var() went outside the training range — a real
-        # extrapolation problem, not a numerical-noise floor. Raise.
-        if np.any(var <= 0):
-            n_bad = int(np.sum(var <= 0))
-            min_var = float(var.min())
-            raise ValueError(
-                f"EMOS.predict_dist: linear-in-variance fit emits "
-                f"non-positive variance on {n_bad} rows "
-                f"(min var = {min_var:.3g}). The inference X has lower "
-                f"ensemble spread than any training row; refit on a "
-                f"wider spread range or use a constant-σ fallback."
-            )
+        if self.fit_method == "crps_nelder_mead":
+            # Exp-link variance — always strictly positive.
+            var = math.exp(self.c_) + math.exp(self.d_) * (ens_std ** 2)
+        else:
+            # Linear-in-variance — guarded at fit, recheck on inference.
+            var = self.c_ + self.d_ * ens_var
+            if np.any(var <= 0):
+                n_bad = int(np.sum(var <= 0))
+                min_var = float(var.min())
+                raise ValueError(
+                    f"EMOS.predict_dist: linear-in-variance fit emits "
+                    f"non-positive variance on {n_bad} rows "
+                    f"(min var = {min_var:.3g}). The inference X has lower "
+                    f"ensemble spread than any training row; refit on a "
+                    f"wider spread range or use a constant-σ fallback."
+                )
         sigma = np.sqrt(var)
         prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
         return DistributionForecast.from_normal(
             mu, sigma, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
             provenance=prov,
         )
+
+
+# ---------------------------------------------------------------------------
+# Standalone CRPS objective for EMOS(fit_method='crps_nelder_mead').
+# ---------------------------------------------------------------------------
+
+
+def _gaussian_crps_closed_form(
+    mu: np.ndarray, sigma: np.ndarray, y: np.ndarray,
+) -> np.ndarray:
+    """Closed-form Gaussian CRPS, vectorised. See EMOS docstring."""
+    sigma = np.maximum(sigma, 1e-9)
+    z = (y - mu) / sigma
+    return sigma * (
+        z * (2.0 * _scipy_norm.cdf(z) - 1.0)
+        + 2.0 * _scipy_norm.pdf(z)
+        - 1.0 / math.sqrt(math.pi)
+    )
+
+
+def _crps_nelder_mead_loss(
+    params: np.ndarray,
+    ens_mean: np.ndarray,
+    ens_std: np.ndarray,
+    y: np.ndarray,
+) -> float:
+    a, b, c, d = params
+    mu = a + b * ens_mean
+    var = math.exp(c) + math.exp(d) * (ens_std ** 2)
+    sigma = np.sqrt(var)
+    return float(np.mean(_gaussian_crps_closed_form(mu, sigma, y)))
 
 
 # ---------------------------------------------------------------------------
