@@ -272,6 +272,10 @@ Not yet:
 - `gpd` / `gaussian_match` tail rules (only `clip`)
 - Vanilla options / option-spread adapters (intentionally out of scope —
   prediction-market binaries only)
+- Quantile-backed `DistributionForecast` requires a `TailPolicy` for
+  `cdf` / `ppf` / `pdf` / `mean` / `variance` / `sample`; calling those
+  without one raises `NotImplementedError`. Constructor demands the
+  policy explicitly, so the failure is at construction time, not silent.
 
 ## License
 

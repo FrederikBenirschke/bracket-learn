@@ -141,8 +141,10 @@ def test_quantile_clip_ladder_inside_quantile_range_documented(
         ids=ids, timestamps=ts, provenance=prov,
     )
     # Edges strictly inside [qvals[0], qvals[-1]] = [norm.ppf(0.05), norm.ppf(0.95)].
+    # This pins the lossy behavior — coverage warning is part of the contract.
     edges = np.array([norm.ppf(0.10), 0.0, norm.ppf(0.90)])
-    sums = _row_sums(dist, edges)
+    with pytest.warns(UserWarning, match="ladder does not cover"):
+        sums = _row_sums(dist, edges)
     # cdf(norm.ppf(0.90)) - cdf(norm.ppf(0.10)) = 0.90 - 0.10 = 0.80.
     np.testing.assert_allclose(sums, 0.80, atol=1e-6)
 

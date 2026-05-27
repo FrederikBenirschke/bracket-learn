@@ -13,7 +13,9 @@ sys.path.insert(0, os.path.abspath("../.."))
 project = "bracketlearn"
 author = "Frederik Benirschke"
 copyright = f"{datetime.now().year}, {author}"
-release = "0.2.0"
+
+import bracketlearn  # noqa: E402, I001  (sys.path tweak above must run first)
+release = bracketlearn.__version__
 
 extensions = [
     "sphinx.ext.autodoc",

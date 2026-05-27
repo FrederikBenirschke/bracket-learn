@@ -270,11 +270,15 @@ def test_per_row_ladder_matches_shared_ladder_when_edges_equal(prov, ids_ts, rng
         mu=rng.normal(0, 1, n), sigma=rng.uniform(0.5, 1.5, n),
         ids=ids, timestamps=ts, provenance=prov,
     )
+    # ±5σ-ish ladder doesn't fully cover every row's tails — both ladders
+    # emit a coverage warning that we explicitly assert and silence.
     edges = np.linspace(-5.0, 5.0, 7)
-    shared = BracketLadder(edges=edges).price(d)
-    per_row = PerRowBracketLadder(
-        edges_per_row=[edges.copy() for _ in range(n)]
-    ).price(d)
+    with pytest.warns(UserWarning, match="ladder does not cover"):
+        shared = BracketLadder(edges=edges).price(d)
+    with pytest.warns(UserWarning, match="per-row ladder does not cover"):
+        per_row = PerRowBracketLadder(
+            edges_per_row=[edges.copy() for _ in range(n)]
+        ).price(d)
     # Both flatten N rows × B buckets in the same (entity-major) order.
     np.testing.assert_allclose(per_row.fair_price, shared.fair_price, atol=1e-12)
     np.testing.assert_array_equal(per_row.entity_ids, shared.entity_ids)

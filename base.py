@@ -31,6 +31,7 @@ import functools
 import inspect
 from typing import Any, Self
 
+import numpy as np
 from sklearn.base import BaseEstimator as _SklearnBaseEstimator
 
 
@@ -224,12 +225,8 @@ class BaseEstimator(_SklearnBaseEstimator):
 
 def _equal(a: Any, b: Any) -> bool:
     """Defensive equality for repr-diffing. Numpy arrays need .all()."""
-    try:
-        import numpy as np
-        if isinstance(a, np.ndarray) or isinstance(b, np.ndarray):
-            return bool(np.array_equal(a, b))
-    except ImportError:
-        pass
+    if isinstance(a, np.ndarray) or isinstance(b, np.ndarray):
+        return bool(np.array_equal(a, b))
     try:
         return bool(a == b)
     except (ValueError, TypeError):
