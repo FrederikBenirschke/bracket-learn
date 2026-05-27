@@ -202,7 +202,8 @@ dag = ForecastPipeline(
         ("pool",    LinearPoolDist(deps=("ridge", "ngboost", "qreg"))),
         ("cdfboost", CDFBoostBracket(
             deps=("ridge", "ngboost", "qreg"),
-            edges=edges, n_estimators=80, learning_rate=0.05,
+            brackets_by_id={int(i): edges for i in ids},
+            n_estimators=80, learning_rate=0.05,
         )),
     ],
     cv="kfold", n_folds=5, shuffle=True, random_state=0,

@@ -233,14 +233,31 @@ class CumulativeBinary(BaseEstimator):
 
 @dataclass
 class TailSpecialist(BaseEstimator):
-    """Gaussian body (from upstream EMOS μ̂/σ̂) + LightGBM tail classifiers.
+    """Gaussian body (from upstream EMOS μ̂/σ̂) + LightGBM tail classifiers,
+    on per-row brackets.
 
-    depends_on a parametric-normal upstream (typically named 'emos') and a ladder
-    (edges) — fits two binary classifiers for the first/last bracket
-    indicators, then rescales the Gaussian body probs to (1 - p_lo - p_hi).
+    depends_on a parametric-normal upstream (typically named ``emos``)
+    and a per-row bracket ladder via ``brackets_by_id`` (id → 1-D edge
+    array). Fits two global binary classifiers — one for "y in row's
+    first bracket" and one for "y in row's last bracket" — and at
+    predict time replaces each row's first/last bin mass with the
+    classifier outputs, rescaling the middle bins to (1 - p_lo - p_hi).
+
+    v0.3 — per-row brackets
+    -----------------------
+    Each row's first/last bracket can have *different* boundaries
+    (Kalshi-style daily-rotating ladders). The training-time tail
+    indicators are therefore "y in row's first bracket" /
+    "y in row's last bracket" — per-row searchsorted, not a fixed
+    threshold.
+
+    Two global classifiers are still appropriate because the row's
+    bracket geometry varies but the upstream-feature relationship to
+    "tail event" doesn't. (Per-bracket classifier ensembles would
+    require ≥1 trainer per market — not what this trainer is for.)
     """
 
-    edges: np.ndarray
+    brackets_by_id: dict[Any, np.ndarray]
     upstream: str = "emos"
     n_estimators: int = 200
     learning_rate: float = 0.05
@@ -252,12 +269,35 @@ class TailSpecialist(BaseEstimator):
 
     def __post_init__(self) -> None:
         self.depends_on = (self.upstream,)
+        if not isinstance(self.brackets_by_id, dict) or not self.brackets_by_id:
+            raise ValueError(
+                "TailSpecialist needs a non-empty brackets_by_id dict "
+                "(id → 1-D edge array)"
+            )
+        for k, e in self.brackets_by_id.items():
+            e_arr = np.asarray(e, dtype=float)
+            if e_arr.ndim != 1 or e_arr.size < 4:
+                raise ValueError(
+                    f"brackets_by_id[{k!r}]: ladder must have ≥3 brackets "
+                    f"(≥4 edges); got shape {e_arr.shape}"
+                )
+            if np.any(np.diff(e_arr) <= 0):
+                raise ValueError(
+                    f"brackets_by_id[{k!r}]: edges must be strictly increasing"
+                )
+
+    def _row_edges(self, ids: np.ndarray) -> list[np.ndarray]:
+        try:
+            return [np.asarray(self.brackets_by_id[k], dtype=float) for k in ids]
+        except KeyError as e:
+            raise KeyError(f"TailSpecialist: brackets_by_id missing id {e!r}")
 
     def fit(
         self,
         X: np.ndarray,
         y: np.ndarray,
         *,
+        ids: np.ndarray,
         sample_weight: np.ndarray | None = None,
         deps_oof: dict[str, Any] | None = None,
     ) -> Self:
@@ -267,16 +307,17 @@ class TailSpecialist(BaseEstimator):
             raise ValueError(
                 f"TailSpecialist.fit needs deps_oof[{self.upstream!r}]"
             )
-        edges = np.asarray(self.edges, dtype=float)
-        if edges.size < 4:
-            raise ValueError(
-                f"TailSpecialist needs ladder with ≥3 brackets (4 edges); got {edges.size}"
-            )
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
-        # First-bracket indicator: y < edges[1]. Last-bracket: y >= edges[-2].
-        y_lo = (y < edges[1]).astype(int)
-        y_hi = (y >= edges[-2]).astype(int)
+        ids = np.asarray(ids)
+        if X.shape[0] != y.shape[0] or X.shape[0] != ids.shape[0]:
+            raise ValueError(
+                f"shape mismatch: X N={X.shape[0]} y N={y.shape[0]} ids N={ids.shape[0]}"
+            )
+        per_row_edges = self._row_edges(ids)
+        # Per-row tail indicators: "y in row's first bin" / "y in row's last bin".
+        y_lo = np.array([float(y[i] < per_row_edges[i][1]) for i in range(y.size)], dtype=int)
+        y_hi = np.array([float(y[i] >= per_row_edges[i][-2]) for i in range(y.size)], dtype=int)
         if y_lo.sum() < 5 or y_hi.sum() < 5:
             raise RuntimeError(
                 f"TailSpecialist: too few tail positives "
@@ -290,9 +331,6 @@ class TailSpecialist(BaseEstimator):
             objective="binary",
             verbose=-1,
         )
-        # class_weight="balanced" only when the caller does NOT supply
-        # sample_weight (don't silently multiply user weights
-        # by sklearn's balanced inverse-frequency weights).
         if sample_weight is None:
             common["class_weight"] = "balanced"
         self.clf_lo_ = lgb.LGBMClassifier(**common)
@@ -320,25 +358,23 @@ class TailSpecialist(BaseEstimator):
                 f"TailSpecialist.predict_dist needs deps_oof[{self.upstream!r}]"
             )
         upstream = deps_oof[self.upstream]
-        # Discretise EMOS dist onto ladder.
-        edges = np.asarray(self.edges, dtype=float)
-        cdf_hi = upstream.cdf(edges[1:])
-        cdf_lo = upstream.cdf(edges[:-1])
-        body_probs = np.clip(cdf_hi - cdf_lo, 0.0, 1.0)
-        N, B = body_probs.shape
-        # Tail probs from classifiers.
+        ids = np.asarray(ids)
+        timestamps = np.asarray(timestamps)
         X = np.asarray(X, dtype=float)
+        N = X.shape[0]
+        per_row_edges = self._row_edges(ids)
+        # Discretise upstream on each row's grid via integrate().
+        body = upstream.integrate(per_row_edges)            # BracketForecast
+        body_probs = body.probs                              # (N, B_max), NaN-padded
+        body_edges = body.edges                              # (N, B_max+1)
+        B_per_row = (~np.isnan(body_probs)).sum(axis=1).astype(int)
+        # Tail probs from classifiers.
         p_lo = np.clip(self.clf_lo_.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6)
         p_hi = np.clip(self.clf_hi_.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6)
-        # Sanity check: when the ladder is narrow, the upstream EMOS
-        # may put substantial mass in body bins 0 and B-1 (the bins
-        # the tail classifiers are about to replace). Discarding that
-        # mass is the *point* of TailSpecialist — but if the classifier
-        # disagrees with the upstream by more than `tail_disagreement_tol`,
-        # the user is probably running on a ladder too narrow for this
-        # trainer's design. Warn loudly so it's not silent.
-        upstream_p_lo = body_probs[:, 0]
-        upstream_p_hi = body_probs[:, -1]
+        # Disagreement check vs upstream body's first/last bin.
+        upstream_p_lo = body_probs[np.arange(N), 0]
+        rows_idx = np.arange(N)
+        upstream_p_hi = body_probs[rows_idx, B_per_row - 1]
         max_disagreement = float(np.maximum(
             np.abs(p_lo - upstream_p_lo), np.abs(p_hi - upstream_p_hi),
         ).max())
@@ -353,39 +389,38 @@ class TailSpecialist(BaseEstimator):
                 f"the tails. Consider widening the ladder.",
                 UserWarning, stacklevel=2,
             )
-        # Rescale inner bins (1..B-1, i.e. all but first and last) to
-        # (1 - p_lo - p_hi). Refuse to silently fabricate a
-        # uniform body when the upstream returns zero inner mass —
-        # that means the upstream is degenerate and the caller needs
-        # to know.
-        inner = body_probs[:, 1:-1]
-        inner_sum = inner.sum(axis=1, keepdims=True)
-        if np.any(inner_sum <= 0):
-            n_bad = int((inner_sum.ravel() <= 0).sum())
-            raise ValueError(
-                f"TailSpecialist.predict_dist: {n_bad}/{N} rows have zero "
-                f"upstream body mass in bins [1..B-2]. Refusing to "
-                f"redistribute uniformly."
-            )
-        body_total = np.maximum(0.0, 1.0 - p_lo - p_hi)[:, None]
-        inner_scaled = inner * (body_total / inner_sum)
-        probs = np.concatenate(
-            [p_lo[:, None], inner_scaled, p_hi[:, None]], axis=1,
-        )
-        # Final renorm against numerical drift (clip+scale can leave
-        # rounding errors at the 1e-15 level). Any row sum at or below
-        # zero indicates a logic error, not drift — raise.
-        row_sum = probs.sum(axis=1, keepdims=True)
-        if np.any(row_sum <= 0):
-            raise ValueError(
-                "TailSpecialist.predict_dist: row sum is non-positive after "
-                "renormalisation — should be unreachable; investigate."
-            )
-        probs = probs / row_sum
+        # Per-row: replace bins [0] and [B_i-1], rescale [1 .. B_i-2] to
+        # (1 - p_lo - p_hi).
+        out_probs = np.full_like(body_probs, np.nan)
+        for i in range(N):
+            B_i = int(B_per_row[i])
+            if B_i < 3:
+                raise ValueError(
+                    f"TailSpecialist row {i}: ladder has only {B_i} bins; need ≥3"
+                )
+            row = body_probs[i, :B_i].copy()
+            inner = row[1:-1]
+            inner_sum = float(inner.sum())
+            if inner_sum <= 0:
+                raise ValueError(
+                    f"TailSpecialist row {i}: upstream has zero body mass in "
+                    f"inner bins [1..{B_i-2}]. Refusing to redistribute uniformly."
+                )
+            body_total = max(0.0, 1.0 - p_lo[i] - p_hi[i])
+            inner_scaled = inner * (body_total / inner_sum)
+            new_row = np.concatenate([[p_lo[i]], inner_scaled, [p_hi[i]]])
+            s = new_row.sum()
+            if s <= 0:
+                raise ValueError(
+                    f"TailSpecialist row {i}: row sum non-positive after "
+                    f"renormalisation — should be unreachable; investigate."
+                )
+            new_row = new_row / s
+            out_probs[i, :B_i] = new_row
         prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
         return DistributionForecast.from_brackets(
-            edges=edges, probs=probs,
-            ids=np.asarray(ids), timestamps=np.asarray(timestamps),
+            edges=body_edges, probs=out_probs,
+            ids=ids, timestamps=timestamps,
             provenance=prov,
         )
 
@@ -585,7 +620,7 @@ class CDFBoostBracket(BaseEstimator):
     """
 
     deps: tuple[str, ...]
-    edges: np.ndarray
+    brackets_by_id: dict[Any, np.ndarray]
     n_estimators: int = 200
     learning_rate: float = 0.05
     num_leaves: int = 15
@@ -597,23 +632,49 @@ class CDFBoostBracket(BaseEstimator):
     def __post_init__(self) -> None:
         if not self.deps:
             raise ValueError("CDFBoostBracket requires at least one upstream dep")
-        edges = np.asarray(self.edges, dtype=float)
-        if edges.ndim != 1 or edges.size < 3:
+        if not isinstance(self.brackets_by_id, dict) or not self.brackets_by_id:
             raise ValueError(
-                f"edges must be 1-D with ≥3 entries (≥2 bins); got shape {edges.shape}"
+                "CDFBoostBracket needs a non-empty brackets_by_id dict "
+                "(id → 1-D edge array)"
             )
-        if np.any(np.diff(edges) <= 0):
-            raise ValueError("edges must be strictly increasing")
-        self.edges = edges
+        # Uniform-B requirement: all rows must share the same bin count
+        # so that B head classifiers can be trained. Edge *values* may
+        # differ — only B is fixed.
+        Bs = set()
+        for k, e in self.brackets_by_id.items():
+            e_arr = np.asarray(e, dtype=float)
+            if e_arr.ndim != 1 or e_arr.size < 3:
+                raise ValueError(
+                    f"brackets_by_id[{k!r}]: ladder must have ≥2 bins (≥3 edges); "
+                    f"got shape {e_arr.shape}"
+                )
+            if np.any(np.diff(e_arr) <= 0):
+                raise ValueError(
+                    f"brackets_by_id[{k!r}]: edges must be strictly increasing"
+                )
+            Bs.add(e_arr.size - 1)
+        if len(Bs) > 1:
+            raise ValueError(
+                f"CDFBoostBracket requires uniform bin count across rows; "
+                f"saw {sorted(Bs)}. Use per-row trainers like TailSpecialist or "
+                f"CumulativeBinary for ragged B."
+            )
+        self._B = next(iter(Bs))
         self.depends_on = tuple(self.deps)
 
     def _featurize(
         self,
         X: np.ndarray | None,
+        ids: np.ndarray,
         deps_oof: dict[str, Any],
     ) -> np.ndarray:
-        cols = [deps_oof[name].cdf(self.edges) for name in self.depends_on]
-        Z = np.column_stack(cols)
+        # Per-row CDF of each upstream dist evaluated at the row's own
+        # edges. cdf_at_grid returns (N, B+1) for a (N, B+1) edge array.
+        per_row_edges = np.stack(
+            [np.asarray(self.brackets_by_id[k], dtype=float) for k in ids], axis=0,
+        )                                                # (N, B+1)
+        cols = [deps_oof[name].cdf_at_grid(per_row_edges) for name in self.depends_on]
+        Z = np.column_stack(cols)                        # (N, K * (B+1))
         if self.include_raw_X:
             if X is None:
                 raise ValueError(
@@ -628,6 +689,7 @@ class CDFBoostBracket(BaseEstimator):
         X: np.ndarray,
         y: np.ndarray,
         *,
+        ids: np.ndarray,
         sample_weight: np.ndarray | None = None,
         deps_oof: dict[str, Any] | None = None,
     ) -> Self:
@@ -639,13 +701,16 @@ class CDFBoostBracket(BaseEstimator):
                 f"got {list(deps_oof or [])}"
             )
         y = np.asarray(y, dtype=float)
-        Z = self._featurize(X, deps_oof)
-        B = self.edges.size - 1
-        # Bin assignment: index of bin each y falls into. y outside [edges[0],
-        # edges[-1]] is clipped to the nearest bin (if you want
-        # to forbid out-of-range y, do it at the caller).
-        bin_idx = np.searchsorted(self.edges, y, side="right") - 1
-        bin_idx = np.clip(bin_idx, 0, B - 1)
+        ids = np.asarray(ids)
+        Z = self._featurize(X, ids, deps_oof)
+        B = self._B
+        # Per-row bin assignment of y under each row's own edges.
+        N = y.shape[0]
+        bin_idx = np.empty(N, dtype=int)
+        for i in range(N):
+            e_i = np.asarray(self.brackets_by_id[ids[i]], dtype=float)
+            k = int(np.searchsorted(e_i, y[i], side="right") - 1)
+            bin_idx[i] = max(0, min(k, B - 1))
 
         common = dict(
             n_estimators=self.n_estimators,
@@ -659,7 +724,6 @@ class CDFBoostBracket(BaseEstimator):
         for b in range(B):
             y_b = (bin_idx == b).astype(int)
             if y_b.sum() < 2:
-                # Degenerate bin: no positives. Store sentinel = base rate.
                 base_rate = float(y_b.mean())
                 self.clfs_.append(("const", base_rate))
                 continue
@@ -685,7 +749,9 @@ class CDFBoostBracket(BaseEstimator):
             raise ValueError(
                 f"CDFBoostBracket.predict_dist needs deps_oof for {self.depends_on}"
             )
-        Z = self._featurize(X, deps_oof)
+        ids = np.asarray(ids)
+        timestamps = np.asarray(timestamps)
+        Z = self._featurize(X, ids, deps_oof)
         N = Z.shape[0]
         B = len(self.clfs_)
         probs = np.empty((N, B))
@@ -694,7 +760,6 @@ class CDFBoostBracket(BaseEstimator):
                 probs[:, b] = model
             else:
                 probs[:, b] = model.predict_proba(Z)[:, 1]
-        # Row-renorm (heads are independent, so sums won't be 1).
         probs = np.clip(probs, 0.0, 1.0)
         row_sum = probs.sum(axis=1, keepdims=True)
         if np.any(row_sum <= 0):
@@ -703,9 +768,14 @@ class CDFBoostBracket(BaseEstimator):
                 "(no head fired); check upstream dist coverage"
             )
         probs = probs / row_sum
+        # Per-row edges from brackets_by_id (uniform B across rows by
+        # construction, so the stacked array has no NaN padding).
+        per_row_edges = np.stack(
+            [np.asarray(self.brackets_by_id[k], dtype=float) for k in ids], axis=0,
+        )
         prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
         return DistributionForecast.from_brackets(
-            edges=self.edges, probs=probs,
-            ids=np.asarray(ids), timestamps=np.asarray(timestamps),
+            edges=per_row_edges, probs=probs,
+            ids=ids, timestamps=timestamps,
             provenance=prov,
         )

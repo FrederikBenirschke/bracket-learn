@@ -101,6 +101,13 @@ def main() -> None:
     edges = np.linspace(3.0, 28.0, 11)   # 10 brackets; outer ones cover ~10% each
     inner_cutpoints = edges[1:-1]        # interior cutpoints for CumulativeBinary
 
+    # v0.3 per-row brackets: the example uses a shared ladder across
+    # rows; broadcast it into id-keyed dicts so the trainers can look
+    # each row up.
+    cutpoints_by_id = {int(i): inner_cutpoints for i in ids}
+    outer_edges_by_id = {int(i): (float(edges[0]), float(edges[-1])) for i in ids}
+    brackets_by_id = {int(i): edges for i in ids}
+
     pipeline = ForecastPipeline(
         steps=[
             # Tier 1
@@ -122,10 +129,12 @@ def main() -> None:
                                     name="qreg_conformal")),
             ("qforest",         QuantileForest(n_estimators=200, random_seed=0)),
             ("cumbin",          CumulativeBinary(
-                                    cutpoints=inner_cutpoints,
-                                    outer_edges=(float(edges[0]), float(edges[-1])),
+                                    cutpoints_by_id=cutpoints_by_id,
+                                    outer_edges_by_id=outer_edges_by_id,
                                 )),
-            ("tail_specialist", TailSpecialist(edges=edges, upstream="emos")),
+            ("tail_specialist", TailSpecialist(
+                                    brackets_by_id=brackets_by_id, upstream="emos",
+                                )),
             # Tier 3
             ("online_agg",      LiftedForecaster(
                                     base=OnlineAggregator(min_experts=2),

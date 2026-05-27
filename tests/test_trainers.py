@@ -305,14 +305,18 @@ def test_tail_specialist_emits_bracket_with_classifier_tails():
     )
     # Wide ladder so the classifier replaces near-zero edge bins.
     edges = np.array([-10.0, -2.0, -1.0, 0.0, 1.0, 2.0, 10.0])
-    ts = TailSpecialist(edges=edges, upstream="emos", n_estimators=30)
-    ts.fit(X, y, deps_oof={"emos": emos_dist})
+    ids_arr = np.arange(N)
+    brackets_by_id = {int(i): edges for i in ids_arr}
+    ts = TailSpecialist(
+        brackets_by_id=brackets_by_id, upstream="emos", n_estimators=30,
+    )
+    ts.fit(X, y, ids=ids_arr, deps_oof={"emos": emos_dist})
     # Wide outer bins → EMOS body mass concentrates inside, so the classifier's
     # tail probabilities legitimately disagree with EMOS at the edges. That
     # disagreement is what we want; assert the warning fires and silence it.
     with pytest.warns(UserWarning, match="TailSpecialist"):
         out = ts.predict_dist(
-            X, ids=np.arange(N), timestamps=np.arange(N, dtype=float),
+            X, ids=ids_arr, timestamps=np.arange(N, dtype=float),
             deps_oof={"emos": emos_dist},
         )
     from bracketlearn.forecast import Backing

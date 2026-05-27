@@ -253,11 +253,12 @@ class TestCDFBoostBracket:
         d_a = _normal_dist(X.mean(axis=1), np.full(120, 1.0), prov, ids, ts)
         d_b = _normal_dist(X.mean(axis=1) + 0.5, np.full(120, 1.5), prov, ids, ts)
         edges = np.array([-3.0, -1.0, 0.0, 1.0, 3.0])
+        brackets_by_id = {int(k): edges for k in ids}
         node = CDFBoostBracket(
-            deps=("a", "b"), edges=edges,
+            deps=("a", "b"), brackets_by_id=brackets_by_id,
             n_estimators=30, num_leaves=7, min_child_samples=5,
         )
-        node.fit(X, y, deps_oof={"a": d_a, "b": d_b})
+        node.fit(X, y, ids=ids, deps_oof={"a": d_a, "b": d_b})
         out = node.predict_dist(
             X, ids=ids, timestamps=ts, deps_oof={"a": d_a, "b": d_b},
         )
@@ -274,12 +275,13 @@ class TestCDFBoostBracket:
         d_a = _normal_dist(X[:, 0], np.full(60, 1.0), prov, ids, ts)
         d_b = _normal_dist(X[:, 1], np.full(60, 1.0), prov, ids, ts)
         edges = np.array([-2.0, 0.0, 2.0])      # 2 bins
+        brackets_by_id = {int(k): edges for k in ids}
         node = CDFBoostBracket(
-            deps=("a", "b"), edges=edges,
+            deps=("a", "b"), brackets_by_id=brackets_by_id,
             n_estimators=20, min_child_samples=5,
             include_raw_X=True,
         )
-        node.fit(X, y, deps_oof={"a": d_a, "b": d_b})
+        node.fit(X, y, ids=ids, deps_oof={"a": d_a, "b": d_b})
         # Feature width = X.shape[1] + K * (B+1) = 2 + 2*3 = 8.
         # Check via the first trained head (skip the "const" sentinel case).
         for kind, model in node.clfs_:
@@ -289,16 +291,26 @@ class TestCDFBoostBracket:
 
     def test_rejects_bad_edges(self):
         with pytest.raises(ValueError, match="strictly increasing"):
-            CDFBoostBracket(deps=("a",), edges=np.array([0.0, 2.0, 1.0]))
-        with pytest.raises(ValueError, match=r"≥3"):
-            CDFBoostBracket(deps=("a",), edges=np.array([0.0, 1.0]))
+            CDFBoostBracket(deps=("a",), brackets_by_id={0: np.array([0.0, 2.0, 1.0])})
+        with pytest.raises(ValueError, match=r"≥2 bins"):
+            CDFBoostBracket(deps=("a",), brackets_by_id={0: np.array([0.0, 1.0])})
+
+    def test_rejects_ragged_B(self):
+        with pytest.raises(ValueError, match="uniform bin count"):
+            CDFBoostBracket(
+                deps=("a",),
+                brackets_by_id={
+                    0: np.array([0.0, 1.0, 2.0]),
+                    1: np.array([0.0, 1.0, 2.0, 3.0]),
+                },
+            )
 
     def test_missing_dep_raises_at_fit(self, prov, ids_ts):
         _skip_if_no_lightgbm()
         node = CDFBoostBracket(
             deps=("a", "b"),
-            edges=np.array([0.0, 1.0, 2.0, 3.0]),
+            brackets_by_id={int(i): np.array([0.0, 1.0, 2.0, 3.0]) for i in range(5)},
             n_estimators=10,
         )
         with pytest.raises(ValueError, match="deps_oof"):
-            node.fit(np.zeros((5, 1)), np.zeros(5), deps_oof={"a": None})
+            node.fit(np.zeros((5, 1)), np.zeros(5), ids=np.arange(5), deps_oof={"a": None})
