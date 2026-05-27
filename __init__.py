@@ -25,7 +25,7 @@ Less commonly used symbols live in their submodules:
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from bracketlearn.adapters import (
     BinaryAbove,

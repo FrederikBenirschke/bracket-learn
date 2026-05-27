@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bracketlearn"
-version = "0.2.0"
+version = "0.3.0"
 description = "Forecasting + bracket-contract pricing framework, sklearn-style."
 readme = "README.md"
 license = { text = "MIT" }

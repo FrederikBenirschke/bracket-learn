@@ -263,15 +263,83 @@ flat `[(name, forecaster)]` list — sklearn-style.
 
 ## Distribution backings
 
-A `DistributionForecast` can carry any of four backings; metrics and
-adapters dispatch on the type:
+`DistributionForecast` is an `abc.ABC` base with five concrete
+subclasses. Each subclass owns typed storage and its own math; metrics
+and adapters dispatch via `isinstance` (or the compat `dist.backing`
+property).
 
-- **parametric** (`normal`, `student_t`, `mixture_normal`) — closed-form
-  CRPS / log-score / CDF.
-- **quantile** — array of `qvals` at fixed `taus`; CRPS via pinball
-  trapezoidal integral; tail policy controls extrapolation beyond
-  outermost quantile.
-- **bracket** — array of `probs` on `edges`; uniform-within-bin density.
+| Subclass                  | Storage                                | Math notes                                            |
+|---------------------------|----------------------------------------|-------------------------------------------------------|
+| `NormalForecast`          | `mu, sigma` per row                    | Closed-form scipy.stats.norm                          |
+| `StudentTForecast`        | `mu, sigma, df` per row                | Closed-form scipy.stats.t; requires df > 2            |
+| `MixtureNormalForecast`   | `weights, mus, sigmas` per row (N, K)  | CDF = Σ w_k Φ((x−μ_k)/σ_k); PPF via bisection        |
+| `QuantileForecast`        | shared `taus` + per-row `qvals` (N, Q) | Pinball-trapezoidal CRPS; `TailPolicy` required      |
+| `BracketForecast`         | per-row `edges` (N, B+1) + `probs`     | Uniform-within-bin; NaN-padded ragged rows supported |
+
+Construct via the subclass directly:
+
+```python
+from bracketlearn import NormalForecast
+d = NormalForecast.from_arrays(
+    mu=mu, sigma=sigma,
+    ids=ids, timestamps=ts, provenance=prov,
+)
+```
+
+The `DistributionForecast.from_*` classmethods are kept as routing
+shims (`from_normal` → `NormalForecast.from_arrays`, etc.).
+
+### Per-row brackets
+
+`BracketForecast.edges` is `(N, B+1)`. Each row has its own bracket
+grid — the Kalshi temperature contract listed on May 26 doesn't share
+edges with the one listed on May 27, and bracketlearn doesn't pretend
+it does. Ragged-row support is via NaN padding: row i's valid prefix
+is the first `B_i + 1` non-NaN edges and the first `B_i` non-NaN
+probs.
+
+`BracketForecast.from_arrays` also accepts a 1-D shared edge vector,
+broadcasting it to all rows — so callers that genuinely use a shared
+ladder pay no ergonomic cost. `BracketForecast.shared_edges()` returns
+the 1-D vector iff every row's edges are identical and not NaN-padded;
+raises otherwise. Use it from legacy code that still assumes a shared
+ladder.
+
+### The `integrate()` bridge
+
+Every `DistributionForecast` subclass implements
+`integrate(edges_per_row) → BracketForecast`. This is the single place
+where "continuous distribution" becomes "discrete distribution on a
+specific grid":
+
+```python
+# EMOS emits a NormalForecast; price it on per-row Kalshi ladders.
+normal_dist = emos.predict_dist(X, ids=ids, timestamps=ts)
+bracket_dist = normal_dist.integrate(edges_per_row)
+# bracket_dist.probs has shape (N, B_max) with each row's prob mass on
+# its own grid (NaN-padded if rows differ in length).
+```
+
+`edges_per_row` accepts: 1-D shared `(B+1,)`, 2-D dense `(N, B+1)`, or
+a length-N sequence of 1-D arrays (NaN-padded internally). Each row
+is renormalised to sum to 1; rows that land entirely outside the
+distribution's support raise (no silent uniform fabrication).
+
+### Distribution-first vs bracket-aware trainers
+
+Two fundamentally different trainer families:
+
+- **Distribution-first** (`EMOS`, `NGBoostNormal`, `MixtureNormals`,
+  `QuantileReg`, `QuantileForest`, `Stacking`, `OnlineAggregator`,
+  `RNNHourly`, `ridge`, `emos_calibrated`): never see brackets at
+  fit time. Fit on `(X, y)`, emit a continuous-ish distribution.
+  Call `.integrate(edges_per_row)` to price on a specific grid.
+- **Bracket-aware** (`CumulativeBinary`, `TailSpecialist`,
+  `CDFBoostBracket`): train on bracket-derived indicators. Each
+  takes a `cutpoints_by_id` or `brackets_by_id` dict (id → 1-D edge
+  array) at construction so per-row grids flow through fit and
+  predict. Their `fit()` signatures require an explicit `ids=`
+  kwarg; inside `ForecastPipeline` this is forwarded automatically.
 
 ## CV variants
 
@@ -327,16 +395,29 @@ print(gs.best_params_, gs.best_score_)
 
 ## Status
 
-v0.2 — protocols, three CV modes (expanding-window / rolling-window / kfold),
-sample-weight threading, multi-target wrapper, grid-search wrapper, 14 trainers,
-3 backings, 6 prediction-market adapters, full distribution and
-contract-level scoring. See `bracketlearn/examples/` for runnable demos.
+v0.3.0 — `DistributionForecast` becomes an `abc.ABC` base with five
+concrete subclasses; `BracketForecast` stores per-row edges natively;
+bracket-aware trainers (`CumulativeBinary`, `TailSpecialist`,
+`CDFBoostBracket`) and the `Isotonic` calibrator switch to id-keyed
+dict APIs so each row carries its own bracket grid. New
+`DistributionForecast.integrate(edges_per_row)` lifts any subclass to
+a per-row `BracketForecast`. See [CHANGELOG.md](CHANGELOG.md) for the
+full v0.3.0 entry including the breaking-change list.
+
+v0.2 baseline carries forward: protocols, three CV modes
+(expanding-window / rolling-window / kfold), sample-weight threading,
+multi-target wrapper, grid-search wrapper, 14 trainers, 6
+prediction-market adapters, full distribution and contract-level
+scoring. See `bracketlearn/examples/` for runnable demos.
 
 Not yet:
 - Empirical backing
 - `gpd` / `gaussian_match` tail rules (only `clip`)
 - Vanilla options / option-spread adapters (intentionally out of scope —
   prediction-market binaries only)
+- `Backing` + `ParametricFamily` enums survive as compat `@property`
+  shims this release; consumers will migrate to `isinstance` dispatch
+  in a follow-up.
 - Quantile-backed `DistributionForecast` requires a `TailPolicy` for
   `cdf` / `ppf` / `pdf` / `mean` / `variance` / `sample`; calling those
   without one raises `NotImplementedError`. Constructor demands the

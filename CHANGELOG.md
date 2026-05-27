@@ -4,6 +4,100 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions
 follow semver: MAJOR.MINOR.PATCH. Pre-1.0 the public API can break in any
 minor release; patch releases are bug-fixes and additive tests.
 
+## [0.3.0] — 2026-05-26
+
+`DistributionForecast` is now an `abc.ABC` base with five concrete
+subclasses; `BracketForecast` stores per-row edges natively;
+bracket-aware trainers consume id-keyed dicts so each market/event
+can carry its own bracket grid. Motivating use case: Kalshi
+temperature contracts list a different bracket ladder every day — a
+single forecast needs to price against the row's own grid, not a
+shared global ladder.
+
+### Added
+
+- `bracketlearn.forecast.NormalForecast`, `StudentTForecast`,
+  `MixtureNormalForecast`, `QuantileForecast`, `BracketForecast` —
+  concrete subclasses of `DistributionForecast`. Each owns typed
+  storage (no `params: dict[str, ndarray] | None`) and its own math
+  (no `if/elif` on `(backing, family)` at every accessor). Both the
+  classes and per-subclass `from_arrays` classmethods are re-exported
+  at the top level.
+- `DistributionForecast.integrate(edges_per_row) → BracketForecast`
+  on the abstract base: projects any subclass onto a per-row bracket
+  grid via `cdf_at_grid + np.diff`. Accepts 1-D shared edges, 2-D
+  dense `(N, B+1)`, or a length-N ragged sequence (NaN-padded
+  internally). Renormalises per row and raises if any row gets zero
+  total mass.
+- `BracketForecast.realized_bin(y) → (N,)` int array: per-row index
+  of the bracket containing the realized value. Used by score
+  functions and `Isotonic` to look up the realized bin under per-row
+  edges.
+- `BracketForecast.shared_edges() → (B+1,)`: returns the 1-D edge
+  vector if every row's edges are identical and not NaN-padded;
+  raises otherwise. Use from legacy callers still assuming a shared
+  ladder.
+
+### Changed
+
+- **Breaking.** `DistributionForecast(backing=..., family=..., params=...)`
+  union construction is gone. Use a concrete subclass directly
+  (`NormalForecast(mu=, sigma=, ids=, timestamps=, provenance=)`) or
+  the `DistributionForecast.from_*` classmethods, which now route to
+  the matching subclass. The two-level `(backing, family)`
+  discriminator collapses to one level — the class itself is the
+  backing.
+- **Breaking.** `BracketForecast.edges` is now `(N, B+1)` per-row,
+  NaN-padded for ragged-length rows. `from_brackets` still accepts
+  1-D shared edges and broadcasts them internally, so most existing
+  callers keep working; callers that read `dist.edges` directly and
+  assumed 1-D need to either consume the 2-D array or call
+  `dist.shared_edges()`.
+- **Breaking.** `CumulativeBinary` drops `cutpoints` + `outer_edges`
+  for `cutpoints_by_id: dict[id → 1-D cutpoint array]` and
+  `outer_edges_by_id: dict[id → (lo, hi)]`. `fit()` now requires the
+  `ids=` kwarg. Each row contributes its own K_i augmented training
+  examples to a single global LGBM classifier; the cutpoint flows in
+  as a feature so the model generalises across grids. Predict emits
+  a per-row `BracketForecast` (NaN-padded ragged columns when K_i
+  varies).
+- **Breaking.** `TailSpecialist` drops `edges` for
+  `brackets_by_id: dict[id → 1-D edge array]`. Algorithmic change:
+  training-time tail indicators become "y in row's first/last
+  bracket" (per-row, computed from the row's own edges) instead of
+  "y < shared_edges[1]" / "y >= shared_edges[-2]". Predict calls
+  `upstream.integrate(per_row_edges)` instead of
+  `upstream.cdf(shared_edges)`.
+- **Breaking.** `CDFBoostBracket` drops `edges` for `brackets_by_id`
+  with a strict uniform-B requirement (edge *values* may vary per
+  row, but the bin count must be identical across rows because the
+  trainer fits one head per bin). `fit()` requires `ids=` kwarg.
+  Featurisation now uses `cdf_at_grid` on the per-row grid.
+- **Breaking.** `Isotonic` calibrator drops the `edges` constructor
+  arg. Inputs and outputs are `BracketForecast` (any subclass that
+  isn't a `BracketForecast` must be `.integrate()`d first). Pass
+  `pre_integrate_edges=...` to have `Isotonic` auto-integrate
+  non-bracket inputs internally — used by the `emos_calibrated()`
+  factory to wrap a parametric forecaster with bracket calibration.
+- `score.log_score_bracket`, `crps_bracket`, `to_point`, and
+  `_quantile_at` now consume per-row edges (NaN-padded tail aware).
+- `pipeline._stitch_folds` for BRACKET folds concatenates per-row
+  edges + probs along axis 0; the previous shared-edges sanity check
+  is gone (edges are now per-row by construction).
+- `Backing` and `ParametricFamily` enums survive as compat
+  `@property` shims on each subclass so existing consumers (score,
+  pipeline, lift, restrict, downstream tests) keep working
+  untouched. Slated for removal once consumers migrate to
+  `isinstance` dispatch.
+- `DistributionForecast.from_*` classmethods kept as construction
+  shims that route to the correct subclass.
+
+### Removed
+
+- `bracketlearn.lift._bracket_probs_from_dist`: redundant with
+  `dist.integrate(edges)`, which works on any subclass and returns
+  a typed `BracketForecast` instead of raw probs.
+
 ## [0.2.0] — 2026-05-26
 
 Initial public release. Sklearn-style API; four backings (parametric
