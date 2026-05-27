@@ -1009,18 +1009,10 @@ def _stitch_folds(
 
 
 def _set_provenance(dist: DistributionForecast, prov: ProvenanceMeta) -> DistributionForecast:
-    return DistributionForecast(
-        backing=dist.backing,
-        family=dist.family,
-        params=dist.params,
-        taus=dist.taus,
-        qvals=dist.qvals,
-        members=dist.members,
-        edges=dist.edges,
-        probs=dist.probs,
-        ids=dist.ids,
-        timestamps=dist.timestamps,
-        provenance=prov,
-        tail_policy=dist.tail_policy,
-        tail_support=dist.tail_support,
-    )
+    """Return a copy of ``dist`` with provenance replaced.
+
+    Subclass-agnostic: ``dataclasses.replace`` copies all dataclass fields
+    (which differ per concrete subclass) and overrides only ``provenance``.
+    """
+    import dataclasses
+    return dataclasses.replace(dist, provenance=prov)
