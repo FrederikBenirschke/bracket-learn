@@ -19,7 +19,7 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from bracketlearn.forecast import DistributionForecast, ProvenanceMeta
+from bracketlearn.forecast import DistributionForecast, ProvenanceMeta, TailPolicy, TailRule
 from bracketlearn.pipeline import ForecastPipeline
 from bracketlearn.score import (
     crps_gaussian,
@@ -28,7 +28,6 @@ from bracketlearn.score import (
     log_score_quantile,
     to_point,
 )
-from bracketlearn.tail import TailPolicy, TailRule
 from bracketlearn.trainers import MixtureNormals, QuantileReg
 
 

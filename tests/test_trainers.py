@@ -314,7 +314,7 @@ def test_market_ols_factory_emits_distforecaster_via_lift():
 
 
 def test_emos_calibrated_factory_returns_calibrated_forecaster():
-    from bracketlearn.composite import CalibratedForecaster
+    from bracketlearn.pipeline import CalibratedForecaster
     from bracketlearn.trainers import emos_calibrated
     edges = np.linspace(0, 20, 7)
     ec = emos_calibrated(edges=edges)

@@ -21,7 +21,6 @@ unchanged.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Self
 
 import numpy as np
@@ -84,7 +83,7 @@ class EmpiricalDistribution(BaseEstimator):
         ids: np.ndarray,
         timestamps: np.ndarray,
     ) -> DistributionForecast:
-        from bracketlearn.tail import TailPolicy, TailRule
+        from bracketlearn.forecast import TailPolicy, TailRule
 
         if self.quantiles_ is None:
             raise RuntimeError("EmpiricalDistribution.predict_dist called before fit")
@@ -92,18 +91,7 @@ class EmpiricalDistribution(BaseEstimator):
         N = X.shape[0]
         qvals = np.broadcast_to(self.quantiles_, (N, self.quantiles_.shape[0])).copy()
         taus = np.asarray(self.taus, dtype=float)
-        prov = ProvenanceMeta(
-            forecaster_name=self.name,
-            forecaster_version="0.1",
-            fit_window=(datetime(2024, 1, 1), datetime.now()),
-            fold_idx=None,
-            calibration_set_hash=None,
-            random_seed=None,
-            code_sha="dev",
-            feature_matrix_hash="-",
-            created_at=datetime.now(),
-            sigma_source="native",
-        )
+        prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
         return DistributionForecast.from_quantiles(
             taus=taus, qvals=qvals,
             tail_policy=TailPolicy.same(TailRule.clip()),
@@ -175,17 +163,7 @@ class Persistence(BaseEstimator):
         # Tile the recorded tail across the inference horizon. For lag=1
         # this gives a constant prediction; for lag=24 it repeats yesterday.
         mu = self.tail_y_[np.arange(N) % self.lag]
-        prov = ProvenanceMeta(
-            forecaster_name=self.name,
-            forecaster_version="0.1",
-            fit_window=(datetime(2024, 1, 1), datetime.now()),
-            fold_idx=None,
-            calibration_set_hash=None,
-            random_seed=None,
-            code_sha="dev",
-            feature_matrix_hash="-",
-            created_at=datetime.now(),
-        )
+        prov = ProvenanceMeta.placeholder(self.name)
         return PointForecast(
             mu=mu, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
             provenance=prov,

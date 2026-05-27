@@ -24,10 +24,9 @@ import numpy as np
 import pytest
 from sklearn.linear_model import LinearRegression
 
-from bracketlearn.composite import LiftedForecaster
 from bracketlearn.lift import GlobalResidual
 from bracketlearn.multitarget import MultiOutputForecastPipeline
-from bracketlearn.pipeline import ForecastPipeline
+from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster
 from bracketlearn.search import GridSearch
 from bracketlearn.trainers import EMOS, MixtureNormals, SklearnPoint
 

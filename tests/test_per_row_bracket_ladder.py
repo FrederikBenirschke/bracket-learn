@@ -14,8 +14,7 @@ import pytest
 from scipy import stats as _stats
 
 from bracketlearn.adapters import PerRowBracketLadder
-from bracketlearn.forecast import DistributionForecast
-from bracketlearn.tail import TailPolicy, TailRule
+from bracketlearn.forecast import DistributionForecast, TailPolicy, TailRule
 
 # ---------------------------------------------------------------------------
 # cdf_at_grid — must equal a row-by-row cdf call (without the (N, N) cost).

@@ -5,8 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from bracketlearn.forecast import DistributionForecast
-from bracketlearn.tail import TailPolicy, TailRule
+from bracketlearn.forecast import DistributionForecast, TailPolicy, TailRule
 from bracketlearn.trainers import (
     EMOS,
     CDFBoostBracket,

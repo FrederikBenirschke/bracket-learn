@@ -13,7 +13,6 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -26,19 +25,10 @@ from bracketlearn.forecast import (
 )
 
 # ---------------------------------------------------------------------------
-# Edge semantics (§8.1 — replaces v0.1's stringly-typed "closed-open").
-# ---------------------------------------------------------------------------
-
-
-class BracketEdges(StrEnum):
-    CLOSED_OPEN = "closed_open"     # lo ≤ X < hi (common ladder default)
-    OPEN_CLOSED = "open_closed"     # lo < X ≤ hi
-    CLOSED_CLOSED = "closed_closed" # lo ≤ X ≤ hi
-    OPEN_OPEN = "open_open"         # lo < X < hi
-
-
-# ---------------------------------------------------------------------------
 # ContractAdapter protocol.
+#
+# Bracket math throughout uses closed-open semantics (lo ≤ X < hi), which
+# matches CDF differences exactly for continuous distributions.
 # ---------------------------------------------------------------------------
 
 
@@ -154,7 +144,6 @@ class BracketLadder:
     """
 
     edges: np.ndarray               # (B+1,)
-    edge_semantics: BracketEdges = BracketEdges.CLOSED_OPEN
     name: str = "bracket_ladder"
     needs_left_tail: bool = False
     needs_right_tail: bool = False
@@ -199,17 +188,7 @@ class BracketLadder:
             fair_price=fair_price,
             group_id=group_id,
             contract_spec=ContractSpec(kind="bracket_ladder"),
-            provenance=ProvenanceMeta(
-                forecaster_name=f"adapter:{self.name}",
-                forecaster_version="0.1",
-                fit_window=dist.provenance.fit_window,
-                fold_idx=dist.provenance.fold_idx,
-                calibration_set_hash=dist.provenance.calibration_set_hash,
-                random_seed=None,
-                code_sha=dist.provenance.code_sha,
-                feature_matrix_hash=dist.provenance.feature_matrix_hash,
-                created_at=datetime.now(),
-            ),
+            provenance=_provenance_for(dist, self.name),
         )
 
 
@@ -238,9 +217,6 @@ class PerRowBracketLadder:
 
     Args:
         edges_per_row: ragged ladder, len N.
-        edge_semantics: bracket boundary rule (currently informational only —
-            the math uses CDF differences which match CLOSED_OPEN exactly for
-            continuous distributions; discrete pathologies are ignored).
         include_tail_buckets: when True, emit two extra rows per entity:
             ``cdf(edges[0])`` ("below") and ``1 - cdf(edges[-1])`` ("above").
             Mirrors Kalshi ladders that ship explicit "≤ X" and "> Y" rows.
@@ -253,7 +229,6 @@ class PerRowBracketLadder:
     """
 
     edges_per_row: list[np.ndarray]
-    edge_semantics: BracketEdges = BracketEdges.CLOSED_OPEN
     include_tail_buckets: bool = False
     name: str = "per_row_bracket_ladder"
     needs_left_tail: bool = False
@@ -377,17 +352,7 @@ class PerRowBracketLadder:
             fair_price=np.asarray(fair_price_list, dtype=float),
             group_id=np.asarray(group_id_list),
             contract_spec=ContractSpec(kind="per_row_bracket_ladder"),
-            provenance=ProvenanceMeta(
-                forecaster_name=f"adapter:{self.name}",
-                forecaster_version="0.1",
-                fit_window=dist.provenance.fit_window,
-                fold_idx=dist.provenance.fold_idx,
-                calibration_set_hash=dist.provenance.calibration_set_hash,
-                random_seed=None,
-                code_sha=dist.provenance.code_sha,
-                feature_matrix_hash=dist.provenance.feature_matrix_hash,
-                created_at=datetime.now(),
-            ),
+            provenance=_provenance_for(dist, self.name),
         )
 
 

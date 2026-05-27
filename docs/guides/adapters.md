@@ -116,11 +116,9 @@ catch tail mass into the outer bins) rather than tweaking `coverage_tol`.
 
 ### Edge semantics
 
-`BracketLadder` defaults to closed-left, open-right intervals
-(`[edges[k], edges[k+1])`). The `edge_semantics` constructor arg accepts
-`BracketEdges.CLOSED_OPEN` (default) or `BracketEdges.OPEN_CLOSED`. The
-choice only matters for atoms exactly at the edges — for continuous
-distributions the difference is zero-measure.
+`BracketLadder` uses closed-left, open-right intervals
+(`[edges[k], edges[k+1])`). For continuous distributions the choice is
+zero-measure, so no knob is exposed.
 
 ### Output shape
 

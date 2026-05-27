@@ -18,9 +18,8 @@ import numpy as np
 import pytest
 from sklearn.linear_model import LinearRegression
 
-from bracketlearn.composite import LiftedForecaster
 from bracketlearn.lift import GlobalResidual
-from bracketlearn.pipeline import ForecastPipeline, PipelineResult
+from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster, PipelineResult
 from bracketlearn.trainers import EMOS, SklearnPoint, Stacking
 
 
@@ -132,7 +131,7 @@ def test_stacking_receives_deps_oof():
         steps=[
             ("ridge", LiftedForecaster(
                 base=SklearnPoint(LinearRegression()),
-                lifter=GlobalResidual(family="normal"),
+                lifter=GlobalResidual(),
                 name="ridge",
             )),
             ("emos",  EMOS()),

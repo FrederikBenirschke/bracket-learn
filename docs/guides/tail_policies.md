@@ -6,18 +6,18 @@ quantile-backed factory `from_quantiles` and unused for parametric
 backings (`normal`, `student_t`, `mixture_normal`) whose CDFs are
 defined on all of ℝ.
 
-Tail policies are **asymmetric**: a `TailPolicy` carries one `TailRule`
-for the left tail and one for the right. The shorthand `TailPolicy.same(rule)`
-duplicates the rule across both sides.
+A `TailPolicy` carries one `TailRule` for the left tail and one for the
+right. Construct either directly via the dataclass, or via the
+`TailPolicy.same(rule)` shorthand when both sides share the same rule.
 
 ```python
-from bracketlearn.tail import TailPolicy, TailRule
+from bracketlearn.forecast import TailPolicy, TailRule
 
-# Same rule on both tails.
+# Same rule on both tails (the common case).
 policy = TailPolicy.same(TailRule.clip())
 
-# Asymmetric — clip on the left, something else on the right.
-policy = TailPolicy.asym(left=TailRule.clip(), right=TailRule.clip())
+# Asymmetric — construct the dataclass directly.
+policy = TailPolicy(left=TailRule.clip(), right=TailRule.clip())
 ```
 
 ## `TailRule.clip()` — the only rule shipped today

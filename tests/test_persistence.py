@@ -21,10 +21,9 @@ import numpy as np
 import pytest
 
 from bracketlearn import persistence
-from bracketlearn.composite import LiftedForecaster
 from bracketlearn.lift import GlobalResidual
 from bracketlearn.persistence import envelope_info, load, save
-from bracketlearn.pipeline import ForecastPipeline, PipelineResult
+from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster, PipelineResult
 from bracketlearn.trainers import EMOS, SklearnPoint
 
 

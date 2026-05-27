@@ -20,9 +20,8 @@ import pytest
 from sklearn.linear_model import LinearRegression
 
 from bracketlearn.base import clone
-from bracketlearn.composite import LiftedForecaster
 from bracketlearn.lift import GlobalResidual
-from bracketlearn.pipeline import ForecastPipeline
+from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster
 from bracketlearn.trainers import EMOS, MixtureNormals, OnlineAggregator, SklearnPoint, Stacking
 
 

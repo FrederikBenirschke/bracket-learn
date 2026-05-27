@@ -1,8 +1,8 @@
 """BracketLadder.price must return row sums == 1.0 (mass conservation).
 
-Audit item B1 (AUDIT.md): qreg-backed ladder rows can sum to ~0.48 when
-ladder edges fall inside the stored quantile range. Cause: clip tail
-semantics drop mass below taus[0] and above taus[-1].
+Regression test for the qreg-backed ladder bug where rows summed to
+~0.48 when ladder edges fell inside the stored quantile range. Cause:
+clip tail semantics dropped mass below taus[0] and above taus[-1].
 
 Invariant under test: for every (backing, tail_policy, ladder) combo
 where the ladder edges cover the full support of the distribution,
@@ -22,8 +22,7 @@ import numpy as np
 import pytest
 
 from bracketlearn.adapters import BracketLadder
-from bracketlearn.forecast import DistributionForecast
-from bracketlearn.tail import TailPolicy, TailRule
+from bracketlearn.forecast import DistributionForecast, TailPolicy, TailRule
 
 # ---------------------------------------------------------------------------
 # Helpers

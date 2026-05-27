@@ -190,7 +190,7 @@ def test_bracket_ladder_b2_two_brackets_sum_to_one(_normal_dist):
 
 def test_quantile_backing_qvals_monotone(prov, ids_ts):
     """from_quantiles enforces qvals monotone non-decreasing in tau."""
-    from bracketlearn.tail import TailPolicy, TailRule
+    from bracketlearn.forecast import TailPolicy, TailRule
     N = 3
     ids, ts = ids_ts(N)
     taus = np.array([0.1, 0.5, 0.9])

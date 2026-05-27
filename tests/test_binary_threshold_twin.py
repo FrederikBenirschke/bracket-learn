@@ -65,7 +65,7 @@ def test_binary_above_plus_below_sum_to_one(prov, ids_ts, rng):
 
 
 def test_binary_above_works_for_quantile_backing(prov, ids_ts, rng):
-    from bracketlearn.tail import TailPolicy, TailRule
+    from bracketlearn.forecast import TailPolicy, TailRule
 
     n, Q = 8, 5
     ids, ts = ids_ts(n)

@@ -15,8 +15,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from bracketlearn.forecast import Backing, DistributionForecast, ParametricFamily
-from bracketlearn.tail import TailPolicy, TailRule
+from bracketlearn.forecast import (
+    Backing,
+    DistributionForecast,
+    ParametricFamily,
+    TailPolicy,
+    TailRule,
+)
 
 # ---------------------------------------------------------------------------
 # Normal backing

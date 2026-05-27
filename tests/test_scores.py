@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from bracketlearn.forecast import DistributionForecast
+from bracketlearn.forecast import DistributionForecast, TailPolicy, TailRule
 from bracketlearn.score import (
     brier_bracket,
     crps_bracket,
@@ -26,7 +26,6 @@ from bracketlearn.score import (
     log_score_mixture_normal,
     pit,
 )
-from bracketlearn.tail import TailPolicy, TailRule
 
 # ---------------------------------------------------------------------------
 # Gaussian CRPS — closed-form check.

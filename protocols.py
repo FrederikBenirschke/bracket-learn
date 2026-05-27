@@ -1,8 +1,7 @@
 """Protocol definitions (§4).
 
-Two leaf forecaster protocols (PointForecaster, DistForecaster) + a
-StepLearner mixin for genuine online learners + two transformer protocols
-(Lifter, Calibrator). Five named concepts total.
+Two leaf forecaster protocols (PointForecaster, DistForecaster) plus two
+transformer protocols (Lifter, Calibrator). Four named concepts.
 
 The WalkForward driver lives in composite.py — it's a pipeline-level
 wrapper, not a protocol.
@@ -93,45 +92,6 @@ class DistForecaster(Forecaster, Protocol):
         timestamps: np.ndarray,
     ) -> DistributionForecast:
         ...
-
-
-# ---------------------------------------------------------------------------
-# StepLearner mixin (§4.4) — for genuine online forecasters.
-# ---------------------------------------------------------------------------
-
-
-class StepLearner:
-    """Mixin for online forecasters whose internal state updates per
-    observation. Compose with PointForecaster or DistForecaster.
-
-    `step` emits a forecast for X_t. `observe` ingests labels that may
-    arrive later (e.g. weather settlement lagging predictions by hours).
-    `observe` must be idempotent — calling it twice with the same labels
-    is a no-op.
-
-    forecast.provenance.fold_idx is set to "prequential" by convention.
-    """
-
-    def step(
-        self,
-        X_t: Any,
-        *,
-        ids_t: np.ndarray,
-        timestamp_t: Any,
-    ) -> Any:
-        """Emit forecast for the current observation."""
-        raise NotImplementedError
-
-    def observe(self, labels: dict[Any, float]) -> None:
-        """Ingest realized y for past predictions. Idempotent.
-
-        keys = ids or (id, timestamp) tuples; values = realized y.
-        """
-        raise NotImplementedError
-
-    def pending_ids(self) -> set[Any]:
-        """ids of predictions made but not yet observed."""
-        raise NotImplementedError
 
 
 # ---------------------------------------------------------------------------

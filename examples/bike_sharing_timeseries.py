@@ -35,9 +35,8 @@ warnings.filterwarnings(
 
 from bracketlearn.adapters import BracketLadder
 from bracketlearn.baselines import EmpiricalDistribution, Persistence
-from bracketlearn.composite import CalibratedForecaster, LiftedForecaster
 from bracketlearn.lift import GlobalResidual, Isotonic
-from bracketlearn.pipeline import ForecastPipeline
+from bracketlearn.pipeline import CalibratedForecaster, ForecastPipeline, LiftedForecaster
 from bracketlearn.trainers import EMOS, QuantileReg
 
 

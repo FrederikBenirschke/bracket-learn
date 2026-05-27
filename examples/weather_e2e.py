@@ -44,9 +44,8 @@ warnings.filterwarnings(
 )
 
 from bracketlearn.adapters import BracketLadder
-from bracketlearn.composite import CalibratedForecaster, LiftedForecaster
 from bracketlearn.lift import ConformalCalibrate, GlobalResidual
-from bracketlearn.pipeline import ForecastPipeline
+from bracketlearn.pipeline import CalibratedForecaster, ForecastPipeline, LiftedForecaster
 from bracketlearn.trainers import (
     EMOS,
     CumulativeBinary,
@@ -122,7 +121,7 @@ def main() -> None:
             # Tier 3
             ("online_agg",      LiftedForecaster(
                                     base=OnlineAggregator(min_experts=2),
-                                    lifter=GlobalResidual(family="normal"),
+                                    lifter=GlobalResidual(),
                                     name="online_agg")),
         ],
         cv="expanding-window",

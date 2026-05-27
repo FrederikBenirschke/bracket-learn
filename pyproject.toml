@@ -74,6 +74,7 @@ Issues = "https://github.com/FrederikBenirschke/bracketlearn/issues"
 # as bracketlearn.adapters / bracketlearn.forecast / ... .
 [tool.setuptools]
 packages = ["bracketlearn"]
+license-files = ["LICENSE"]
 
 [tool.setuptools.package-dir]
 bracketlearn = "."

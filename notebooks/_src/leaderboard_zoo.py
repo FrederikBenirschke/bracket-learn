@@ -57,9 +57,8 @@ from _style import (
 )
 from bracketlearn.adapters import BracketLadder
 from bracketlearn.baselines import EmpiricalDistribution
-from bracketlearn.composite import CalibratedForecaster, LiftedForecaster
 from bracketlearn.lift import ConformalCalibrate, GlobalResidual, Isotonic, StudentTResidual
-from bracketlearn.pipeline import ForecastPipeline
+from bracketlearn.pipeline import CalibratedForecaster, ForecastPipeline, LiftedForecaster
 from bracketlearn.score import to_point
 from bracketlearn.trainers import (
     EMOS,

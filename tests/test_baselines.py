@@ -18,9 +18,8 @@ import numpy as np
 import pytest
 
 from bracketlearn.baselines import EmpiricalDistribution, Persistence
-from bracketlearn.composite import LiftedForecaster
 from bracketlearn.lift import GlobalResidual
-from bracketlearn.pipeline import ForecastPipeline
+from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster
 from bracketlearn.trainers import QuantileReg
 
 

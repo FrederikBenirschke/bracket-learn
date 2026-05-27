@@ -4,7 +4,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions
 follow semver: MAJOR.MINOR.PATCH. Pre-1.0 the public API can break in any
 minor release; patch releases are bug-fixes and additive tests.
 
-## [Unreleased]
+## [0.2.0] — 2026-05-26
+
+Initial public release. Sklearn-style API; four backings (parametric
+normal / mixture-normal / quantile / bracket); `ForecastPipeline` with
+time-aware CV; bracket/binary/twin/threshold adapters; CRPS, log-score,
+PIT, Brier metrics; three public-dataset examples; Sphinx docs;
+GitHub Actions CI.
 
 ### Added
 
@@ -190,12 +196,3 @@ minor release; patch releases are bug-fixes and additive tests.
 ### Docs
 
 - New guides: `adapters.md`, `baselines.md`, `tail_policies.md`.
-- `AUDIT.md` (audit findings + remediation plan) and `DECISION.md`
-  (standalone-PyPI-library decision) added under `bracketlearn/`.
-
-## [0.2.0] — 2026-05
-
-Initial public release; sklearn-style API, four backings (parametric
-normal / mixture-normal / quantile / bracket), `ForecastPipeline` with
-time-aware CV, `BracketLadder` adapter, CRPS / log-score / PIT / Brier
-metrics, three public-dataset examples, Sphinx docs, GitHub Actions CI.

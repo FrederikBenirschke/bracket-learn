@@ -20,6 +20,8 @@ from bracketlearn.forecast import (
     ParametricFamily,
     PointForecast,
     ProvenanceMeta,
+    TailPolicy,
+    TailRule,
 )
 from bracketlearn.lift import (
     ConformalCalibrate,
@@ -28,7 +30,6 @@ from bracketlearn.lift import (
     Isotonic,
     StudentTResidual,
 )
-from bracketlearn.tail import TailPolicy, TailRule
 
 
 def _point(mu: np.ndarray, prov: ProvenanceMeta) -> PointForecast:

@@ -32,7 +32,6 @@ guides/examples
 api/pipeline
 api/trainers
 api/baselines
-api/composite
 api/lift
 api/forecast
 api/adapters

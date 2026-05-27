@@ -35,9 +35,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 import numpy as np
 
-from bracketlearn.composite import LiftedForecaster
 from bracketlearn.lift import GlobalResidual
-from bracketlearn.pipeline import ForecastPipeline
+from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster
 from bracketlearn.trainers import RNNHourly
 
 
@@ -86,7 +85,7 @@ def main() -> None:
         steps=[
             ("rnn_hourly", LiftedForecaster(
                 base=RNNHourly(epochs=40, hidden=24, embed=2, dropout=0.1),
-                lifter=GlobalResidual(family="normal"),
+                lifter=GlobalResidual(),
                 name="rnn_hourly",
             )),
         ],

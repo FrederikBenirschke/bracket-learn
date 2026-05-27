@@ -46,9 +46,8 @@ from _style import (
     predicted_vs_realized_grid,
 )
 from bracketlearn.baselines import EmpiricalDistribution
-from bracketlearn.composite import LiftedForecaster
 from bracketlearn.lift import GlobalResidual
-from bracketlearn.pipeline import ForecastPipeline
+from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster
 from bracketlearn.score import to_point
 from bracketlearn.search import GridSearch
 from bracketlearn.trainers import (

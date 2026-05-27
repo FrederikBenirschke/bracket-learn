@@ -33,22 +33,10 @@ if TYPE_CHECKING:
 
 @dataclass
 class GlobalResidual(BaseEstimator):
-    """Fits one σ from OOF residuals. Produces parametric normal.
+    """Fits one σ from OOF residuals. Produces parametric normal."""
 
-    Only ``family="normal"`` is supported; other families are reserved
-    for a future release. Invalid values are caught at construction time.
-    """
-
-    family: Literal["normal"] = "normal"      # student_t reserved for v0.2
     requires_X: bool = False
     sigma_: float | None = field(default=None, init=False)
-
-    def __post_init__(self) -> None:
-        if self.family != "normal":
-            raise ValueError(
-                f"GlobalResidual.family={self.family!r} not supported; "
-                f"only 'normal' is implemented."
-            )
 
     def fit(
         self,
@@ -446,16 +434,8 @@ class ConformalCalibrate(BaseEstimator):
     Operates only on quantile backings (rejects others loudly).
     """
 
-    mode: Literal["per-tau", "symmetric"] = "per-tau"
     offsets_: np.ndarray | None = field(default=None, init=False)
     fitted_: bool = field(default=False, init=False)
-
-    def __post_init__(self) -> None:
-        if self.mode != "per-tau":
-            raise ValueError(
-                f"ConformalCalibrate.mode={self.mode!r} not supported; "
-                f"only 'per-tau' is implemented."
-            )
 
     def fit(
         self,

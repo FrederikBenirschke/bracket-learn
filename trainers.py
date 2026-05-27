@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Self
 
 import numpy as np
@@ -115,17 +114,7 @@ class SklearnPoint(BaseEstimator):
         timestamps: np.ndarray,
     ) -> PointForecast:
         mu = np.asarray(self.estimator.predict(np.asarray(X, dtype=float)), dtype=float)
-        prov = ProvenanceMeta(
-            forecaster_name=self.name,
-            forecaster_version="0.1",
-            fit_window=(datetime(2024, 1, 1), datetime.now()),
-            fold_idx=None,
-            calibration_set_hash=None,
-            random_seed=None,
-            code_sha="dev",
-            feature_matrix_hash="-",
-            created_at=datetime.now(),
-        )
+        prov = ProvenanceMeta.placeholder(self.name)
         return PointForecast(
             mu=mu,
             ids=np.asarray(ids),
@@ -240,18 +229,7 @@ class EMOS(BaseEstimator):
                 f"wider spread range or use a constant-σ fallback."
             )
         sigma = np.sqrt(var)
-        prov = ProvenanceMeta(
-            forecaster_name=self.name,
-            forecaster_version="0.1",
-            fit_window=(datetime(2024, 1, 1), datetime.now()),
-            fold_idx=None,
-            calibration_set_hash=None,
-            random_seed=None,
-            code_sha="dev",
-            feature_matrix_hash="-",
-            created_at=datetime.now(),
-            sigma_source="native",
-        )
+        prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
         return DistributionForecast.from_normal(
             mu, sigma, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
             provenance=prov,
@@ -387,18 +365,7 @@ class Stacking(BaseEstimator):
         Z = np.column_stack(cols)
         mu = self.intercept_ + Z @ self.weights_
         sigma = np.full_like(mu, self.sigma_)
-        prov = ProvenanceMeta(
-            forecaster_name=self.name,
-            forecaster_version="0.1",
-            fit_window=(datetime(2024, 1, 1), datetime.now()),
-            fold_idx=None,
-            calibration_set_hash=None,
-            random_seed=None,
-            code_sha="dev",
-            feature_matrix_hash="-",
-            created_at=datetime.now(),
-            sigma_source="native",
-        )
+        prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
         return DistributionForecast.from_normal(
             mu, sigma, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
             provenance=prov,
@@ -472,18 +439,7 @@ class NGBoostNormal(BaseEstimator):
         dist = self.model_.pred_dist(X)
         mu = np.asarray(dist.loc, dtype=float)
         sigma = np.maximum(np.asarray(dist.scale, dtype=float), self.sigma_floor)
-        prov = ProvenanceMeta(
-            forecaster_name=self.name,
-            forecaster_version="0.1",
-            fit_window=(datetime(2024, 1, 1), datetime.now()),
-            fold_idx=None,
-            calibration_set_hash=None,
-            random_seed=self.random_seed,
-            code_sha="dev",
-            feature_matrix_hash="-",
-            created_at=datetime.now(),
-            sigma_source="native",
-        )
+        prov = ProvenanceMeta.placeholder(self.name, sigma_source="native", random_seed=self.random_seed)
         return DistributionForecast.from_normal(
             mu, sigma, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
             provenance=prov,
@@ -564,18 +520,7 @@ class MixtureNormals(BaseEstimator):
         mus = X
         sigmas = np.broadcast_to(self.sigma_v_, (N, self.K_)).copy()
         weights = np.full((N, self.K_), 1.0 / self.K_)
-        prov = ProvenanceMeta(
-            forecaster_name=self.name,
-            forecaster_version="0.1",
-            fit_window=(datetime(2024, 1, 1), datetime.now()),
-            fold_idx=None,
-            calibration_set_hash=None,
-            random_seed=None,
-            code_sha="dev",
-            feature_matrix_hash="-",
-            created_at=datetime.now(),
-            sigma_source="native",
-        )
+        prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
         return DistributionForecast.from_mixture_normal(
             weights=weights, mus=mus, sigmas=sigmas,
             ids=np.asarray(ids), timestamps=np.asarray(timestamps),
@@ -600,12 +545,12 @@ def ridge(
     """
     from sklearn.linear_model import RidgeCV
 
-    from bracketlearn.composite import LiftedForecaster
     from bracketlearn.lift import GlobalResidual
+    from bracketlearn.pipeline import LiftedForecaster
 
     return LiftedForecaster(
         base=SklearnPoint(RidgeCV(alphas=np.asarray(alphas))),
-        lifter=GlobalResidual(family="normal"),
+        lifter=GlobalResidual(),
         name=name,
     )
 
@@ -619,12 +564,12 @@ def market_ols(*, name: str = "market_ols") -> Any:
     """
     from sklearn.linear_model import LinearRegression
 
-    from bracketlearn.composite import LiftedForecaster
     from bracketlearn.lift import GlobalResidual
+    from bracketlearn.pipeline import LiftedForecaster
 
     return LiftedForecaster(
         base=SklearnPoint(LinearRegression()),
-        lifter=GlobalResidual(family="normal"),
+        lifter=GlobalResidual(),
         name=name,
     )
 
@@ -636,8 +581,8 @@ def emos_calibrated(*, edges: np.ndarray, name: str = "emos_calibrated") -> Any:
     fits the isotonic on a held-out tail of each training fold and applies
     it to the test fold.
     """
-    from bracketlearn.composite import CalibratedForecaster
     from bracketlearn.lift import Isotonic
+    from bracketlearn.pipeline import CalibratedForecaster
 
     return CalibratedForecaster(
         forecaster=EMOS(),
@@ -715,7 +660,7 @@ class QuantileReg(BaseEstimator):
         ids: np.ndarray,
         timestamps: np.ndarray,
     ) -> DistributionForecast:
-        from bracketlearn.tail import TailPolicy, TailRule
+        from bracketlearn.forecast import TailPolicy, TailRule
 
         if not self.models_:
             raise RuntimeError("QuantileReg.predict_dist called before fit")
@@ -723,18 +668,7 @@ class QuantileReg(BaseEstimator):
         qvals = np.column_stack([self.models_[t].predict(X) for t in self.taus])
         # Repair crossings across rows in one vectorised pass.
         qvals = np.maximum.accumulate(qvals, axis=1)
-        prov = ProvenanceMeta(
-            forecaster_name=self.name,
-            forecaster_version="0.1",
-            fit_window=(datetime(2024, 1, 1), datetime.now()),
-            fold_idx=None,
-            calibration_set_hash=None,
-            random_seed=self.random_seed,
-            code_sha="dev",
-            feature_matrix_hash="-",
-            created_at=datetime.now(),
-            sigma_source="native",
-        )
+        prov = ProvenanceMeta.placeholder(self.name, sigma_source="native", random_seed=self.random_seed)
         return DistributionForecast.from_quantiles(
             taus=np.asarray(self.taus, dtype=float),
             qvals=qvals,
@@ -795,7 +729,7 @@ class QuantileForest(BaseEstimator):
         ids: np.ndarray,
         timestamps: np.ndarray,
     ) -> DistributionForecast:
-        from bracketlearn.tail import TailPolicy, TailRule
+        from bracketlearn.forecast import TailPolicy, TailRule
 
         if self.model_ is None:
             raise RuntimeError("QuantileForest.predict_dist called before fit")
@@ -806,18 +740,7 @@ class QuantileForest(BaseEstimator):
         if qpred.ndim == 1:
             qpred = qpred.reshape(-1, 1)
         qpred = np.maximum.accumulate(qpred, axis=1)
-        prov = ProvenanceMeta(
-            forecaster_name=self.name,
-            forecaster_version="0.1",
-            fit_window=(datetime(2024, 1, 1), datetime.now()),
-            fold_idx=None,
-            calibration_set_hash=None,
-            random_seed=self.random_seed,
-            code_sha="dev",
-            feature_matrix_hash="-",
-            created_at=datetime.now(),
-            sigma_source="native",
-        )
+        prov = ProvenanceMeta.placeholder(self.name, sigma_source="native", random_seed=self.random_seed)
         return DistributionForecast.from_quantiles(
             taus=np.asarray(self.taus, dtype=float),
             qvals=qpred,
@@ -957,18 +880,7 @@ class CumulativeBinary(BaseEstimator):
         probs = bracket_probs_from_cdf_at_edges(
             cdf_at_edges, source="CumulativeBinary.predict_dist",
         )
-        prov = ProvenanceMeta(
-            forecaster_name=self.name,
-            forecaster_version="0.1",
-            fit_window=(datetime(2024, 1, 1), datetime.now()),
-            fold_idx=None,
-            calibration_set_hash=None,
-            random_seed=None,
-            code_sha="dev",
-            feature_matrix_hash="-",
-            created_at=datetime.now(),
-            sigma_source="native",
-        )
+        prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
         return DistributionForecast.from_brackets(
             edges=edges, probs=probs,
             ids=np.asarray(ids), timestamps=np.asarray(timestamps),
@@ -1132,18 +1044,7 @@ class TailSpecialist(BaseEstimator):
                 "renormalisation — should be unreachable; investigate."
             )
         probs = probs / row_sum
-        prov = ProvenanceMeta(
-            forecaster_name=self.name,
-            forecaster_version="0.1",
-            fit_window=(datetime(2024, 1, 1), datetime.now()),
-            fold_idx=None,
-            calibration_set_hash=None,
-            random_seed=None,
-            code_sha="dev",
-            feature_matrix_hash="-",
-            created_at=datetime.now(),
-            sigma_source="native",
-        )
+        prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
         return DistributionForecast.from_brackets(
             edges=edges, probs=probs,
             ids=np.asarray(ids), timestamps=np.asarray(timestamps),
@@ -1271,17 +1172,7 @@ class OnlineAggregator(BaseEstimator):
             raise RuntimeError(
                 f"OnlineAggregator.predict: {n_miss}/{N} rows had < {self.min_experts} awake experts"
             )
-        prov = ProvenanceMeta(
-            forecaster_name=self.name,
-            forecaster_version="0.1",
-            fit_window=(datetime(2024, 1, 1), datetime.now()),
-            fold_idx=None,
-            calibration_set_hash=None,
-            random_seed=None,
-            code_sha="dev",
-            feature_matrix_hash="-",
-            created_at=datetime.now(),
-        )
+        prov = ProvenanceMeta.placeholder(self.name)
         return PointForecast(
             mu=mu, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
             provenance=prov,
@@ -1461,17 +1352,7 @@ class RNNHourly(BaseEstimator):
                 torch.from_numpy(sid),
             ).numpy()
         mu = (baseline + pred_resid).astype(float)
-        prov = ProvenanceMeta(
-            forecaster_name=self.name,
-            forecaster_version="0.1",
-            fit_window=(datetime(2024, 1, 1), datetime.now()),
-            fold_idx=None,
-            calibration_set_hash=None,
-            random_seed=self.seed,
-            code_sha="dev",
-            feature_matrix_hash="-",
-            created_at=datetime.now(),
-        )
+        prov = ProvenanceMeta.placeholder(self.name, random_seed=self.seed)
         return PointForecast(
             mu=mu, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
             provenance=prov,
@@ -1765,7 +1646,7 @@ class LinearPoolDist(BaseEstimator):
         timestamps: np.ndarray,
         deps_oof: dict[str, Any] | None = None,
     ) -> DistributionForecast:
-        from bracketlearn.tail import TailPolicy, TailRule
+        from bracketlearn.forecast import TailPolicy, TailRule
 
         if self.weights_ is None:
             raise RuntimeError("LinearPoolDist.predict_dist called before fit")
@@ -1788,18 +1669,7 @@ class LinearPoolDist(BaseEstimator):
             qvals[i] = np.interp(taus_out, cum, s_sorted)
         qvals = np.maximum.accumulate(qvals, axis=1)            # isotonic-repair
 
-        prov = ProvenanceMeta(
-            forecaster_name=self.name,
-            forecaster_version="0.1",
-            fit_window=(datetime(2024, 1, 1), datetime.now()),
-            fold_idx=None,
-            calibration_set_hash=None,
-            random_seed=None,
-            code_sha="dev",
-            feature_matrix_hash="-",
-            created_at=datetime.now(),
-            sigma_source="native",
-        )
+        prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
         return DistributionForecast.from_quantiles(
             taus=taus_out, qvals=qvals,
             tail_policy=TailPolicy.same(TailRule.clip()),
@@ -1959,18 +1829,7 @@ class CDFBoostBracket(BaseEstimator):
                 "(no head fired); check upstream dist coverage"
             )
         probs = probs / row_sum
-        prov = ProvenanceMeta(
-            forecaster_name=self.name,
-            forecaster_version="0.1",
-            fit_window=(datetime(2024, 1, 1), datetime.now()),
-            fold_idx=None,
-            calibration_set_hash=None,
-            random_seed=None,
-            code_sha="dev",
-            feature_matrix_hash="-",
-            created_at=datetime.now(),
-            sigma_source="native",
-        )
+        prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
         return DistributionForecast.from_brackets(
             edges=self.edges, probs=probs,
             ids=np.asarray(ids), timestamps=np.asarray(timestamps),

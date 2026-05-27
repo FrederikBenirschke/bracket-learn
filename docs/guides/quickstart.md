@@ -5,10 +5,25 @@ import numpy as np
 from sklearn.linear_model import RidgeCV
 
 from bracketlearn.adapters import BracketLadder
-from bracketlearn.composite import CalibratedForecaster, LiftedForecaster
+from bracketlearn.pipeline import CalibratedForecaster, LiftedForecaster
 from bracketlearn.lift import GlobalResidual, Isotonic
 from bracketlearn.pipeline import ForecastPipeline
 from bracketlearn.trainers import EMOS, QuantileReg, SklearnPoint
+
+# --- synthetic data: 500 hourly observations of a noisy linear signal --------
+rng = np.random.default_rng(0)
+N = 500
+X = rng.normal(size=(N, 3))
+y = 50.0 + X @ np.array([3.0, -1.5, 2.0]) + rng.normal(scale=4.0, size=N)
+ids = np.arange(N)
+ts = np.arange(N, dtype="datetime64[h]")
+
+# Hold the last 50 rows out for the .predict() demo at the end.
+X, X_new = X[:-50], X[-50:]
+y = y[:-50]
+ids, new_ids = ids[:-50], ids[-50:]
+ts, new_ts = ts[:-50], ts[-50:]
+# -----------------------------------------------------------------------------
 
 edges = np.linspace(0, 100, 11)   # 10 brackets
 

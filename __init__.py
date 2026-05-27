@@ -13,6 +13,14 @@ Quick start::
         EMOS, QuantileReg, SklearnPoint,
         LiftedForecaster, GlobalResidual,
     )
+
+Less commonly used symbols live in their submodules:
+- ``bracketlearn.protocols`` — Forecaster, PointForecaster, DistForecaster,
+  Lifter, Calibrator (for users writing custom stages).
+- ``bracketlearn.adapters.ContractAdapter`` — the contract-pricing protocol.
+- ``bracketlearn.forecast`` — ContractSpec, ProvenanceMeta, TailPolicyError.
+- ``bracketlearn.trainers`` — ``ridge``, ``market_ols``, ``emos_calibrated``
+  convenience factories.
 """
 
 from __future__ import annotations
@@ -23,22 +31,20 @@ from bracketlearn.adapters import (
     BinaryAbove,
     BinaryBelow,
     BracketLadder,
-    ContractAdapter,
     PerRowBracketLadder,
     ThresholdLadder,
     Twin,
 )
 from bracketlearn.base import BaseEstimator, clone
 from bracketlearn.baselines import EmpiricalDistribution, Persistence
-from bracketlearn.pipeline import CalibratedForecaster, LiftedForecaster
 from bracketlearn.forecast import (
     Backing,
     ContractForecast,
-    ContractSpec,
     DistributionForecast,
     ParametricFamily,
     PointForecast,
-    ProvenanceMeta,
+    TailPolicy,
+    TailRule,
     normalize_bracket_probs,
 )
 from bracketlearn.lift import (
@@ -52,17 +58,14 @@ from bracketlearn.multitarget import (
     MultiOutputForecastPipeline,
     MultiOutputPipelineResult,
 )
-from bracketlearn.pipeline import ForecastPipeline, PipelineResult
-from bracketlearn.restrict import BracketMask
-from bracketlearn.protocols import (
-    Calibrator,
-    DistForecaster,
-    Forecaster,
-    Lifter,
-    PointForecaster,
+from bracketlearn.pipeline import (
+    CalibratedForecaster,
+    ForecastPipeline,
+    LiftedForecaster,
+    PipelineResult,
 )
+from bracketlearn.restrict import BracketMask
 from bracketlearn.search import GridSearch
-from bracketlearn.forecast import TailPolicy, TailPolicyError, TailRule
 from bracketlearn.trainers import (
     EMOS,
     CDFBoostBracket,
@@ -80,12 +83,6 @@ from bracketlearn.trainers import (
     TailSpecialist,
 )
 
-# Optional convenience builders (these import lazily; OK at top level too).
-try:
-    from bracketlearn.trainers import emos_calibrated, market_ols, ridge
-except ImportError:  # pragma: no cover
-    emos_calibrated = market_ols = ridge = None  # type: ignore[assignment]
-
 __all__ = [
     "__version__",
     # base
@@ -94,27 +91,16 @@ __all__ = [
     # data
     "Backing",
     "ContractForecast",
-    "ContractSpec",
     "DistributionForecast",
     "ParametricFamily",
     "PointForecast",
-    "ProvenanceMeta",
-    "normalize_bracket_probs",
-    # protocols
-    "Calibrator",
-    "DistForecaster",
-    "Forecaster",
-    "Lifter",
-    "PointForecaster",
-    # tail
     "TailPolicy",
-    "TailPolicyError",
     "TailRule",
+    "normalize_bracket_probs",
     # adapters
     "BinaryAbove",
     "BinaryBelow",
     "BracketLadder",
-    "ContractAdapter",
     "PerRowBracketLadder",
     "ThresholdLadder",
     "Twin",
@@ -136,9 +122,6 @@ __all__ = [
     "SklearnPoint",
     "Stacking",
     "TailSpecialist",
-    "emos_calibrated",
-    "market_ols",
-    "ridge",
     # restriction
     "BracketMask",
     # lifters / calibrators
