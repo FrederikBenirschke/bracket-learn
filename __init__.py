@@ -37,13 +37,11 @@ from bracketlearn.adapters import (
 from bracketlearn.base import BaseEstimator, clone
 from bracketlearn.baselines import EmpiricalDistribution, Persistence
 from bracketlearn.forecast import (
-    Backing,
     BracketForecast,
     ContractForecast,
     DistributionForecast,
     MixtureNormalForecast,
     NormalForecast,
-    ParametricFamily,
     PointForecast,
     QuantileForecast,
     StudentTForecast,
@@ -72,6 +70,8 @@ from bracketlearn.restrict import BracketMask
 from bracketlearn.search import GridSearch
 from bracketlearn.trainers import (
     EMOS,
+    BayesianRidge,
+    BMAStacking,
     CDFBoostBracket,
     CumulativeBinary,
     DistAsFeatures,
@@ -83,6 +83,7 @@ from bracketlearn.trainers import (
     QuantileReg,
     RNNHourly,
     SklearnPoint,
+    StackedParametric,
     Stacking,
     TailSpecialist,
 )
@@ -93,13 +94,11 @@ __all__ = [
     "BaseEstimator",
     "clone",
     # data
-    "Backing",
     "BracketForecast",
     "ContractForecast",
     "DistributionForecast",
     "MixtureNormalForecast",
     "NormalForecast",
-    "ParametricFamily",
     "PointForecast",
     "QuantileForecast",
     "StudentTForecast",
@@ -116,6 +115,8 @@ __all__ = [
     "EmpiricalDistribution",
     "Persistence",
     # trainers
+    "BMAStacking",
+    "BayesianRidge",
     "CDFBoostBracket",
     "CumulativeBinary",
     "DistAsFeatures",
@@ -128,7 +129,8 @@ __all__ = [
     "QuantileReg",
     "RNNHourly",
     "SklearnPoint",
-    "Stacking",
+    "StackedParametric",
+    "Stacking",  # legacy alias for StackedParametric
     "TailSpecialist",
     # restriction
     "BracketMask",

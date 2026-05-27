@@ -22,7 +22,7 @@ from sklearn.linear_model import LinearRegression
 from bracketlearn.base import clone
 from bracketlearn.lift import GlobalResidual
 from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster
-from bracketlearn.trainers import EMOS, MixtureNormals, OnlineAggregator, SklearnPoint, Stacking
+from bracketlearn.trainers import EMOS, MixtureNormals, OnlineAggregator, SklearnPoint, StackedParametric
 
 
 def _synthetic(n: int = 200, k: int = 3, seed: int = 0):
@@ -177,7 +177,7 @@ class TestPredictUnseen:
                     SklearnPoint(LinearRegression()),
                     GlobalResidual(), name="ridge")),
                 ("emos", EMOS()),
-                ("stack", Stacking(deps=("ridge", "emos"))),
+                ("stack", StackedParametric(deps=("ridge", "emos"))),
             ],
             n_folds=3,
         )

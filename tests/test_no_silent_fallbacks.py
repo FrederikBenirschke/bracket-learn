@@ -4,7 +4,7 @@ Every test here verifies that a previously-silent fallback now raises
 loudly. If any of these regress to silent behaviour, the test fails.
 
 Covers:
-- Stacking row-alignment + sigma fallback
+- StackedParametric row-alignment + sigma fallback
 - CumulativeBinary outer_edges required
 - RNNHourly unknown station IDs
 - SklearnPoint sample_weight introspection
@@ -163,12 +163,12 @@ def test_bracket_probs_from_dist_raises_on_zero_row_sum():
 
 
 # ---------------------------------------------------------------------------
-# B2 — Stacking row-alignment + sigma fallback.
+# B2 — StackedParametric row-alignment + sigma fallback.
 # ---------------------------------------------------------------------------
 
 
 def test_stacking_raises_on_misaligned_upstream_ids():
-    from bracketlearn.trainers import Stacking
+    from bracketlearn.trainers import StackedParametric
 
     N = 8
     ids = np.arange(N)
@@ -180,14 +180,14 @@ def test_stacking_raises_on_misaligned_upstream_ids():
     d2 = DistributionForecast.from_normal(
         mu=np.zeros(N), sigma=np.ones(N), ids=ids[::-1], timestamps=ts, provenance=_prov(),
     )
-    stack = Stacking(deps=("a", "b"))
+    stack = StackedParametric(deps=("a", "b"))
     with pytest.raises(ValueError, match="does not match"):
         stack.fit(np.zeros((N, 2)), np.zeros(N), deps_oof={"a": d1, "b": d2})
 
 
 def test_stacking_raises_on_degenerate_sigma():
     """sigma_<=0 was silently floored to 1e-3 in v0.1. Now it raises."""
-    from bracketlearn.trainers import Stacking
+    from bracketlearn.trainers import StackedParametric
 
     N = 5
     ids = np.arange(N)
@@ -197,7 +197,7 @@ def test_stacking_raises_on_degenerate_sigma():
     d = DistributionForecast.from_normal(
         mu=y.copy(), sigma=np.ones(N), ids=ids, timestamps=ts, provenance=_prov(),
     )
-    stack = Stacking(deps=("a",))
+    stack = StackedParametric(deps=("a",))
     with pytest.raises(ValueError, match="degenerate"):
         stack.fit(np.zeros((N, 2)), y, deps_oof={"a": d})
 

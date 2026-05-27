@@ -7,7 +7,8 @@ Layout
 ------
 
 - ``bracketlearn.trainers.point`` — SklearnPoint, OnlineAggregator, RNNHourly.
-- ``bracketlearn.trainers.parametric`` — EMOS, NGBoostNormal, MixtureNormals, Stacking.
+- ``bracketlearn.trainers.parametric`` — EMOS, NGBoostNormal, MixtureNormals,
+  StackedParametric (legacy alias ``Stacking``).
 - ``bracketlearn.trainers.quantile`` — QuantileReg, QuantileForest.
 - ``bracketlearn.trainers.bracket`` — CumulativeBinary, TailSpecialist, CDFBoostBracket, LinearPoolDist.
 - ``bracketlearn.trainers.meta`` — DistAsFeatures.
@@ -26,7 +27,15 @@ from bracketlearn.trainers.bracket import (
     TailSpecialist,
 )
 from bracketlearn.trainers.meta import DistAsFeatures
-from bracketlearn.trainers.parametric import EMOS, MixtureNormals, NGBoostNormal, Stacking
+from bracketlearn.trainers.parametric import (
+    EMOS,
+    BayesianRidge,
+    BMAStacking,
+    MixtureNormals,
+    NGBoostNormal,
+    StackedParametric,
+    Stacking,
+)
 from bracketlearn.trainers.point import OnlineAggregator, RNNHourly, SklearnPoint
 from bracketlearn.trainers.quantile import QuantileForest, QuantileReg
 
@@ -36,10 +45,13 @@ __all__ = [
     "RNNHourly",
     "SklearnPoint",
     # parametric
+    "BMAStacking",
+    "BayesianRidge",
     "EMOS",
     "MixtureNormals",
     "NGBoostNormal",
-    "Stacking",
+    "StackedParametric",
+    "Stacking",  # legacy alias for StackedParametric
     # quantile
     "QuantileForest",
     "QuantileReg",

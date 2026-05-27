@@ -28,7 +28,7 @@ def test_top_level_estimator_imports():
         # baselines
         "EmpiricalDistribution", "Persistence",
         # trainers
-        "EMOS", "Stacking", "SklearnPoint", "MixtureNormals",
+        "EMOS", "StackedParametric", "Stacking", "SklearnPoint", "MixtureNormals",
         "NGBoostNormal", "QuantileReg", "QuantileForest",
         "CumulativeBinary", "TailSpecialist", "OnlineAggregator",
         "RNNHourly", "CDFBoostBracket", "DistAsFeatures", "LinearPoolDist",

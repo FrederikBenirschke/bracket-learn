@@ -447,11 +447,12 @@ class ConformalCalibrate(BaseEstimator):
         dist_oof: DistributionForecast,
         y: np.ndarray,
     ) -> Self:
-        from bracketlearn.forecast import Backing
+        from bracketlearn.forecast import QuantileForecast
 
-        if dist_oof.backing != Backing.QUANTILE:
+        if not isinstance(dist_oof, QuantileForecast):
             raise ValueError(
-                f"ConformalCalibrate expects quantile backing; got {dist_oof.backing}"
+                f"ConformalCalibrate expects QuantileForecast; got "
+                f"{type(dist_oof).__name__}"
             )
         y = np.asarray(y, dtype=float)
         taus = dist_oof.taus
@@ -469,13 +470,14 @@ class ConformalCalibrate(BaseEstimator):
         self,
         dist: DistributionForecast,
     ) -> DistributionForecast:
-        from bracketlearn.forecast import Backing, DistributionForecast, ProvenanceMeta
+        from bracketlearn.forecast import DistributionForecast, ProvenanceMeta, QuantileForecast
 
         if not self.fitted_:
             raise RuntimeError("ConformalCalibrate.transform called before fit")
-        if dist.backing != Backing.QUANTILE:
+        if not isinstance(dist, QuantileForecast):
             raise ValueError(
-                f"ConformalCalibrate expects quantile backing; got {dist.backing}"
+                f"ConformalCalibrate expects QuantileForecast; got "
+                f"{type(dist).__name__}"
             )
         if not np.array_equal(dist.taus, np.arange(self.offsets_.shape[0])) and \
            dist.taus.shape[0] != self.offsets_.shape[0]:

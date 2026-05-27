@@ -20,7 +20,7 @@ from sklearn.linear_model import LinearRegression
 
 from bracketlearn.lift import GlobalResidual
 from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster, PipelineResult
-from bracketlearn.trainers import EMOS, SklearnPoint, Stacking
+from bracketlearn.trainers import EMOS, SklearnPoint, StackedParametric
 
 
 def _synthetic(n: int = 200, k: int = 3, seed: int = 0):
@@ -117,7 +117,7 @@ def test_duplicate_stage_name_raises():
 
 def test_missing_dependency_raises():
     with pytest.raises(ValueError, match="depends on"):
-        ForecastPipeline(steps=[("stack", Stacking(deps=("ridge",)))])
+        ForecastPipeline(steps=[("stack", StackedParametric(deps=("ridge",)))])
 
 
 def test_unsupported_cv_raises():
@@ -156,13 +156,13 @@ def test_stacking_receives_deps_oof():
                 name="ridge",
             )),
             ("emos",  EMOS()),
-            ("stack", Stacking(deps=("ridge", "emos"))),
+            ("stack", StackedParametric(deps=("ridge", "emos"))),
         ],
         n_folds=3,
     )
     result = p.fit_predict(X, y, ids=ids, timestamps=ts)
     assert "stack" in result.forecasts
-    # Stacking should beat or match each individual upstream on training data.
+    # StackedParametric should beat or match each individual upstream on training data.
     scores = result.score(y, metrics=["crps"])
     # We don't assert strict dominance (3-fold + small N is noisy) but the
     # stack should at least be in the same ballpark.

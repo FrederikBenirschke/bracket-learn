@@ -6,7 +6,7 @@ sklearn-style API::
         steps=[
             ("ridge", LiftedForecaster(SklearnPoint(Ridge()), GlobalResidual())),
             ("emos",  CalibratedForecaster(EMOS(), Isotonic())),
-            ("stack", Stacking(deps=("ridge", "emos"))),
+            ("stack", StackedParametric(deps=("ridge", "emos"))),
         ],
         cv="expanding-window", n_folds=5,
     )
@@ -155,38 +155,6 @@ class CalibratedForecaster(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-def _metric_crps(dist, y, scoremod) -> float:
-    from bracketlearn.forecast import Backing, ParametricFamily
-    if dist.backing == Backing.PARAMETRIC:
-        if dist.family == ParametricFamily.NORMAL:
-            return float(scoremod.crps_gaussian(dist, y).mean())
-        if dist.family == ParametricFamily.MIXTURE_NORMAL:
-            # Monte-Carlo CRPS (energy form). 2000 samples is a
-            # speed/accuracy tradeoff that keeps the leaderboard
-            # responsive without distorting rank order.
-            return float(scoremod.crps_mixture_normal(dist, y).mean())
-    if dist.backing == Backing.BRACKET:
-        return float(scoremod.crps_bracket(dist, y).mean())
-    if dist.backing == Backing.QUANTILE:
-        return float(scoremod.crps_quantile(dist, y).mean())
-    return float("nan")
-
-
-def _metric_log_score(dist, y, scoremod) -> float:
-    from bracketlearn.forecast import Backing, ParametricFamily
-    if dist.backing == Backing.PARAMETRIC:
-        if dist.family == ParametricFamily.NORMAL:
-            return float(scoremod.log_score_gaussian(dist, y).mean())
-        if dist.family == ParametricFamily.MIXTURE_NORMAL:
-            return float(scoremod.log_score_mixture_normal(dist, y).mean())
-    if dist.backing == Backing.BRACKET:
-        return float(scoremod.log_score_bracket(dist, y).mean())
-    if dist.backing == Backing.QUANTILE:
-        # Piecewise-linear CDF → piecewise-constant density.
-        return float(scoremod.log_score_quantile(dist, y).mean())
-    return float("nan")
-
-
 def _compute_metric(
     metric: str, dist, y, *, ladder, scoremod,
 ) -> dict[str, float]:
@@ -194,11 +162,11 @@ def _compute_metric(
     a small dict (PIT contributes both mean and std).
     """
     if metric == "crps":
-        return {"crps": _metric_crps(dist, y, scoremod)}
+        return {"crps": float(dist.crps(y).mean())}
     if metric == "log_score":
-        return {"log_score": _metric_log_score(dist, y, scoremod)}
+        return {"log_score": float(dist.log_score(y).mean())}
     if metric in ("pit", "pit_mean", "pit_std"):
-        pits = scoremod.pit(dist, y)
+        pits = dist.pit(y)
         return {"pit_mean": float(pits.mean()), "pit_std": float(pits.std())}
     if metric == "log_loss_bracket":
         contracts = ladder.price(dist)
@@ -339,14 +307,14 @@ class ForecastPipeline:
     Example::
 
         from bracketlearn.lift import GlobalResidual, Isotonic
-        from bracketlearn.trainers import SklearnPoint, EMOS, Stacking
+        from bracketlearn.trainers import SklearnPoint, EMOS, StackedParametric
         from sklearn.linear_model import Ridge
 
         p = ForecastPipeline(
             steps=[
                 ("ridge", LiftedForecaster(SklearnPoint(Ridge()), GlobalResidual())),
                 ("emos",  CalibratedForecaster(EMOS(), Isotonic())),
-                ("stack", Stacking(deps=("ridge", "emos"))),
+                ("stack", StackedParametric(deps=("ridge", "emos"))),
             ],
             n_folds=5,
         )
@@ -556,7 +524,7 @@ class ForecastPipeline:
             # Refit inner on the full train and record its in-sample dist for
             # downstream deps. Self-predict on the same N rows so the deps
             # row-alignment invariant (deps_oof[name].params['mu'].shape[0] == N)
-            # holds for whatever downstream Stacking expects.
+            # holds for whatever downstream StackedParametric expects.
             dist_train_full = self._refit_and_predict_full(
                 inner, X, y, ids, ts, deps, sample_weight=sample_weight,
             )
@@ -812,7 +780,7 @@ class ForecastPipeline:
 
         if deps_for_fit:
             # Pass ids/timestamps explicitly so trainers that check
-            # row-alignment against deps_oof.ids (e.g. Stacking) see the
+            # row-alignment against deps_oof.ids (e.g. StackedParametric) see the
             # fold-relative ids, not the auto-filled arange(N).
             _fit_with_optional_weight(
                 f, X_tr, y_tr, sw_tr,
@@ -926,83 +894,21 @@ def _stitch_folds(
 ) -> DistributionForecast:
     """Concatenate per-fold OOF dists into one whole-data OOF dist.
 
-    All folds must share backing/family (and edges for bracket, K for mixture).
-    Output ids are the original row indices so y[ids] recovers the realized
-    targets for OOF scoring.
+    All folds must be the same DistributionForecast subclass. Per-subclass
+    concat logic lives in ``cls.stitch``. Output ids are the original row
+    indices so ``y[ids]`` recovers the realized targets for OOF scoring.
     """
-    from bracketlearn.forecast import Backing, ParametricFamily
-
     if not folds:
         raise RuntimeError("no folds to stitch — pipeline emitted nothing")
-    backings = {d.backing for _, d in folds}
-    if len(backings) > 1:
+    types = {type(d) for _, d in folds}
+    if len(types) > 1:
         raise ValueError(
-            f"mixed backings across folds: {backings}. Pipeline folds must "
-            f"share one backing — a single forecaster cannot emit different "
-            f"backings on different folds."
+            f"mixed dist subclasses across folds: {types}. Pipeline folds "
+            f"must share one subclass — a single forecaster cannot emit "
+            f"different distribution types on different folds."
         )
-    backing = next(iter(backings))
-
-    all_rows = np.concatenate([rows for rows, _ in folds])
-    all_ts = timestamps[all_rows]
-    # Sort by original row index so downstream y[ids] aligns trivially.
-    order = np.argsort(all_rows, kind="stable")
-    ids_sorted = all_rows[order]
-    ts_sorted = all_ts[order]
-
-    if backing == Backing.PARAMETRIC:
-        families = {d.family for _, d in folds}
-        if len(families) > 1:
-            raise ValueError(
-                f"mixed parametric families across folds: {families}. All "
-                f"folds must share one parametric family."
-            )
-        family = next(iter(families))
-        if family == ParametricFamily.NORMAL:
-            mu = np.concatenate([d.params["mu"] for _, d in folds])[order]
-            sigma = np.concatenate([d.params["sigma"] for _, d in folds])[order]
-            return DistributionForecast.from_normal(
-                mu, sigma, ids=ids_sorted, timestamps=ts_sorted, provenance=provenance,
-            )
-        if family == ParametricFamily.MIXTURE_NORMAL:
-            weights = np.concatenate([d.params["weights"] for _, d in folds], axis=0)[order]
-            mus = np.concatenate([d.params["mus"] for _, d in folds], axis=0)[order]
-            sigmas = np.concatenate([d.params["sigmas"] for _, d in folds], axis=0)[order]
-            return DistributionForecast.from_mixture_normal(
-                weights=weights, mus=mus, sigmas=sigmas,
-                ids=ids_sorted, timestamps=ts_sorted, provenance=provenance,
-            )
-        raise NotImplementedError(f"stitching not implemented for parametric family {family}")
-
-    if backing == Backing.BRACKET:
-        # BracketForecast.edges is now per-row (N, B+1). Concatenate along
-        # axis 0 and reorder alongside probs; from_brackets accepts 2-D
-        # edges natively.
-        edges = np.concatenate([d.edges for _, d in folds], axis=0)[order]
-        probs = np.concatenate([d.probs for _, d in folds], axis=0)[order]
-        return DistributionForecast.from_brackets(
-            edges=edges, probs=probs,
-            ids=ids_sorted, timestamps=ts_sorted, provenance=provenance,
-        )
-
-    if backing == Backing.QUANTILE:
-        taus_set = {tuple(d.taus.tolist()) for _, d in folds}
-        if len(taus_set) > 1:
-            raise ValueError(
-                "quantile folds use different tau vectors; all folds must "
-                "share the same quantile grid."
-            )
-        taus = folds[0][1].taus
-        qvals = np.concatenate([d.qvals for _, d in folds], axis=0)[order]
-        # Tail policy must agree across folds (all folds in a pipeline come
-        # from the same trainer); pick from first fold.
-        tail_policy = folds[0][1].tail_policy
-        return DistributionForecast.from_quantiles(
-            taus=taus, qvals=qvals, tail_policy=tail_policy,
-            ids=ids_sorted, timestamps=ts_sorted, provenance=provenance,
-        )
-
-    raise NotImplementedError(f"stitching not implemented for backing {backing}")
+    cls = next(iter(types))
+    return cls.stitch(folds, timestamps=timestamps, provenance=provenance)
 
 
 def _set_provenance(dist: DistributionForecast, prov: ProvenanceMeta) -> DistributionForecast:

@@ -78,15 +78,15 @@ class BracketMask(BaseEstimator):
                 tradable subset.
         """
         from bracketlearn.forecast import (
-            Backing,
+            BracketForecast,
             DistributionForecast,
             ProvenanceMeta,
         )
 
-        if dist.backing != Backing.BRACKET:
+        if not isinstance(dist, BracketForecast):
             raise TypeError(
-                f"BracketMask.transform: input backing is {dist.backing!r}; "
-                f"only bracket backing is supported. Discretise first via "
+                f"BracketMask.transform: input is {type(dist).__name__}; "
+                f"only BracketForecast is supported. Discretise first via "
                 f"DistributionForecast.cdf(edges) + bracket_probs_from_cdf_at_edges."
             )
 
@@ -94,7 +94,7 @@ class BracketMask(BaseEstimator):
         if probs is None:
             raise ValueError(
                 "BracketMask.transform: dist.probs is None despite "
-                "backing=BRACKET — DistributionForecast invariant violated."
+                "BracketForecast input — invariant violated."
             )
 
         mask = np.asarray(mask)

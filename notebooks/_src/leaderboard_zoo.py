@@ -28,7 +28,7 @@
 # 3. **Point + lifter combos** — sklearn regressors lifted via
 #    `GlobalResidual`, `StudentTResidual`, `GARCHResidual`.
 # 4. **Calibrated wrappers** — `Isotonic`, `ConformalCalibrate`.
-# 5. **Multi-stage DAGs** — `Stacking`, `DistAsFeatures`, `LinearPoolDist`,
+# 5. **Multi-stage DAGs** — `StackedParametric`, `DistAsFeatures`, `LinearPoolDist`,
 #    `CDFBoostBracket`, `TailSpecialist` over a shared upstream set.
 
 # %%
@@ -71,7 +71,7 @@ from bracketlearn.trainers import (
     QuantileForest,
     QuantileReg,
     SklearnPoint,
-    Stacking,
+    StackedParametric,
 )
 from lightgbm import LGBMRegressor
 
@@ -193,7 +193,7 @@ dag = ForecastPipeline(
         ("ngboost", NGBoostNormal(n_estimators=150, random_seed=0)),
         ("qreg",    QuantileReg(n_estimators=150, learning_rate=0.05,
                                 random_seed=0)),
-        ("stack",   Stacking(deps=("ridge", "ngboost"))),
+        ("stack",   StackedParametric(deps=("ridge", "ngboost"))),
         ("daf_lgb", DistAsFeatures(
             deps=("ridge", "ngboost", "qreg"),
             downstream=NGBoostNormal(n_estimators=100, random_seed=0),
@@ -221,7 +221,7 @@ for stage in ["stack", "daf_lgb", "pool", "cdfboost"]:
     except Exception:
         rmse = mae = float("nan")
     label = {
-        "stack":    "Stacking (deps=ridge,ngb)",
+        "stack":    "StackedParametric (deps=ridge,ngb)",
         "daf_lgb":  "DistAsFeatures→NGBoost",
         "pool":     "LinearPoolDist",
         "cdfboost": "CDFBoostBracket",

@@ -15,7 +15,7 @@ Tier 1 (parametric / mixture backings):
   - emos_calibrated  — CalibratedForecaster(EMOS, Isotonic(edges))
   - ngboost          — non-linear EMOS via NGBoost (native parametric normal)
   - mixture          — per-vendor Gaussian mixture (native parametric mixture)
-  - stack            — Stacking meta-learner over (ridge, emos)
+  - stack            — StackedParametric meta-learner over (ridge, emos)
 
 Tier 2 (quantile / bracket backings, conformal calibration, tail specialist):
   - qreg             — LightGBM per-τ quantile heads (quantile-backed)
@@ -60,7 +60,7 @@ from bracketlearn.trainers import (
     QuantileForest,
     QuantileReg,
     SklearnPoint,
-    Stacking,
+    StackedParametric,
     TailSpecialist,
     emos_calibrated,
     ridge,
@@ -120,7 +120,7 @@ def main() -> None:
             ("emos_calibrated", emos_calibrated(edges=edges)),
             ("ngboost",         NGBoostNormal(n_estimators=200, learning_rate=0.02, random_seed=0)),
             ("mixture",         MixtureNormals()),
-            ("stack",           Stacking(deps=("ridge", "emos"))),
+            ("stack",           StackedParametric(deps=("ridge", "emos"))),
             # Tier 2
             ("qreg",            QuantileReg(n_estimators=100, random_seed=0)),
             ("qreg_conformal",  CalibratedForecaster(

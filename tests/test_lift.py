@@ -278,5 +278,5 @@ class TestConformalCalibrate:
             mu=np.array([0.0]), sigma=np.array([1.0]),
             ids=np.array([0]), timestamps=np.array([0.0]), provenance=prov,
         )
-        with pytest.raises(ValueError, match="quantile"):
+        with pytest.raises(ValueError, match="[Qq]uantile"):
             cc.transform(d_normal)

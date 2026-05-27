@@ -64,7 +64,7 @@ def _try_construct(cls: type) -> object | None:
     reach; others get skipped.
     """
     presets: dict[str, dict] = {
-        "Stacking": {"deps": ("a", "b")},
+        "StackedParametric": {"deps": ("a", "b")},
         "CumulativeBinary": {
             "cutpoints_by_id": {0: np.array([1.0, 2.0, 3.0])},
             "outer_edges_by_id": {0: (0.0, 4.0)},

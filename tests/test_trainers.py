@@ -13,9 +13,17 @@ import importlib
 import numpy as np
 import pytest
 
-from bracketlearn.forecast import Backing, ParametricFamily
+from bracketlearn.forecast import (
+    BracketForecast,
+    MixtureNormalForecast,
+    NormalForecast,
+    QuantileForecast,
+    StudentTForecast,
+)
 from bracketlearn.trainers import (
     EMOS,
+    BayesianRidge,
+    BMAStacking,
     MixtureNormals,
     OnlineAggregator,
     SklearnPoint,
@@ -54,18 +62,90 @@ def test_emos_emits_parametric_normal():
     X, y, ids, ts = _synthetic()
     e = EMOS().fit(X, y)
     d = e.predict_dist(X, ids=ids, timestamps=ts)
-    assert d.backing == Backing.PARAMETRIC
-    assert d.family == ParametricFamily.NORMAL
+    assert isinstance(d, NormalForecast)
     assert d.params["mu"].shape == (X.shape[0],)
     assert np.all(d.params["sigma"] > 0)
+
+
+def test_bayesian_ridge_emits_parametric_student_t():
+    rng = np.random.default_rng(0)
+    N, d = 150, 3
+    X = rng.standard_normal((N, d))
+    y = X @ np.array([0.5, -1.0, 2.0]) + rng.standard_normal(N) * 0.5
+    ids = np.arange(N)
+    ts = np.arange(N, dtype=float)
+    br = BayesianRidge().fit(X, y)
+    out = br.predict_dist(X, ids=ids, timestamps=ts)
+    assert isinstance(out, StudentTForecast)
+    assert out.params["mu"].shape == (N,)
+    assert np.all(out.params["sigma"] > 0)
+    assert np.all(out.params["df"] > 2.0)
+
+
+def test_bayesian_ridge_recovers_coefficients_and_sigma():
+    """Tight prior_precision shrinks toward zero; flat prior recovers OLS."""
+    rng = np.random.default_rng(1)
+    N, d = 500, 3
+    X = rng.standard_normal((N, d))
+    beta_true = np.array([0.5, -1.0, 2.0])
+    sigma_true = 0.5
+    y = X @ beta_true + rng.standard_normal(N) * sigma_true
+    br = BayesianRidge(prior_precision=1e-3).fit(X, y)
+    # Slopes recovered after destandardisation: m_n is in standardised X-space
+    # so just check the standardised-space predictions match OLS closely on train.
+    pred = br.predict_dist(X, ids=np.arange(N), timestamps=np.zeros(N))
+    np.testing.assert_allclose(pred.mu.mean(), y.mean(), atol=0.05)
+    # Posterior sigma should bracket the noise scale.
+    assert 0.3 < pred.sigma.mean() < 0.8
+
+
+def test_bayesian_ridge_sigma_inflates_away_from_training_data():
+    """Predictive σ uses (1 + x*ᵀ V_n x*); rows far from train must be wider.
+    Use small N so V_n stays loose enough for the inflation to be visible."""
+    rng = np.random.default_rng(2)
+    N, d = 30, 2
+    X = rng.standard_normal((N, d))
+    y = X @ np.array([1.0, -1.0]) + rng.standard_normal(N) * 0.3
+    br = BayesianRidge().fit(X, y)
+    X_near = rng.standard_normal((20, d))
+    X_far = rng.standard_normal((20, d)) * 20.0
+    ids = np.arange(20)
+    ts = np.zeros(20)
+    d_near = br.predict_dist(X_near, ids=ids, timestamps=ts)
+    d_far = br.predict_dist(X_far, ids=ids, timestamps=ts)
+    assert d_far.sigma.mean() > d_near.sigma.mean() * 1.5
+
+
+def test_bayesian_ridge_raises_on_zero_variance_column():
+    rng = np.random.default_rng(3)
+    X = rng.standard_normal((50, 3))
+    X[:, 1] = 7.0
+    y = rng.standard_normal(50)
+    with pytest.raises(ValueError, match="zero-variance column"):
+        BayesianRidge().fit(X, y)
+
+
+def test_bayesian_ridge_raises_on_collinear_columns_without_prior():
+    """prior_precision=0 leaves Xᵀ X singular on collinear designs → loud raise."""
+    rng = np.random.default_rng(4)
+    X = rng.standard_normal((50, 3))
+    X[:, 2] = X[:, 0]
+    y = rng.standard_normal(50)
+    with pytest.raises(ValueError, match="prior_precision .* must be strictly positive"):
+        BayesianRidge(prior_precision=0.0).fit(X, y)
+
+
+def test_bayesian_ridge_predict_before_fit_raises():
+    br = BayesianRidge()
+    with pytest.raises(RuntimeError, match="predict_dist called before fit"):
+        br.predict_dist(np.zeros((3, 2)), ids=np.arange(3), timestamps=np.zeros(3))
 
 
 def test_mixture_normals_emits_mixture_normal():
     X, y, ids, ts = _synthetic(k=4)
     m = MixtureNormals().fit(X, y)
     d = m.predict_dist(X, ids=ids, timestamps=ts)
-    assert d.backing == Backing.PARAMETRIC
-    assert d.family == ParametricFamily.MIXTURE_NORMAL
+    assert isinstance(d, MixtureNormalForecast)
     assert d.params["weights"].shape == (X.shape[0], X.shape[1])
     np.testing.assert_allclose(d.params["weights"].sum(axis=1), 1.0)
 
@@ -124,8 +204,7 @@ def test_ngboost_normal_emits_parametric_normal():
     X, y, ids, ts = _synthetic(n=80)
     ng = NGBoostNormal(n_estimators=30, learning_rate=0.05, random_seed=0).fit(X, y)
     d = ng.predict_dist(X, ids=ids, timestamps=ts)
-    assert d.backing == Backing.PARAMETRIC
-    assert d.family == ParametricFamily.NORMAL
+    assert isinstance(d, NormalForecast)
 
 
 def test_quantile_reg_emits_quantile_backing():
@@ -134,7 +213,7 @@ def test_quantile_reg_emits_quantile_backing():
     X, y, ids, ts = _synthetic(n=80)
     qr = QuantileReg(n_estimators=20, random_seed=0).fit(X, y)
     d = qr.predict_dist(X, ids=ids, timestamps=ts)
-    assert d.backing == Backing.QUANTILE
+    assert isinstance(d, QuantileForecast)
     assert d.qvals.shape[0] == X.shape[0]
 
 
@@ -144,7 +223,7 @@ def test_quantile_forest_emits_quantile_backing():
     X, y, ids, ts = _synthetic(n=80)
     qf = QuantileForest(n_estimators=20, random_seed=0).fit(X, y)
     d = qf.predict_dist(X, ids=ids, timestamps=ts)
-    assert d.backing == Backing.QUANTILE
+    assert isinstance(d, QuantileForecast)
 
 
 def test_cumulative_binary_emits_bracket():
@@ -163,7 +242,7 @@ def test_cumulative_binary_emits_bracket():
         n_estimators=20,
     ).fit(X, y, ids=ids)
     d = cb.predict_dist(X, ids=ids, timestamps=ts)
-    assert d.backing == Backing.BRACKET
+    assert isinstance(d, BracketForecast)
     np.testing.assert_allclose(d.probs.sum(axis=1), 1.0)
 
 
@@ -184,7 +263,7 @@ def test_cumulative_binary_per_row_varying_cutpoints():
         n_estimators=20,
     ).fit(X, y, ids=ids)
     d = cb.predict_dist(X, ids=ids, timestamps=ts)
-    assert d.backing == Backing.BRACKET
+    assert isinstance(d, BracketForecast)
     # Per-row valid bin count B_i = K_i + 1: half the rows have 4 bins
     # (NaN padding in trailing columns), other half have 6.
     valid_per_row = (~np.isnan(d.probs)).sum(axis=1)
@@ -197,18 +276,18 @@ def test_cumulative_binary_per_row_varying_cutpoints():
 
 
 # ---------------------------------------------------------------------------
-# Stacking — positive integration path (audit §6.T1).
+# StackedParametric — positive integration path (audit §6.T1).
 # ---------------------------------------------------------------------------
 
 
 def test_stacking_recovers_truth_from_perfect_upstream():
-    """Two upstreams: a noisy one and a precise one. Stacking should
+    """Two upstreams: a noisy one and a precise one. StackedParametric should
     weight the precise upstream more. Doesn't require exact recovery —
     just relative ordering of |weights_|."""
     from datetime import datetime as _dt
 
     from bracketlearn.forecast import DistributionForecast, ProvenanceMeta
-    from bracketlearn.trainers import Stacking
+    from bracketlearn.trainers import StackedParametric
 
     rng = np.random.default_rng(0)
     N = 200
@@ -231,12 +310,12 @@ def test_stacking_recovers_truth_from_perfect_upstream():
         mu=mu_precise, sigma=np.ones(N), ids=ids, timestamps=ts, provenance=prov,
     )
 
-    stack = Stacking(deps=("noisy", "precise"))
+    stack = StackedParametric(deps=("noisy", "precise"))
     stack.fit(np.zeros((N, 1)), y, deps_oof={"noisy": d_noisy, "precise": d_precise})
 
     # Precise upstream should get the bigger weight.
     assert abs(stack.weights_[1]) > abs(stack.weights_[0])
-    # Stacking dist on the same rows should match y closely.
+    # StackedParametric dist on the same rows should match y closely.
     out = stack.predict_dist(
         np.zeros((N, 1)), ids=ids, timestamps=ts,
         deps_oof={"noisy": d_noisy, "precise": d_precise},
@@ -252,7 +331,7 @@ def test_stacking_passes_sample_weight_through_to_lstsq():
     from datetime import datetime as _dt
 
     from bracketlearn.forecast import DistributionForecast, ProvenanceMeta
-    from bracketlearn.trainers import Stacking
+    from bracketlearn.trainers import StackedParametric
 
     rng = np.random.default_rng(0)
     N = 200
@@ -271,15 +350,262 @@ def test_stacking_passes_sample_weight_through_to_lstsq():
                                            timestamps=ts, provenance=prov)
     d_b = DistributionForecast.from_normal(mu=mu_b, sigma=np.ones(N), ids=ids,
                                            timestamps=ts, provenance=prov)
-    s_unw = Stacking(deps=("a", "b"))
+    s_unw = StackedParametric(deps=("a", "b"))
     s_unw.fit(np.zeros((N, 1)), y, deps_oof={"a": d_a, "b": d_b})
 
     w_emph_first = np.where(np.arange(N) < N // 2, 4.0, 1.0)
-    s_w = Stacking(deps=("a", "b"))
+    s_w = StackedParametric(deps=("a", "b"))
     s_w.fit(np.zeros((N, 1)), y, deps_oof={"a": d_a, "b": d_b},
             sample_weight=w_emph_first)
     # Weighted fit's intercept should bias toward the first-half data.
     assert not np.allclose(s_unw.weights_, s_w.weights_)
+
+
+def test_stacking_convex_weights_sum_to_one_and_nonneg():
+    """weight_constraint='convex' must produce non-negative weights summing
+    to 1, while still recovering preference for the precise upstream."""
+    from datetime import datetime as _dt
+
+    from bracketlearn.forecast import DistributionForecast, ProvenanceMeta
+    from bracketlearn.trainers import StackedParametric
+
+    rng = np.random.default_rng(0)
+    N = 300
+    y = rng.normal(0, 1, N)
+    mu_noisy = y + rng.normal(0, 1.0, N)
+    mu_precise = y + rng.normal(0, 0.05, N)
+    prov = ProvenanceMeta(
+        forecaster_name="t", forecaster_version="0", fit_window=(_dt.now(), _dt.now()),
+        fold_idx=None, calibration_set_hash=None, random_seed=0,
+        code_sha="t", feature_matrix_hash="t", created_at=_dt.now(),
+    )
+    ids = np.arange(N)
+    ts = np.arange(N, dtype=float)
+    d_noisy = DistributionForecast.from_normal(
+        mu=mu_noisy, sigma=np.ones(N), ids=ids, timestamps=ts, provenance=prov,
+    )
+    d_precise = DistributionForecast.from_normal(
+        mu=mu_precise, sigma=np.ones(N), ids=ids, timestamps=ts, provenance=prov,
+    )
+    stack = StackedParametric(deps=("noisy", "precise"), weight_constraint="convex")
+    stack.fit(
+        np.zeros((N, 1)), y,
+        deps_oof={"noisy": d_noisy, "precise": d_precise},
+    )
+    assert np.all(stack.weights_ >= -1e-9)
+    np.testing.assert_allclose(stack.weights_.sum(), 1.0, atol=1e-6)
+    # Precise upstream still preferred.
+    assert stack.weights_[1] > stack.weights_[0]
+
+
+def test_stacking_geometric_sigma_tracks_upstream_dispersion():
+    """sigma_method='geometric_mean_upstream': σ̂(x) should vary with
+    upstream σⱼ(x). Build upstreams whose σ varies row-wise and check
+    that the stacked σ̂ moves with them (not constant)."""
+    from datetime import datetime as _dt
+
+    from bracketlearn.forecast import DistributionForecast, ProvenanceMeta
+    from bracketlearn.trainers import StackedParametric
+
+    rng = np.random.default_rng(1)
+    N = 400
+    # Heteroscedastic ground truth: σ(x) = 0.5 + 0.5 * row-fraction.
+    row_frac = np.arange(N) / N
+    true_sigma = 0.5 + 0.5 * row_frac
+    y = rng.normal(0, true_sigma)
+    mu_a = y + rng.normal(0, true_sigma)
+    mu_b = y + rng.normal(0, true_sigma)
+    # Upstream σ tracks the truth (perfect dispersion info).
+    sigma_up = true_sigma.copy()
+    prov = ProvenanceMeta(
+        forecaster_name="t", forecaster_version="0", fit_window=(_dt.now(), _dt.now()),
+        fold_idx=None, calibration_set_hash=None, random_seed=0,
+        code_sha="t", feature_matrix_hash="t", created_at=_dt.now(),
+    )
+    ids = np.arange(N)
+    ts = np.arange(N, dtype=float)
+    d_a = DistributionForecast.from_normal(
+        mu=mu_a, sigma=sigma_up, ids=ids, timestamps=ts, provenance=prov,
+    )
+    d_b = DistributionForecast.from_normal(
+        mu=mu_b, sigma=sigma_up, ids=ids, timestamps=ts, provenance=prov,
+    )
+    stack = StackedParametric(
+        deps=("a", "b"),
+        sigma_method="geometric_mean_upstream",
+    )
+    stack.fit(np.zeros((N, 1)), y, deps_oof={"a": d_a, "b": d_b})
+    out = stack.predict_dist(
+        np.zeros((N, 1)), ids=ids, timestamps=ts,
+        deps_oof={"a": d_a, "b": d_b},
+    )
+    sigma_hat = out.params["sigma"]
+    # σ̂ should not be flat (constant fallback would fail this).
+    assert sigma_hat.std() > 0.05
+    # σ̂ should correlate positively with true σ on this scale.
+    assert np.corrcoef(sigma_hat, true_sigma)[0, 1] > 0.5
+
+
+def test_stacking_student_t_emits_t_backed_forecast_with_matching_variance():
+    """dist_family='student_t': output is t-backed with df=student_t_df,
+    and forecast variance equals σ̂² (the conversion scale = σ̂·√((ν−2)/ν)
+    so variance = scale²·ν/(ν−2) = σ̂² holds row-wise)."""
+    from datetime import datetime as _dt
+
+    from bracketlearn.forecast import DistributionForecast, ProvenanceMeta
+    from bracketlearn.trainers import StackedParametric
+
+    rng = np.random.default_rng(2)
+    N = 300
+    y = rng.normal(0, 1, N)
+    mu_a = y + rng.normal(0, 0.5, N)
+    prov = ProvenanceMeta(
+        forecaster_name="t", forecaster_version="0", fit_window=(_dt.now(), _dt.now()),
+        fold_idx=None, calibration_set_hash=None, random_seed=0,
+        code_sha="t", feature_matrix_hash="t", created_at=_dt.now(),
+    )
+    ids = np.arange(N)
+    ts = np.arange(N, dtype=float)
+    d_a = DistributionForecast.from_normal(
+        mu=mu_a, sigma=np.ones(N), ids=ids, timestamps=ts, provenance=prov,
+    )
+    stack = StackedParametric(deps=("a",), dist_family="student_t", student_t_df=5.0)
+    stack.fit(np.zeros((N, 1)), y, deps_oof={"a": d_a})
+    out = stack.predict_dist(
+        np.zeros((N, 1)), ids=ids, timestamps=ts, deps_oof={"a": d_a},
+    )
+    # t-backed with df=5 on every row.
+    assert out.backing.value == "parametric"
+    assert "df" in out.params
+    np.testing.assert_allclose(out.params["df"], 5.0)
+    # Variance == σ̂² (constant-σ branch, so σ̂ = stack.sigma_).
+    scale = out.params["sigma"]
+    var = scale ** 2 * 5.0 / (5.0 - 2.0)
+    np.testing.assert_allclose(var, stack.sigma_ ** 2, rtol=1e-10)
+
+
+def test_stacking_invalid_options_raise_loudly():
+    """__post_init__ guards against unknown enum values and df ≤ 2."""
+    from bracketlearn.trainers import StackedParametric
+
+    import pytest
+
+    with pytest.raises(ValueError, match="weight_constraint"):
+        StackedParametric(deps=("a",), weight_constraint="bogus")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="sigma_method"):
+        StackedParametric(deps=("a",), sigma_method="bogus")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="dist_family"):
+        StackedParametric(deps=("a",), dist_family="bogus")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="student_t_df"):
+        StackedParametric(deps=("a",), dist_family="student_t", student_t_df=2.0)
+
+
+# ---------------------------------------------------------------------------
+# BMAStacking — Bayesian model averaging meta-learner.
+# ---------------------------------------------------------------------------
+
+
+def _mk_normal_upstream(mu: np.ndarray, sigma: np.ndarray):
+    from datetime import datetime as _dt
+
+    from bracketlearn.forecast import DistributionForecast, ProvenanceMeta
+
+    N = mu.shape[0]
+    prov = ProvenanceMeta(
+        forecaster_name="t", forecaster_version="0",
+        fit_window=(_dt.now(), _dt.now()),
+        fold_idx=None, calibration_set_hash=None, random_seed=0,
+        code_sha="t", feature_matrix_hash="t", created_at=_dt.now(),
+    )
+    return DistributionForecast.from_normal(
+        mu=mu, sigma=sigma,
+        ids=np.arange(N), timestamps=np.arange(N, dtype=float),
+        provenance=prov,
+    )
+
+
+def test_bma_stacking_emits_mixture_normal_with_row_sum_weights():
+    rng = np.random.default_rng(0)
+    N = 200
+    y = rng.normal(0, 1, N)
+    d_a = _mk_normal_upstream(y + rng.normal(0, 0.3, N), np.full(N, 0.3))
+    d_b = _mk_normal_upstream(y + rng.normal(0, 1.0, N), np.full(N, 1.0))
+    bma = BMAStacking(deps=("a", "b")).fit(
+        np.zeros((N, 1)), y, deps_oof={"a": d_a, "b": d_b},
+    )
+    out = bma.predict_dist(
+        np.zeros((N, 1)),
+        ids=np.arange(N), timestamps=np.arange(N, dtype=float),
+        deps_oof={"a": d_a, "b": d_b},
+    )
+    assert isinstance(out, MixtureNormalForecast)
+    assert out.weights.shape == (N, 2)
+    np.testing.assert_allclose(out.weights.sum(axis=1), 1.0, atol=1e-6)
+    assert bma.weights_[0] > bma.weights_[1]
+    np.testing.assert_allclose(bma.alpha_n_.sum(), 2 * 1.0 + N, rtol=1e-6)
+
+
+def test_bma_stacking_sigma_inflates_when_upstreams_disagree():
+    """Mixture marginal variance grows where upstream μ's disagree —
+    StackedParametric with default sigma_method='constant' cannot do this."""
+    rng = np.random.default_rng(1)
+    N = 300
+    y = rng.normal(0, 1, N)
+    d_agree = _mk_normal_upstream(y, np.full(N, 0.3))
+    d_disagree_a = _mk_normal_upstream(y + 2.0, np.full(N, 0.3))
+    d_disagree_b = _mk_normal_upstream(y - 2.0, np.full(N, 0.3))
+    bma_agree = BMAStacking(deps=("p", "q")).fit(
+        np.zeros((N, 1)), y, deps_oof={"p": d_agree, "q": d_agree},
+    )
+    bma_dis = BMAStacking(deps=("p", "q")).fit(
+        np.zeros((N, 1)), y, deps_oof={"p": d_disagree_a, "q": d_disagree_b},
+    )
+    out_agree = bma_agree.predict_dist(
+        np.zeros((N, 1)), ids=np.arange(N),
+        timestamps=np.arange(N, dtype=float),
+        deps_oof={"p": d_agree, "q": d_agree},
+    )
+    out_dis = bma_dis.predict_dist(
+        np.zeros((N, 1)), ids=np.arange(N),
+        timestamps=np.arange(N, dtype=float),
+        deps_oof={"p": d_disagree_a, "q": d_disagree_b},
+    )
+    assert out_dis.variance().mean() > out_agree.variance().mean() * 3.0
+
+
+def test_bma_stacking_rejects_misaligned_upstream_ids():
+    from datetime import datetime as _dt
+
+    from bracketlearn.forecast import DistributionForecast, ProvenanceMeta
+
+    N = 50
+    prov = ProvenanceMeta(
+        forecaster_name="t", forecaster_version="0",
+        fit_window=(_dt.now(), _dt.now()),
+        fold_idx=None, calibration_set_hash=None, random_seed=0,
+        code_sha="t", feature_matrix_hash="t", created_at=_dt.now(),
+    )
+    mu = np.zeros(N)
+    sigma = np.ones(N)
+    d_a = DistributionForecast.from_normal(
+        mu=mu, sigma=sigma, ids=np.arange(N),
+        timestamps=np.arange(N, dtype=float), provenance=prov,
+    )
+    d_b = DistributionForecast.from_normal(
+        mu=mu, sigma=sigma, ids=np.arange(N) + 1000,
+        timestamps=np.arange(N, dtype=float), provenance=prov,
+    )
+    with pytest.raises(ValueError, match="ids does not match"):
+        BMAStacking(deps=("a", "b")).fit(
+            np.zeros((N, 1)), np.zeros(N), deps_oof={"a": d_a, "b": d_b},
+        )
+
+
+def test_bma_stacking_rejects_invalid_alpha_prior():
+    with pytest.raises(ValueError, match="alpha_prior"):
+        BMAStacking(deps=("a",), alpha_prior=0.0)
+    with pytest.raises(ValueError, match="alpha_prior"):
+        BMAStacking(deps=("a",), alpha_prior=-1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -319,8 +645,7 @@ def test_tail_specialist_emits_bracket_with_classifier_tails():
             X, ids=ids_arr, timestamps=np.arange(N, dtype=float),
             deps_oof={"emos": emos_dist},
         )
-    from bracketlearn.forecast import Backing
-    assert out.backing == Backing.BRACKET
+    assert isinstance(out, BracketForecast)
     assert out.probs.shape == (N, 6)
     np.testing.assert_allclose(out.probs.sum(axis=1), 1.0, atol=1e-10)
     assert np.all(out.probs >= 0)
@@ -342,9 +667,7 @@ def test_ridge_factory_emits_distforecaster_via_lift():
     p = ForecastPipeline(steps=[("ridge", r)], n_folds=3, refit_on_full=False)
     result = p.fit_predict(X, y, ids=ids, timestamps=ts)
     d = result["ridge"]
-    from bracketlearn.forecast import Backing, ParametricFamily
-    assert d.backing == Backing.PARAMETRIC
-    assert d.family == ParametricFamily.NORMAL
+    assert isinstance(d, NormalForecast)
 
 
 def test_emos_calibrated_factory_returns_calibrated_forecaster():

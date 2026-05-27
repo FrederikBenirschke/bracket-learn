@@ -135,7 +135,7 @@ def test_non_bracket_backing_raises(prov, ids_ts):
         ids=ids, timestamps=ts, provenance=prov,
     )
     mask = np.ones((3, 4), dtype=bool)
-    with pytest.raises(TypeError, match="backing"):
+    with pytest.raises(TypeError, match="BracketForecast"):
         BracketMask().transform(dist, mask)
 
 
