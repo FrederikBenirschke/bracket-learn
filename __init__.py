@@ -22,7 +22,6 @@ __version__ = "0.2.0"
 from bracketlearn.adapters import (
     BinaryAbove,
     BinaryBelow,
-    BracketEdges,
     BracketLadder,
     ContractAdapter,
     PerRowBracketLadder,
@@ -31,7 +30,7 @@ from bracketlearn.adapters import (
 )
 from bracketlearn.base import BaseEstimator, clone
 from bracketlearn.baselines import EmpiricalDistribution, Persistence
-from bracketlearn.composite import CalibratedForecaster, LiftedForecaster
+from bracketlearn.pipeline import CalibratedForecaster, LiftedForecaster
 from bracketlearn.forecast import (
     Backing,
     ContractForecast,
@@ -40,6 +39,7 @@ from bracketlearn.forecast import (
     ParametricFamily,
     PointForecast,
     ProvenanceMeta,
+    normalize_bracket_probs,
 )
 from bracketlearn.lift import (
     ConformalCalibrate,
@@ -53,16 +53,16 @@ from bracketlearn.multitarget import (
     MultiOutputPipelineResult,
 )
 from bracketlearn.pipeline import ForecastPipeline, PipelineResult
+from bracketlearn.restrict import BracketMask
 from bracketlearn.protocols import (
     Calibrator,
     DistForecaster,
     Forecaster,
     Lifter,
     PointForecaster,
-    StepLearner,
 )
 from bracketlearn.search import GridSearch
-from bracketlearn.tail import TailPolicy, TailPolicyError, TailRule
+from bracketlearn.forecast import TailPolicy, TailPolicyError, TailRule
 from bracketlearn.trainers import (
     EMOS,
     CDFBoostBracket,
@@ -99,13 +99,13 @@ __all__ = [
     "ParametricFamily",
     "PointForecast",
     "ProvenanceMeta",
+    "normalize_bracket_probs",
     # protocols
     "Calibrator",
     "DistForecaster",
     "Forecaster",
     "Lifter",
     "PointForecaster",
-    "StepLearner",
     # tail
     "TailPolicy",
     "TailPolicyError",
@@ -113,7 +113,6 @@ __all__ = [
     # adapters
     "BinaryAbove",
     "BinaryBelow",
-    "BracketEdges",
     "BracketLadder",
     "ContractAdapter",
     "PerRowBracketLadder",
@@ -140,6 +139,8 @@ __all__ = [
     "emos_calibrated",
     "market_ols",
     "ridge",
+    # restriction
+    "BracketMask",
     # lifters / calibrators
     "ConformalCalibrate",
     "GARCHResidual",

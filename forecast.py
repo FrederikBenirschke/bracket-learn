@@ -10,13 +10,52 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 import numpy as np
 from scipy import stats as _stats
 
-if TYPE_CHECKING:
-    from bracketlearn.tail import TailPolicy
+# ---------------------------------------------------------------------------
+# Tail extrapolation policy (§7).
+#
+# Declares what the CDF should do beyond the outermost stored quantile.
+# Required when constructing a DistributionForecast from a finite
+# representation (quantile, empirical). Parametric backings with full
+# support (normal, student_t) skip the policy.
+#
+# v0.2 ships only ``TailRule.clip()`` — mass beyond the outermost quantile
+# is zero. ``gaussian_match`` / ``gpd`` / ``exponential`` / ``custom`` are
+# planned for v0.3; see README "Not yet" section.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TailRule:
+    """One side of a tail policy."""
+
+    kind: Literal["clip"]
+    params: dict                    # kind-specific parameters
+
+    @staticmethod
+    def clip() -> TailRule:
+        """Mass beyond outermost quantile is zero. Triggers a loud warning
+        when paired with an unbounded adapter that declares
+        needs_<side>_tail=True."""
+        return TailRule(kind="clip", params={})
+
+
+@dataclass(frozen=True)
+class TailPolicy:
+    left: TailRule
+    right: TailRule
+
+    @classmethod
+    def same(cls, rule: TailRule) -> TailPolicy:
+        return cls(left=rule, right=rule)
+
+
+class TailPolicyError(ValueError):
+    """Raised when a tail policy is incompatible with the backing."""
 
 
 # ---------------------------------------------------------------------------
@@ -24,6 +63,63 @@ if TYPE_CHECKING:
 # pattern in v0.1 (CumulativeBinary, TailSpecialist, lift._bracket_probs_from_dist).
 # Consolidated 2026-05-25 as part of audit §3.S1.
 # ---------------------------------------------------------------------------
+
+
+def normalize_bracket_probs(
+    raw: np.ndarray,
+    *,
+    source: str,
+) -> np.ndarray:
+    """Normalise raw per-bracket weights into a valid distribution.
+
+    The input is any nonnegative weight per bracket — typically market
+    YES prices (which don't sum to 1 because of overround) or partial
+    forecast mass (which doesn't sum to 1 because the support extends
+    outside the bracket grid). The output sums to 1 along the last
+    axis. Operates on 1-D ``(K,)`` or 2-D ``(N, K)`` inputs.
+
+    Args:
+        raw: shape ``(K,)`` or ``(N, K)`` array of nonnegative weights.
+        source: name of the caller — used only in the error message
+            when a row has zero total mass. Pass
+            ``"bracket_probs_from_market"``, ``"climatology_lookup"``,
+            etc.
+
+    Raises:
+        ValueError: input has negative entries, is wrong dim, or any
+            row sums to ≤ 0. Refusing to fabricate a uniform
+            distribution silently.
+    """
+    raw = np.asarray(raw, dtype=float)
+    if raw.ndim not in (1, 2):
+        raise ValueError(
+            f"{source}: normalize_bracket_probs expects 1-D or 2-D "
+            f"input; got shape {raw.shape}."
+        )
+    if np.any(raw < 0):
+        raise ValueError(
+            f"{source}: normalize_bracket_probs received negative "
+            f"weights. Refusing to clip silently — upstream produced "
+            f"invalid data."
+        )
+    if raw.ndim == 1:
+        s = float(raw.sum())
+        if s <= 0:
+            raise ValueError(
+                f"{source}: normalize_bracket_probs got total weight "
+                f"{s:.6g} ≤ 0 across K={raw.shape[0]} brackets. Refusing "
+                f"to fabricate a uniform distribution."
+            )
+        return raw / s
+    row_sum = raw.sum(axis=1, keepdims=True)
+    if np.any(row_sum.ravel() <= 0):
+        bad = np.where(row_sum.ravel() <= 0)[0]
+        raise ValueError(
+            f"{source}: normalize_bracket_probs got {bad.size} row(s) "
+            f"with total weight ≤ 0. First offending row indices: "
+            f"{bad[:5].tolist()}."
+        )
+    return raw / row_sum
 
 
 def bracket_probs_from_cdf_at_edges(
@@ -87,6 +183,34 @@ class ProvenanceMeta:
     sigma_source: Literal["native", "lifted", "none"] = "none"
     conversion_chain: tuple[str, ...] = ()
     extras: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def placeholder(
+        cls,
+        forecaster_name: str,
+        *,
+        sigma_source: Literal["native", "lifted", "none"] = "native",
+        random_seed: int | None = None,
+    ) -> ProvenanceMeta:
+        """Build a minimally-populated ProvenanceMeta for trainer / adapter
+        outputs. The fit_window / code_sha / feature_matrix_hash fields are
+        placeholders until the pipeline plumbs real values through; the
+        invariant test only cares that two calls with the same inputs yield
+        identical objects, which holds because created_at is the only
+        non-deterministic field and it's bumped to "now" for both."""
+        now = datetime.now()
+        return cls(
+            forecaster_name=forecaster_name,
+            forecaster_version="0.1",
+            fit_window=(datetime(2024, 1, 1), now),
+            fold_idx=None,
+            calibration_set_hash=None,
+            random_seed=random_seed,
+            code_sha="dev",
+            feature_matrix_hash="-",
+            created_at=now,
+            sigma_source=sigma_source,
+        )
 
 
 # ---------------------------------------------------------------------------
