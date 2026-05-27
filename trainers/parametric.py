@@ -433,6 +433,21 @@ class NGBoostNormal(BaseEstimator):
 
     sigma_floor clamps σ̂ above a minimum (NGBoost can collapse σ̂ → 0 on
     overfit folds; the floor mirrors the original trainer's SIGMA_FLOOR).
+
+    For reproducible fits, set BOTH seeds:
+
+    * ``random_seed`` → seeds NGBoost's minibatching / column-subsampling.
+    * ``base_random_state`` → seeds the per-iteration cloned base learner
+      (default ``DecisionTreeRegressor``). NGBoost's default Base has
+      ``random_state=None`` so tree split tie-breaking draws from the OS
+      RNG; without this, successive fits with the same ``random_seed``
+      still produce different μ̂/σ̂.
+
+    When ``base_random_state`` is set, this constructs a
+    ``DecisionTreeRegressor`` matching ``ngboost.learners.
+    default_tree_learner`` exactly except for the pinned seed and
+    passes it as ``Base=``. When ``base_random_state`` is None,
+    NGBoost's default unseeded Base is used (non-reproducible fits).
     """
 
     n_estimators: int = 400
@@ -441,6 +456,7 @@ class NGBoostNormal(BaseEstimator):
     natural_gradient: bool = True
     sigma_floor: float = 0.5
     random_seed: int | None = None
+    base_random_state: int | None = None
     name: str = "NGBoostNormal"
     depends_on: tuple[str, ...] = ()
     model_: Any = field(default=None, init=False)
@@ -458,7 +474,7 @@ class NGBoostNormal(BaseEstimator):
 
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
-        self.model_ = NGBRegressor(
+        ngb_kwargs: dict[str, Any] = dict(
             Dist=Normal,
             n_estimators=self.n_estimators,
             learning_rate=self.learning_rate,
@@ -467,6 +483,18 @@ class NGBoostNormal(BaseEstimator):
             random_state=self.random_seed,
             verbose=False,
         )
+        if self.base_random_state is not None:
+            from sklearn.tree import DecisionTreeRegressor
+            ngb_kwargs["Base"] = DecisionTreeRegressor(
+                criterion="friedman_mse",
+                min_samples_split=2,
+                min_samples_leaf=1,
+                min_weight_fraction_leaf=0.0,
+                max_depth=3,
+                splitter="best",
+                random_state=self.base_random_state,
+            )
+        self.model_ = NGBRegressor(**ngb_kwargs)
         if sample_weight is not None:
             self.model_.fit(X, y, sample_weight=sample_weight)
         else:
