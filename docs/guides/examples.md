@@ -66,7 +66,7 @@ script. Useful if you want to see every backing in one place.
 ### `weather_e2e.py`
 
 All 11 dist-producing trainers on synthetic weather-like data:
-`ridge`, `market_ols`, `emos`, `emos_calibrated`, `ngboost`, `mixture`,
+`ridge`, `lin_ols`, `emos`, `emos_calibrated`, `ngboost`, `mixture`,
 `stack`, `qreg`, `qreg_conformal`, `qforest`, `cumbin`, `tail_specialist`,
 `online_agg`. The widest backing/family coverage of any example.
 

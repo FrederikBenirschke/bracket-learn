@@ -652,7 +652,12 @@ class ForecastPipeline:
         for k in range(self.n_folds):
             train_end = (k + 1) * chunk_size
             test_start = train_end + self.embargo
-            test_end = min(N, test_start + chunk_size)
+            # Final fold absorbs N % (n_folds + 1) trailing rows so the
+            # OOF prediction set covers every row of the input. Dropping
+            # the tail biases summary metrics toward whichever regime
+            # the early chunks happen to land in.
+            is_last = (k == self.n_folds - 1)
+            test_end = N if is_last else min(N, test_start + chunk_size)
             if test_start >= N:
                 break
             train_idx = np.arange(0, train_end)

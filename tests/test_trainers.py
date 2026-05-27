@@ -286,7 +286,7 @@ def test_tail_specialist_emits_bracket_with_classifier_tails():
 
 
 # ---------------------------------------------------------------------------
-# Factories (audit §6.T1) — ridge / market_ols / emos_calibrated.
+# Factories (audit §6.T1) — ridge / emos_calibrated.
 # ---------------------------------------------------------------------------
 
 
@@ -304,17 +304,6 @@ def test_ridge_factory_emits_distforecaster_via_lift():
     from bracketlearn.forecast import Backing, ParametricFamily
     assert d.backing == Backing.PARAMETRIC
     assert d.family == ParametricFamily.NORMAL
-
-
-def test_market_ols_factory_emits_distforecaster_via_lift():
-    from bracketlearn.pipeline import ForecastPipeline
-    from bracketlearn.trainers import market_ols
-    X, y, ids, ts = _synthetic()
-    p = ForecastPipeline(steps=[("ols", market_ols())], n_folds=3, refit_on_full=False)
-    result = p.fit_predict(X, y, ids=ids, timestamps=ts)
-    from bracketlearn.forecast import Backing, ParametricFamily
-    assert result["ols"].backing == Backing.PARAMETRIC
-    assert result["ols"].family == ParametricFamily.NORMAL
 
 
 def test_emos_calibrated_factory_returns_calibrated_forecaster():

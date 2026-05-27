@@ -32,25 +32,6 @@ def ridge(
     )
 
 
-def market_ols(*, name: str = "market_ols") -> Any:
-    """Plain OLS + GlobalResidual. Mirrors market_ols Q2 (target = realized).
-
-    Q1 (target = market_implied) is the same model fit with a different
-    target — out of scope for bracketlearn (the target choice is a calling
-    convention, not a model class).
-    """
-    from sklearn.linear_model import LinearRegression
-
-    from bracketlearn.lift import GlobalResidual
-    from bracketlearn.pipeline import LiftedForecaster
-
-    return LiftedForecaster(
-        base=SklearnPoint(LinearRegression()),
-        lifter=GlobalResidual(),
-        name=name,
-    )
-
-
 def emos_calibrated(*, edges: np.ndarray, name: str = "emos_calibrated") -> Any:
     """EMOS wrapped with Isotonic on the given bracket ladder.
 

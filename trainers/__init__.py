@@ -12,13 +12,13 @@ Layout
 - ``bracketlearn.trainers.bracket`` — CumulativeBinary, TailSpecialist, CDFBoostBracket, LinearPoolDist.
 - ``bracketlearn.trainers.meta`` — DistAsFeatures.
 
-Convenience builders (``ridge``, ``market_ols``, ``emos_calibrated``) live
-in ``bracketlearn.trainers._factories`` and are re-exported below.
+Convenience builders (``ridge``, ``emos_calibrated``) live in
+``bracketlearn.trainers._factories`` and are re-exported below.
 """
 
 from __future__ import annotations
 
-from bracketlearn.trainers._factories import emos_calibrated, market_ols, ridge
+from bracketlearn.trainers._factories import emos_calibrated, ridge
 from bracketlearn.trainers.bracket import (
     CDFBoostBracket,
     CumulativeBinary,
@@ -52,6 +52,5 @@ __all__ = [
     "DistAsFeatures",
     # factories
     "emos_calibrated",
-    "market_ols",
     "ridge",
 ]

@@ -14,10 +14,9 @@ real prediction-market venues:
 | `BinaryBelow(k)`       | `P(X ≤ k)`                         | Kalshi "GDP ≤ 2.5%", "low below freezing"                   |
 | `Twin(k)`              | paired `P(X > k)` / `P(X ≤ k)`     | Polymarket spread (`Eagles -3.5`), total (`Over 47.5`)      |
 | `ThresholdLadder(ks)`  | `[P(X > k_i)]` per strike          | Kalshi multi-threshold temperature ladders                  |
-| `BracketLadder(edges)` | `[P(lo ≤ X < hi)]` shared edges    | Polymarket weather brackets, fixed weekly contracts         |
-| `PerRowBracketLadder`  | per-row edges (each row its own)   | Kalshi daily-rotating brackets (edges shift day-by-day)     |
+| `BracketLadder(edges_per_row)` | `[P(lo ≤ X < hi)]` per-row edges | Kalshi daily-rotating brackets; Polymarket weather brackets (pass `[edges]*N`) |
 
-All six take any `DistributionForecast` (normal / student-t /
+All five take any `DistributionForecast` (normal / student-t /
 mixture-normal / quantile / bracket backings) and emit a long-form
 `ContractForecast` with `fair_price`, `entity_ids`, `group_id`,
 `contract_spec`, and provenance copied through from the upstream
@@ -73,17 +72,37 @@ contracts = ThresholdLadder(strikes=strikes).price(dist)
 
 ## `BracketLadder`
 
-The workhorse adapter for shared-edge ladders. Takes `edges` (length
-`B+1`) and emits one contract row per bracket per entity. For each
-interval `[edges[k], edges[k+1])`, the fair price is
-`cdf(edges[k+1]) - cdf(edges[k])`.
+The workhorse adapter for bracket ladders. Takes `edges_per_row` — a
+Python list of length N, with `edges_per_row[i]` shape `(B_i + 1,)` — and
+emits one contract row per bracket per entity. For each interval
+`[edges_i[k], edges_i[k+1])`, the fair price is
+`cdf(edges_i[k+1]) - cdf(edges_i[k])`.
+
+Storage is ragged: different rows may carry different `B_i` (Kalshi
+occasionally adds an extra bracket for extreme-weather days). For the
+i.i.d. case where every row shares the same edges, pass
+`edges_per_row=[edges] * N` — the inner list holds N references to the
+same array, so there's no memory cost.
 
 ```python
 from bracketlearn import BracketLadder
 
-ladder = BracketLadder(edges=np.array([-np.inf, 0.0, 0.5, 1.0, np.inf]))
-contracts = ladder.price(dist)         # dist: any DistributionForecast
-print(contracts.fair_price.shape)      # (N * B,)
+# Kalshi-style: edges shift each row around the forecasted mean.
+edges_per_day = [
+    np.array([mu - 10, mu - 3, mu, mu + 3, mu + 10])
+    for mu in dist.params["mu"]
+]
+ladder = BracketLadder(
+    edges_per_row=edges_per_day,
+    include_tail_buckets=True,    # adds explicit "below edges[0]" and
+                                  # "above edges[-1]" rows so per-entity
+                                  # prices sum to exactly 1.0
+)
+contracts = ladder.price(dist)
+
+# Shared-edge ladder (Polymarket weekly contracts):
+edges = np.array([-np.inf, 0.0, 0.5, 1.0, np.inf])
+ladder = BracketLadder(edges_per_row=[edges] * N)
 ```
 
 ### Coverage and `strict`
@@ -98,21 +117,17 @@ row and surfaces the failure.
   missed mass exceeds `coverage_tol` (default `1e-4`). The warning reports
   the worst-row missed mass and how many rows tripped the tolerance.
 - `strict=True` — raises `ValueError` with the same payload instead.
+- `include_tail_buckets=True` — emits two extra rows per entity (the
+  below-min and above-max tail mass) so per-entity prices sum to 1.0 by
+  construction. The coverage check is then a no-op.
 
 Use `strict=True` when downstream code requires coherent simplex
 probabilities (e.g. log-loss scoring, isotonic calibration, sizing under
 a "probabilities sum to 1" budget).
 
-```python
-# Wide ladder absorbs the tails — row sums stay at 1.
-edges = np.array([-100.0, -1.0, 0.0, 1.0, 100.0])
-
-# Narrow ladder loses mass — warns at default tolerance.
-edges = np.array([-1.0, 0.0, 1.0])
-```
-
-The fix is almost always to widen the outer edges (use ±large numbers to
-catch tail mass into the outer bins) rather than tweaking `coverage_tol`.
+The fix for a coverage warning is almost always to widen the outer edges
+(use ±large numbers to catch tail mass into the outer bins) or set
+`include_tail_buckets=True`, rather than tweaking `coverage_tol`.
 
 ### Edge semantics
 
@@ -122,7 +137,8 @@ zero-measure, so no knob is exposed.
 
 ### Output shape
 
-`BracketLadder.price` returns a `ContractForecast` in **long form**:
+`BracketLadder.price` returns a `ContractForecast` in **long form**. For
+the shared-edge case where every row has the same `B`:
 
 | field             | shape  | content |
 |-------------------|--------|---------|
@@ -138,35 +154,8 @@ probs = contracts.fair_price.reshape(N, B)
 np.testing.assert_allclose(probs.sum(axis=1), 1.0)  # iff ladder covered
 ```
 
-## `PerRowBracketLadder`
-
-Same idea as `BracketLadder` but each row carries its own edge vector.
-Motivated by Kalshi-style daily-rotating temperature brackets: the
-five-bucket ladder for NYC max-temp shifts day-by-day around the
-forecasted mean.
-
-```python
-from bracketlearn import PerRowBracketLadder
-
-# One edge vector per row in `dist`. Lengths may differ (ragged storage).
-edges_per_day = [
-    np.array([mu - 10, mu - 3, mu, mu + 3, mu + 10])
-    for mu in dist.params["mu"]
-]
-ladder = PerRowBracketLadder(
-    edges_per_row=edges_per_day,
-    include_tail_buckets=True,    # adds explicit "below edges[0]" and
-                                  # "above edges[-1]" rows so per-entity
-                                  # prices sum to exactly 1.0
-)
-contracts = ladder.price(dist)
-```
-
-`include_tail_buckets=True` emits two extra contract rows per entity —
-the below-min and above-max tail mass — so the per-entity prices form a
-true simplex. With `include_tail_buckets=False` the same coverage check
-as `BracketLadder` (warn / strict-raise) gates against silent tail
-leakage.
+With ragged `edges_per_row` or `include_tail_buckets=True`, the per-row
+contract count varies — index by `entity_ids` instead of reshaping.
 
 Implementation note: per-row edges use `DistributionForecast.cdf_at_grid`
 under the hood (vectorised CDF on a per-row evaluation grid), so

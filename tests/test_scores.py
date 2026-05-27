@@ -131,7 +131,7 @@ def test_log_loss_bracket_zero_on_certainty(prov, ids_ts):
         edges=edges, probs=probs,
         ids=ids, timestamps=ts, provenance=prov,
     )
-    ladder = BracketLadder(edges=edges)
+    ladder = BracketLadder(edges_per_row=[edges] * 3)
     contracts = ladder.price(d)
     y = np.array([0.5, 1.5, 2.5])
     loss = log_loss_bracket(contracts, edges, y)
@@ -150,7 +150,7 @@ def test_brier_bracket_uniform_baseline(prov, ids_ts):
         edges=edges, probs=probs,
         ids=ids, timestamps=ts, provenance=prov,
     )
-    ladder = BracketLadder(edges=edges)
+    ladder = BracketLadder(edges_per_row=[edges] * 100)
     contracts = ladder.price(d)
     # Realized bin: spread evenly. The Brier per row when realized is in some
     # bin b: (1−1/B)² + (B−1)·(1/B)² = (B−1)/B.

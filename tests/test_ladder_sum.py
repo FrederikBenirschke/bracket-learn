@@ -30,7 +30,8 @@ from bracketlearn.forecast import DistributionForecast, TailPolicy, TailRule
 
 
 def _row_sums(dist: DistributionForecast, edges: np.ndarray) -> np.ndarray:
-    ladder = BracketLadder(edges=edges)
+    N = dist.ids.shape[0]
+    ladder = BracketLadder(edges_per_row=[edges] * N)
     contracts = ladder.price(dist)
     B = edges.shape[0] - 1
     return contracts.fair_price.reshape(-1, B).sum(axis=1)
@@ -171,7 +172,7 @@ def test_quantile_clip_ladder_warns_when_ladder_doesnt_cover_qvals(
     )
     # Ladder STOPS at 5.0, qvals[-1]=5.04 → coverage violation.
     edges = np.array([0.5, 1.0, 2.0, 3.0, 4.0, 5.0])
-    ladder = BracketLadder(edges=edges)
+    ladder = BracketLadder(edges_per_row=[edges] * N)
     with pytest.warns(UserWarning, match="ladder does not cover"):
         ladder.price(dist)
 
@@ -190,7 +191,7 @@ def test_quantile_clip_ladder_strict_raises_on_coverage_violation(
         ids=ids, timestamps=ts, provenance=prov,
     )
     edges = np.array([0.5, 1.0, 2.0, 3.0, 4.0, 5.0])
-    ladder = BracketLadder(edges=edges, strict=True)
+    ladder = BracketLadder(edges_per_row=[edges] * N, strict=True)
     with pytest.raises(ValueError, match="ladder does not cover"):
         ladder.price(dist)
 

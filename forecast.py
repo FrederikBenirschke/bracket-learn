@@ -275,8 +275,11 @@ class DistributionForecast:
     qvals: np.ndarray | None = None                 # (N, Q)
     # empirical:
     members: np.ndarray | None = None               # (N, K)
-    # bracket:
-    edges: np.ndarray | None = None                 # (B+1,)
+    # bracket: edges are always per-row 2-D as of v0.3.0 (Kalshi-style
+    # daily-rotating ladders are the canonical use case). Ragged row
+    # lengths supported via NaN padding in the trailing columns of edges
+    # and probs; readers ignore NaN tail.
+    edges: np.ndarray | None = None                 # (N, B+1)
     probs: np.ndarray | None = None                 # (N, B)
 
     # Tail policy — required for finite-support backings; None for full-support

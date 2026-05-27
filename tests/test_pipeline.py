@@ -73,6 +73,27 @@ def test_oof_no_test_fold_overlap():
     assert len(oof_ids) == len(np.unique(oof_ids))
 
 
+def test_expanding_window_absorbs_tail():
+    """Final expanding-window fold absorbs the N % (n_folds + 1) trailing
+    rows so OOF coverage equals N exactly — no silent data drop."""
+    # N=203, n_folds=5 → chunk_size=33 → without absorb the last
+    # 203 - 6·33 = 5 rows would be lost. With absorb, fold 5 takes them.
+    n = 203
+    X, y, ids, ts = _synthetic(n=n)
+    p = ForecastPipeline(steps=[("emos", EMOS())], n_folds=5)
+    folds = p._expanding_folds(n)
+    covered = np.concatenate([te for _, te in folds])
+    assert covered.max() == n - 1, (
+        f"final test row {covered.max()} must reach N-1={n - 1}; "
+        f"otherwise the tail is silently dropped"
+    )
+    # Same row never tested twice.
+    assert len(np.unique(covered)) == len(covered)
+    # OOF coverage = first test_start..N-1 (everything after chunk 1).
+    chunk = n // 6
+    assert len(covered) == n - chunk
+
+
 def test_score_returns_dict_of_dicts():
     X, y, ids, ts = _synthetic()
     p = ForecastPipeline(steps=[("emos", EMOS())], n_folds=3)

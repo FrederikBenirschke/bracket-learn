@@ -164,7 +164,8 @@ def _normal_dist(prov, ids_ts):
 def test_bracket_ladder_b1_single_bracket(_normal_dist):
     """B=1: one bracket spanning the whole support. Probability = 1.0 per row."""
     edges = np.array([-100.0, 100.0])
-    ladder = BracketLadder(edges=edges)
+    N = _normal_dist.ids.shape[0]
+    ladder = BracketLadder(edges_per_row=[edges] * N)
     contracts = ladder.price(_normal_dist)
     fp = contracts.fair_price
     assert fp.shape == (_normal_dist.ids.shape[0] * 1,)
@@ -174,7 +175,8 @@ def test_bracket_ladder_b1_single_bracket(_normal_dist):
 def test_bracket_ladder_b2_two_brackets_sum_to_one(_normal_dist):
     """B=2: two brackets split at the mean. Probabilities sum to 1 per row."""
     edges = np.array([-100.0, 0.0, 100.0])
-    ladder = BracketLadder(edges=edges)
+    N = _normal_dist.ids.shape[0]
+    ladder = BracketLadder(edges_per_row=[edges] * N)
     contracts = ladder.price(_normal_dist)
     probs = contracts.fair_price.reshape(-1, 2)
     np.testing.assert_allclose(probs.sum(axis=1), 1.0, atol=1e-6)

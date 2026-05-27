@@ -124,86 +124,23 @@ class BinaryBelow:
 
 @dataclass
 class BracketLadder:
-    """One row per (lo, hi) interval. Shared group_id across rows so
-    downstream calibrators can enforce monotonicity / simplex constraints.
-
-    ``strict`` controls coverage-failure behavior. By construction, the
-    ladder's bracket probabilities (cdf(edges[-1]) - cdf(edges[0])) only
-    capture mass that falls inside [edges[0], edges[-1]]. If the
-    distribution places mass outside that range — common for quantile
-    backings whose stored qvals extend past the ladder, or normal
-    backings whose σ-tails exceed the outermost edges — row sums fall
-    below 1.0 and contract prices are biased.
-
-    - ``strict=False`` (default): warn loudly via UserWarning when any
-      row's missed mass exceeds ``coverage_tol`` (default 1e-4). The
-      warning reports the worst-row missed mass so callers can judge.
-    - ``strict=True``: raise ValueError instead of warning. Use this
-      when downstream code requires coherent ladder probabilities (e.g.
-      simplex calibration, log-loss scoring).
-    """
-
-    edges: np.ndarray               # (B+1,)
-    name: str = "bracket_ladder"
-    needs_left_tail: bool = False
-    needs_right_tail: bool = False
-    strict: bool = False
-    coverage_tol: float = 1e-4
-
-    def price(self, dist: DistributionForecast) -> ContractForecast:
-        edges = np.asarray(self.edges, dtype=float)
-        B = edges.shape[0] - 1
-        N = dist.ids.shape[0]
-        # P(lo ≤ X < hi) = cdf(hi) - cdf(lo) for closed_open semantics.
-        cdf_hi = dist.cdf(edges[1:])    # (N, B)
-        cdf_lo = dist.cdf(edges[:-1])
-        probs = cdf_hi - cdf_lo         # (N, B)
-        # Coverage check: row sums must be ~1.0. If not, ladder edges
-        # don't cover the distribution's effective support and mass is
-        # being silently dropped from contract prices.
-        row_sums = probs.sum(axis=1)
-        missed = 1.0 - row_sums
-        worst_missed = float(missed.max())
-        if worst_missed > self.coverage_tol:
-            n_bad = int((missed > self.coverage_tol).sum())
-            msg = (
-                f"ladder does not cover distribution support: "
-                f"worst row missed {worst_missed:.4f} of mass "
-                f"({n_bad}/{N} rows above coverage_tol={self.coverage_tol:g}). "
-                f"Extend ladder edges or set strict=False to silence."
-            )
-            if self.strict:
-                raise ValueError(msg)
-            warnings.warn(msg, UserWarning, stacklevel=2)
-        # Flatten to long form: (N*B,) rows.
-        contract_ids = np.tile(np.arange(B), N)
-        entity_ids = np.repeat(dist.ids, B)
-        timestamps = np.repeat(dist.timestamps, B)
-        group_id = np.repeat(dist.ids, B)   # one ladder per entity
-        fair_price = probs.reshape(-1)
-        return ContractForecast(
-            contract_ids=contract_ids,
-            entity_ids=entity_ids,
-            timestamps=timestamps,
-            fair_price=fair_price,
-            group_id=group_id,
-            contract_spec=ContractSpec(kind="bracket_ladder"),
-            provenance=_provenance_for(dist, self.name),
-        )
-
-
-@dataclass
-class PerRowBracketLadder:
-    """Bracket ladder with a *per-row* edge vector.
+    """Bracket ladder with a per-row edge vector.
 
     Motivating venue: Kalshi temperature contracts list a different bracket
-    grid each day (e.g. NYC max-temp brackets rotate daily). One shared
-    ``edges: (B+1,)`` won't fit — each row needs its own ``edges_i``.
+    grid each day (e.g. NYC max-temp brackets rotate daily). Each row gets
+    its own ``edges_i``.
 
     Storage is ragged: ``edges_per_row`` is a Python list of length N, with
     ``edges_per_row[i]`` shape ``(B_i + 1,)``. Different rows may have
     different ``B_i`` (e.g. Kalshi sometimes adds an extra bracket for
     extreme-weather days).
+
+    For the i.i.d. case where every row shares the same edges, pass
+    ``edges_per_row=[edges] * N`` (cheap — the inner list holds N
+    references to the same array). The old shared-edges shortcut was
+    removed in v0.3.0 because every real-world venue this library targets
+    has per-row edges, and keeping two adapters was API surface for a use
+    case that never arose.
 
     Pricing uses :meth:`DistributionForecast.cdf_at_grid` on a NaN-padded
     dense matrix, so the inner CDF math runs vectorised for parametric
@@ -230,7 +167,7 @@ class PerRowBracketLadder:
 
     edges_per_row: list[np.ndarray]
     include_tail_buckets: bool = False
-    name: str = "per_row_bracket_ladder"
+    name: str = "bracket_ladder"
     needs_left_tail: bool = False
     needs_right_tail: bool = False
     strict: bool = False
@@ -280,7 +217,7 @@ class PerRowBracketLadder:
         worst_neg = float(np.nanmin(probs)) if valid_mask.any() else 0.0
         if worst_neg < -1e-9:
             raise ValueError(
-                f"PerRowBracketLadder: CDF non-monotone — worst diff "
+                f"BracketLadder: CDF non-monotone — worst diff "
                 f"{worst_neg:.6g}. Indicates upstream bug."
             )
         probs = np.where(valid_mask, np.clip(probs, 0.0, 1.0), np.nan)
@@ -293,7 +230,7 @@ class PerRowBracketLadder:
             if worst_missed > self.coverage_tol:
                 n_bad = int((missed > self.coverage_tol).sum())
                 msg = (
-                    f"per-row ladder does not cover distribution support: "
+                    f"ladder does not cover distribution support: "
                     f"worst row missed {worst_missed:.4f} of mass "
                     f"({n_bad}/{N} rows above coverage_tol={self.coverage_tol:g}). "
                     f"Set include_tail_buckets=True or widen the ladders."
@@ -351,7 +288,7 @@ class PerRowBracketLadder:
             timestamps=np.asarray(timestamps_list),
             fair_price=np.asarray(fair_price_list, dtype=float),
             group_id=np.asarray(group_id_list),
-            contract_spec=ContractSpec(kind="per_row_bracket_ladder"),
+            contract_spec=ContractSpec(kind="bracket_ladder"),
             provenance=_provenance_for(dist, self.name),
         )
 

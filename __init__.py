@@ -19,8 +19,8 @@ Less commonly used symbols live in their submodules:
   Lifter, Calibrator (for users writing custom stages).
 - ``bracketlearn.adapters.ContractAdapter`` — the contract-pricing protocol.
 - ``bracketlearn.forecast`` — ContractSpec, ProvenanceMeta, TailPolicyError.
-- ``bracketlearn.trainers`` — ``ridge``, ``market_ols``, ``emos_calibrated``
-  convenience factories.
+- ``bracketlearn.trainers`` — ``ridge``, ``emos_calibrated`` convenience
+  factories.
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ from bracketlearn.adapters import (
     BinaryAbove,
     BinaryBelow,
     BracketLadder,
-    PerRowBracketLadder,
     ThresholdLadder,
     Twin,
 )
@@ -101,7 +100,6 @@ __all__ = [
     "BinaryAbove",
     "BinaryBelow",
     "BracketLadder",
-    "PerRowBracketLadder",
     "ThresholdLadder",
     "Twin",
     # baselines

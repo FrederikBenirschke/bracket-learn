@@ -7,7 +7,10 @@ Trainers exercising the major code paths:
 
 Tier 1 (parametric / mixture backings):
   - ridge            — LiftedForecaster(SklearnPoint(RidgeCV) + GlobalResidual)
-  - market_ols       — LiftedForecaster(SklearnPoint(LinearRegression) + GlobalResidual)
+  - lin_ols          — LiftedForecaster(SklearnPoint(LinearRegression) + GlobalResidual);
+                       same shape as `ridge` with α=0, written out explicitly
+                       since the prior `market_ols()` factory was misleading
+                       (no market knowledge in bracketlearn) and was removed.
   - emos             — native parametric-normal DistForecaster
   - emos_calibrated  — CalibratedForecaster(EMOS, Isotonic(edges))
   - ngboost          — non-linear EMOS via NGBoost (native parametric normal)
@@ -43,6 +46,8 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
+from sklearn.linear_model import LinearRegression
+
 from bracketlearn.adapters import BracketLadder
 from bracketlearn.lift import ConformalCalibrate, GlobalResidual
 from bracketlearn.pipeline import CalibratedForecaster, ForecastPipeline, LiftedForecaster
@@ -54,10 +59,10 @@ from bracketlearn.trainers import (
     OnlineAggregator,
     QuantileForest,
     QuantileReg,
+    SklearnPoint,
     Stacking,
     TailSpecialist,
     emos_calibrated,
-    market_ols,
     ridge,
 )
 
@@ -100,7 +105,10 @@ def main() -> None:
         steps=[
             # Tier 1
             ("ridge",           ridge()),
-            ("market_ols",      market_ols()),
+            ("lin_ols",         LiftedForecaster(
+                                    base=SklearnPoint(LinearRegression()),
+                                    lifter=GlobalResidual(),
+                                    name="lin_ols")),
             ("emos",            EMOS()),
             ("emos_calibrated", emos_calibrated(edges=edges)),
             ("ngboost",         NGBoostNormal(n_estimators=200, learning_rate=0.02, random_seed=0)),

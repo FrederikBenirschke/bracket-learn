@@ -2,7 +2,7 @@
 
 Motivating venue: Kalshi temperature contracts list a different bracket
 grid each day. ``DistributionForecast.cdf_at_grid`` (the underlying
-primitive) and ``PerRowBracketLadder`` (the contract adapter built on it)
+primitive) and ``BracketLadder`` (the contract adapter built on it)
 together let a single fitted distribution be priced against per-row
 edge sets without N independent ``cdf`` calls.
 """
@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from scipy import stats as _stats
 
-from bracketlearn.adapters import PerRowBracketLadder
+from bracketlearn.adapters import BracketLadder
 from bracketlearn.forecast import DistributionForecast, TailPolicy, TailRule
 
 # ---------------------------------------------------------------------------
@@ -152,7 +152,7 @@ def test_cdf_at_grid_rejects_wrong_shape(prov, ids_ts):
 
 
 # ---------------------------------------------------------------------------
-# PerRowBracketLadder — adapter contract.
+# BracketLadder — adapter contract.
 # ---------------------------------------------------------------------------
 
 
@@ -169,7 +169,7 @@ def test_per_row_ladder_known_answer_normal(prov, ids_ts):
         np.array([-10.0, 0.0, 10.0]),       # row 0: P(X<0), P(X≥0)
         np.array([-10.0, -1.0, 1.0, 10.0]), # row 1: P(X<-1), P(-1≤X<1), P(X≥1)
     ]
-    cf = PerRowBracketLadder(edges_per_row=edges).price(d)
+    cf = BracketLadder(edges_per_row=edges).price(d)
     # row 0 has 2 buckets, row 1 has 3 → 5 contracts total.
     assert cf.fair_price.shape == (5,)
     np.testing.assert_array_equal(cf.entity_ids, np.array([0, 0, 1, 1, 1]))
@@ -196,7 +196,7 @@ def test_per_row_ladder_tail_buckets_sum_to_one(prov, ids_ts, rng):
     # Narrow ladders that DON'T cover the tails — but tail buckets are on,
     # so totals must still be exactly 1.0 per entity.
     edges = [np.array([-0.5, 0.0, 0.5]) for _ in range(n)]
-    cf = PerRowBracketLadder(
+    cf = BracketLadder(
         edges_per_row=edges,
         include_tail_buckets=True,
     ).price(d)
@@ -217,7 +217,7 @@ def test_per_row_ladder_coverage_check_warns(prov, ids_ts):
     # Narrow ladders, no tail buckets → mass leaks out → warn.
     edges = [np.array([-0.1, 0.0, 0.1]) for _ in range(n)]
     with pytest.warns(UserWarning, match="does not cover"):
-        PerRowBracketLadder(edges_per_row=edges).price(d)
+        BracketLadder(edges_per_row=edges).price(d)
 
 
 def test_per_row_ladder_coverage_check_raises_strict(prov, ids_ts):
@@ -229,7 +229,7 @@ def test_per_row_ladder_coverage_check_raises_strict(prov, ids_ts):
     )
     edges = [np.array([-0.1, 0.0, 0.1]) for _ in range(n)]
     with pytest.raises(ValueError, match="does not cover"):
-        PerRowBracketLadder(edges_per_row=edges, strict=True).price(d)
+        BracketLadder(edges_per_row=edges, strict=True).price(d)
 
 
 def test_per_row_ladder_rejects_length_mismatch(prov, ids_ts):
@@ -241,7 +241,7 @@ def test_per_row_ladder_rejects_length_mismatch(prov, ids_ts):
     )
     edges = [np.array([-1.0, 0.0, 1.0])] * (n - 1)   # short
     with pytest.raises(ValueError, match="length"):
-        PerRowBracketLadder(edges_per_row=edges).price(d)
+        BracketLadder(edges_per_row=edges).price(d)
 
 
 def test_per_row_ladder_rejects_non_monotone_edges(prov, ids_ts):
@@ -256,29 +256,6 @@ def test_per_row_ladder_rejects_non_monotone_edges(prov, ids_ts):
         np.array([1.0, 0.0, -1.0]),   # decreasing
     ]
     with pytest.raises(ValueError, match="monotone"):
-        PerRowBracketLadder(edges_per_row=edges).price(d)
+        BracketLadder(edges_per_row=edges).price(d)
 
 
-def test_per_row_ladder_matches_shared_ladder_when_edges_equal(prov, ids_ts, rng):
-    """Sanity: a per-row ladder with all rows sharing the same edges must
-    produce the same prices as the original BracketLadder."""
-    from bracketlearn.adapters import BracketLadder
-
-    n = 8
-    ids, ts = ids_ts(n)
-    d = DistributionForecast.from_normal(
-        mu=rng.normal(0, 1, n), sigma=rng.uniform(0.5, 1.5, n),
-        ids=ids, timestamps=ts, provenance=prov,
-    )
-    # ±5σ-ish ladder doesn't fully cover every row's tails — both ladders
-    # emit a coverage warning that we explicitly assert and silence.
-    edges = np.linspace(-5.0, 5.0, 7)
-    with pytest.warns(UserWarning, match="ladder does not cover"):
-        shared = BracketLadder(edges=edges).price(d)
-    with pytest.warns(UserWarning, match="per-row ladder does not cover"):
-        per_row = PerRowBracketLadder(
-            edges_per_row=[edges.copy() for _ in range(n)]
-        ).price(d)
-    # Both flatten N rows × B buckets in the same (entity-major) order.
-    np.testing.assert_allclose(per_row.fair_price, shared.fair_price, atol=1e-12)
-    np.testing.assert_array_equal(per_row.entity_ids, shared.entity_ids)
