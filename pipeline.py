@@ -975,13 +975,10 @@ def _stitch_folds(
         raise NotImplementedError(f"stitching not implemented for parametric family {family}")
 
     if backing == Backing.BRACKET:
-        edges_set = {tuple(d.edges.tolist()) for _, d in folds}
-        if len(edges_set) > 1:
-            raise ValueError(
-                "bracket folds use different edge vectors; all folds must "
-                "share the same bracket ladder."
-            )
-        edges = folds[0][1].edges
+        # BracketForecast.edges is now per-row (N, B+1). Concatenate along
+        # axis 0 and reorder alongside probs; from_brackets accepts 2-D
+        # edges natively.
+        edges = np.concatenate([d.edges for _, d in folds], axis=0)[order]
         probs = np.concatenate([d.probs for _, d in folds], axis=0)[order]
         return DistributionForecast.from_brackets(
             edges=edges, probs=probs,

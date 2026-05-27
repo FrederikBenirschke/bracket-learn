@@ -243,14 +243,18 @@ def to_point(
         # median for mixture: invert the CDF row-by-row.
         return _quantile_at(dist, 0.5)
     if dist.backing == Backing.BRACKET:
-        edges = dist.edges
-        probs = dist.probs
-        mids = 0.5 * (edges[:-1] + edges[1:])
+        edges = dist.edges                              # (N, B_max+1) per-row
+        probs = dist.probs                              # (N, B_max)
+        mids = 0.5 * (edges[:, :-1] + edges[:, 1:])     # (N, B_max), NaN where padded
         if how == "mean":
-            return (probs * mids[None, :]).sum(axis=1)
+            return np.nansum(probs * mids, axis=1)
         if how == "mode":
-            top = np.argmax(probs, axis=1)
-            return mids[top]
+            # NaN-tolerant argmax: use np.nan_to_num so padded bins (NaN
+            # probs) aren't picked.
+            p_clean = np.nan_to_num(probs, nan=-np.inf)
+            top = np.argmax(p_clean, axis=1)
+            rows = np.arange(probs.shape[0])
+            return mids[rows, top]
         return _quantile_at(dist, 0.5)
     if dist.backing == Backing.QUANTILE:
         taus = dist.taus
@@ -294,7 +298,10 @@ def _quantile_at(dist: DistributionForecast, q: float) -> np.ndarray:
             return float(dist.cdf(np.array([x]))[_i, 0]) - q
         # Probe brackets — start with the dist's own quantile-like landmarks.
         if dist.backing == Backing.BRACKET:
-            lo, hi = float(dist.edges[0]), float(dist.edges[-1])
+            # Per-row: use this row's finite edge prefix to bracket brentq.
+            e_row = dist.edges[i]
+            finite = e_row[~np.isnan(e_row)]
+            lo, hi = float(finite[0]), float(finite[-1])
         elif dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.MIXTURE_NORMAL:
             mus = dist.params["mus"][i]
             sigmas = dist.params["sigmas"][i]
@@ -307,18 +314,21 @@ def _quantile_at(dist: DistributionForecast, q: float) -> np.ndarray:
 
 
 def log_score_bracket(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
-    """Negative log-density per row for bracket-backed dist (uniform-in-bin)."""
+    """Negative log-density per row for bracket-backed dist (uniform-in-bin).
+
+    Per-row edges supported: each row uses its own bracket grid via
+    ``BracketForecast.realized_bin`` (NaN-padded tails are ignored).
+    """
     if dist.backing != Backing.BRACKET:
         raise NotImplementedError(f"log_score_bracket expects bracket backing; got {dist.backing}")
     y = np.asarray(y, dtype=float)
-    edges = dist.edges
-    probs = dist.probs
-    widths = np.diff(edges)
-    density = probs / widths[None, :]
-    B = probs.shape[1]
-    bin_idx = np.searchsorted(edges, y, side="right") - 1
-    bin_idx = np.clip(bin_idx, 0, B - 1)
-    px = density[np.arange(probs.shape[0]), bin_idx]
+    edges = dist.edges                          # (N, B+1) per-row
+    probs = dist.probs                          # (N, B)   per-row
+    widths = np.diff(edges, axis=1)             # (N, B), NaN where padded
+    with np.errstate(invalid="ignore", divide="ignore"):
+        density = np.where(widths > 0, probs / widths, 0.0)
+    bin_idx = dist.realized_bin(y)              # (N,) per-row valid bin
+    px = density[np.arange(density.shape[0]), bin_idx]
     px = np.maximum(px, 1e-300)
     return -np.log(px)
 
@@ -327,61 +337,59 @@ def crps_bracket(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
     """CRPS for a bracket-backed distribution.
 
     Computes ∫(F(z) - 1[z ≥ y])² dz under uniform-within-bin density.
+    Per-row edges supported (NaN-padded tail columns are skipped).
     """
     if dist.backing != Backing.BRACKET:
         raise NotImplementedError(f"crps_bracket expects bracket backing; got {dist.backing}")
     y = np.asarray(y, dtype=float)
-    edges = dist.edges
-    probs = dist.probs                       # (N, B)
-    B = probs.shape[1]
+    edges = dist.edges                       # (N, B_max+1)
+    probs_clean = np.nan_to_num(dist.probs, nan=0.0)  # (N, B_max)
+    N, B_max = probs_clean.shape
     cum = np.concatenate(
-        [np.zeros((probs.shape[0], 1)), np.cumsum(probs, axis=1)], axis=1
-    )                                        # (N, B+1) — F at edges
-    out = np.zeros(probs.shape[0])
-    for k in range(B):
-        lo, hi = edges[k], edges[k + 1]
-        width = hi - lo
-        # F linear in [lo, hi]: F(z) = cum[:,k] + (z-lo)/width * probs[:,k].
-        # 1[z≥y]: 0 for z<y, 1 for z≥y. Split by where y sits relative to bin.
-        a = cum[:, k]                        # F at lo
-        b = probs[:, k] / width if width > 0 else np.zeros_like(probs[:, k])
-        # Cases: y >= hi → integrand = F²; y <= lo → integrand = (F-1)²;
-        # lo < y < hi → split.
-        # Compute Σ over rows separately:
-        case_above = y >= hi
-        case_below = y <= lo
-        case_inside = ~case_above & ~case_below
+        [np.zeros((N, 1)), np.cumsum(probs_clean, axis=1)], axis=1
+    )                                        # (N, B_max+1) — F at edges
+    # Per-row valid bin count B_i.
+    B_per_row = (~np.isnan(dist.probs)).sum(axis=1).astype(int)
+    out = np.zeros(N)
+    for k in range(B_max):
+        # Active rows for bin k: rows where B_i > k.
+        active = B_per_row > k
+        if not active.any():
+            continue
+        lo = edges[:, k]                     # (N,)
+        hi = edges[:, k + 1]                 # (N,)
+        width = hi - lo                      # (N,)
+        a = cum[:, k]                        # (N,)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            b = np.where(width > 0, probs_clean[:, k] / width, 0.0)
+        case_above = active & (y >= hi)
+        case_below = active & (y <= lo)
+        case_inside = active & ~case_above & ~case_below
 
-        # 1) y >= hi: integrate F(z)² over [lo, hi].
         if case_above.any():
-            # F(z) = a + b(z-lo). ∫_0^w (a+bt)² dt = a²w + abw² + b²w³/3.
-            mask = case_above
-            integ = a[mask] ** 2 * width + a[mask] * b[mask] * width ** 2 + b[mask] ** 2 * width ** 3 / 3.0
-            out[mask] += integ
+            m = case_above
+            w = width[m]
+            integ = a[m] ** 2 * w + a[m] * b[m] * w ** 2 + b[m] ** 2 * w ** 3 / 3.0
+            out[m] += integ
 
-        # 2) y <= lo: integrate (F(z)-1)² over [lo, hi].
         if case_below.any():
-            mask = case_below
-            # (F-1)² = ((a-1)+bt)². ∫_0^w = (a-1)²w + (a-1)bw² + b²w³/3
-            integ = (a[mask] - 1) ** 2 * width + (a[mask] - 1) * b[mask] * width ** 2 + b[mask] ** 2 * width ** 3 / 3.0
-            out[mask] += integ
+            m = case_below
+            w = width[m]
+            integ = (a[m] - 1) ** 2 * w + (a[m] - 1) * b[m] * w ** 2 + b[m] ** 2 * w ** 3 / 3.0
+            out[m] += integ
 
-        # 3) lo < y < hi: split at y. Left of y (z < y): integrand = F².
-        # Right of y (z >= y): integrand = (F - 1)².
         if case_inside.any():
-            mask = case_inside
-            t = y[mask] - lo                 # length on left side
+            m = case_inside
+            w = width[m]
+            t = y[m] - lo[m]
             wL = t
-            aL = a[mask]
-            bL = b[mask]
-            # ∫_0^{wL} (aL + bL u)² du
+            aL = a[m]
+            bL = b[m]
             left = aL ** 2 * wL + aL * bL * wL ** 2 + bL ** 2 * wL ** 3 / 3.0
-            # ∫_{wL}^{w} (F - 1)² dz, where F at z = aL + bL(z-lo). Substitute u = z - lo:
-            # ∫_{wL}^{w} (aL - 1 + bL u)² du. Compute as integral from 0 to w minus 0 to wL.
-            full = (aL - 1) ** 2 * width + (aL - 1) * bL * width ** 2 + bL ** 2 * width ** 3 / 3.0
+            full = (aL - 1) ** 2 * w + (aL - 1) * bL * w ** 2 + bL ** 2 * w ** 3 / 3.0
             head = (aL - 1) ** 2 * wL + (aL - 1) * bL * wL ** 2 + bL ** 2 * wL ** 3 / 3.0
             right = full - head
-            out[mask] += left + right
+            out[m] += left + right
     return out
 
 
