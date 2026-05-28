@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from bracketlearn.forecast._helpers import _quantile_via_brentq
-from bracketlearn.forecast._meta import Backing, ProvenanceMeta
+from bracketlearn.forecast._meta import ProvenanceMeta
 from bracketlearn.forecast.base import DistributionForecast
 
 
@@ -114,10 +114,6 @@ class BracketForecast(DistributionForecast):
             ids=ids, timestamps=timestamps, provenance=provenance,
             edges=edges, probs=probs,
         )
-
-    @property
-    def backing(self) -> Backing:
-        return Backing.BRACKET
 
     @property
     def params(self) -> dict[str, np.ndarray]:

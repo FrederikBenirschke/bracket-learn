@@ -73,7 +73,7 @@ def _augment_with_bracket_bounds(
     ``offsets[i] : offsets[i+1]`` covers row i's B_i augmented rows, and
     ``per_row_edges[i]`` is the row's edge array (length B_i + 1).
 
-    Shared by ``BracketClassifier`` and ``BracketRegressor``. ``owner``
+    Used by ``bracketlearn.transformers.BracketExpander``. ``owner``
     surfaces in the missing-id KeyError.
     """
     N = X.shape[0]

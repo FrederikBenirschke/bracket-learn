@@ -4,6 +4,59 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions
 follow semver: MAJOR.MINOR.PATCH. Pre-1.0 the public API can break in any
 minor release; patch releases are bug-fixes and additive tests.
 
+## [0.6.0] — 2026-05-28
+
+**Breaking**: ``Backing`` and ``ParametricFamily`` enums removed, along
+with the ``DistributionForecast.backing`` / ``.family`` properties on
+the base class and all five subclasses. The enums were carried as
+compat shims from v0.3.0 when ``DistributionForecast`` became an
+``abc.ABC`` base; the abstract-class hierarchy made them redundant
+the day they shipped. ``isinstance`` dispatch on the concrete subclass
+is the supported API.
+
+Migration::
+
+    # Old:
+    from bracketlearn.forecast import Backing, ParametricFamily
+    if dist.backing == Backing.PARAMETRIC and dist.family == ParametricFamily.NORMAL:
+        ...
+    if dist.backing == Backing.BRACKET:
+        ...
+
+    # New:
+    from bracketlearn import (
+        BracketForecast, MixtureNormalForecast,
+        NormalForecast, QuantileForecast, StudentTForecast,
+    )
+    if isinstance(dist, NormalForecast):
+        ...
+    if isinstance(dist, BracketForecast):
+        ...
+
+For checks that previously asked "is this any parametric backing?",
+use a tuple of all three parametric subclasses::
+
+    _PARAMETRIC = (NormalForecast, StudentTForecast, MixtureNormalForecast)
+    if isinstance(dist, _PARAMETRIC):
+        ...
+
+### Removed
+- ``bracketlearn.forecast.Backing``
+- ``bracketlearn.forecast.ParametricFamily``
+- ``DistributionForecast.backing`` (abstract property)
+- ``DistributionForecast.family`` (default ``None``)
+- ``.backing`` / ``.family`` ``@property`` overrides on
+  ``NormalForecast``, ``StudentTForecast``, ``MixtureNormalForecast``,
+  ``QuantileForecast``, ``BracketForecast``
+
+### Internal
+- ``StackedParametric``, ``BMAStacking``, ``BracketStacking`` upstream
+  type checks switched from ``d.backing.value == "..."`` /
+  ``d.backing != Backing.BRACKET`` to ``isinstance(d, ...)``.
+- Test assertions updated to ``isinstance`` checks.
+
+All 343 tests pass.
+
 ## [0.5.0] — 2026-05-27
 
 **Breaking**: ``BracketClassifier`` and ``BracketRegressor`` removed.

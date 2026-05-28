@@ -6,8 +6,6 @@ graph. Contains:
 
 - ``TailRule`` / ``TailPolicy`` / ``TailPolicyError`` — tail extrapolation policy (§7).
 - ``ProvenanceMeta`` — audit / reproducibility schema (§5.4).
-- ``Backing`` / ``ParametricFamily`` — discriminator enums kept as compat
-  shims; subclasses expose them via ``@property``.
 - ``PointForecast`` — §5.1 leaf data object.
 """
 
@@ -15,7 +13,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
 from typing import Any, Literal
 
 import numpy as np
@@ -92,25 +89,6 @@ class ProvenanceMeta:
             created_at=now,
             sigma_source=sigma_source,
         )
-
-
-# ---------------------------------------------------------------------------
-# Backing + ParametricFamily enums — compat shims exposed via @property
-# on each DistributionForecast subclass.
-# ---------------------------------------------------------------------------
-
-
-class Backing(StrEnum):
-    PARAMETRIC = "parametric"
-    QUANTILE = "quantile"
-    EMPIRICAL = "empirical"
-    BRACKET = "bracket"
-
-
-class ParametricFamily(StrEnum):
-    NORMAL = "normal"
-    STUDENT_T = "student_t"
-    MIXTURE_NORMAL = "mixture_normal"
 
 
 # ---------------------------------------------------------------------------

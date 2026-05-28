@@ -32,8 +32,6 @@ from bracketlearn.forecast._helpers import (
     normalize_bracket_probs,
 )
 from bracketlearn.forecast._meta import (
-    Backing,
-    ParametricFamily,
     PointForecast,
     ProvenanceMeta,
     TailPolicy,
@@ -62,9 +60,6 @@ __all__ = [
     "MixtureNormalForecast",
     "QuantileForecast",
     "BracketForecast",
-    # discriminator enums
-    "Backing",
-    "ParametricFamily",
     # tail policy
     "TailPolicy",
     "TailPolicyError",

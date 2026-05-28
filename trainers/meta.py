@@ -13,7 +13,7 @@ from bracketlearn.forecast import (
     DistributionForecast,
     PointForecast,
 )
-from bracketlearn.forecast._meta import Backing, ProvenanceMeta
+from bracketlearn.forecast._meta import ProvenanceMeta
 
 # ---------------------------------------------------------------------------
 # DistAsFeatures — generic bridge: upstream dists → feature matrix → any trainer.
@@ -210,10 +210,10 @@ class BracketStacking(BaseEstimator):
         edges_ref: np.ndarray | None = None
         for name in self.depends_on:
             d = deps_oof[name]
-            if d.backing != Backing.BRACKET:
+            if not isinstance(d, BracketForecast):
                 raise NotImplementedError(
                     f"BracketStacking expects bracket-backed upstream; "
-                    f"{name!r} is {d.backing}"
+                    f"{name!r} is {type(d).__name__}"
                 )
             probs = np.asarray(d.probs, dtype=float)
             if probs.shape[0] != N:

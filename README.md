@@ -44,8 +44,8 @@ pip install -e ./bracketlearn
 pip install -e "./bracketlearn[demo]"
 ```
 
-PyPI publication is planned for the `v0.4.0` tag; once live the install
-becomes `pip install bracketlearn` / `pip install "bracketlearn[demo]"`.
+PyPI publication is planned; once live the install becomes
+`pip install bracketlearn` / `pip install "bracketlearn[demo]"`.
 
 ## Adapter catalogue — venue → math
 
@@ -337,33 +337,37 @@ Two fundamentally different trainer families:
   continuous-ish distribution. Call `.integrate(edges_per_row)` to
   price on a specific grid.
 - **Bracket-aware** (`CumulativeBinary`, `TailSpecialist`,
-  `CDFBoostBracket`, `BracketClassifier`, `BracketRegressor`): train
-  on bracket-derived indicators. Each takes a `cutpoints_by_id` or
-  `brackets_by_id` dict (id → 1-D edge array) at construction so
-  per-row grids flow through fit and predict. Their `fit()`
-  signatures require an explicit `ids=` kwarg; inside
+  `CDFBoostBracket`): train on bracket-derived indicators. Each takes
+  a `cutpoints_by_id` or `brackets_by_id` dict (id → 1-D edge array)
+  at construction so per-row grids flow through fit and predict.
+  Their `fit()` signatures require an explicit `ids=` kwarg; inside
   `ForecastPipeline` this is forwarded automatically.
 
-  `BracketClassifier` is the "use any sklearn classifier" entry
-  point: it builds one augmented row per (sample, bracket) with
-  features `[X, lo, hi]` and target `1[y ∈ [lo, hi))`, then trains
-  whichever classifier you pass in (LogisticRegression,
-  GradientBoostingClassifier, LGBMClassifier, RandomForest, MLP).
-  Predict-time row-renormalises across each row's bin grid. Ragged
-  per-row bracket counts are supported. The trade-off vs
-  `CumulativeBinary`: classifier flexibility but no monotonicity
-  constraint, so on smooth problems CumulativeBinary's LGBM-with-
-  monotone-cutpoints variant tends to win narrowly.
+  For the "use any sklearn classifier or regressor" entry point, use
+  `BracketExpander` (in `bracketlearn.transformers`): it owns the
+  per-row → per-(row, bracket) reshape, leaving model choice and
+  target construction to the caller. `fit_transform(X, y, ids=...)`
+  returns `(X_expanded, y_expanded)` where `X_expanded` is
+  `(M, F+2)` with `[..., lo, hi]` appended and `y_expanded` is the
+  default bracket-hit indicator `1[y ∈ [lo, hi))`. Fit any sklearn
+  estimator on those arrays; pack predictions back into a
+  row-renormalised `BracketForecast` via `assemble_dist`.
 
-  `BracketRegressor` is the regressor sibling — same augmentation,
-  same `[0/1]` target, but `predict` instead of `predict_proba`.
-  Use it when your estimator family only ships a regressor (Ridge,
-  ElasticNet, GradientBoostingRegressor, LGBMRegressor,
-  MLPRegressor, custom GAMs) or when squared-error loss on the
-  bracket-hit target fits the problem better than cross-entropy.
-  Outputs are clipped to `[eps, 1-eps]` and row-normalised; prefer
-  `BracketClassifier` when both are available since clip+normalise
-  loses the calibration logistic-style heads give for free.
+  ```python
+  from bracketlearn import BracketExpander
+  from lightgbm import LGBMClassifier
+
+  exp = BracketExpander(brackets_by_id=bbi)
+  X_exp, y_exp = exp.fit_transform(X, y, ids=ids)
+  clf = LGBMClassifier(...).fit(X_exp, y_exp)
+  X_pred_exp, _ = exp.transform(X_pred, ids=pred_ids)
+  scores = clf.predict_proba(X_pred_exp)[:, 1]
+  d = exp.assemble_dist(scores, ids=pred_ids, timestamps=ts)
+  ```
+
+  For a custom per-(row, bracket) target (mispricing residual,
+  importance-weighted hit, etc.), build it on top of `fit_transform`
+  output — the expander has no opinion about the loss.
 
 ## CV variants
 
@@ -446,36 +450,52 @@ print(gs.best_params_, gs.best_score_)
 
 ## Status
 
+v0.6.0 — `Backing` / `ParametricFamily` enums removed along with the
+`DistributionForecast.backing` / `.family` properties. The enums were
+compat shims carried over from v0.3.0 when the class became an
+`abc.ABC` base; `isinstance(dist, NormalForecast)` etc. is the
+supported dispatch. See [CHANGELOG.md](CHANGELOG.md) for the
+migration recipe.
+
+v0.5.0 — `BracketClassifier` / `BracketRegressor` removed; their two
+conflated concerns (per-row → per-(row, bracket) reshape, plus model
+fit on the augmented design) split into the new
+`bracketlearn.BracketExpander` transformer + plain sklearn `.fit` on
+the caller's chosen estimator. Custom per-(row, bracket) targets
+(mispricing residuals, importance-weighted hits) now compose by
+construction instead of requiring a fork. See
+[CHANGELOG.md](CHANGELOG.md) for the migration recipe.
+
+v0.4.0 — three Bayesian trainers added (`BayesianRidge`,
+`BMAStacking`, `HierarchicalNormal`); pipeline gains a `groups=` kwarg
+that routes site labels to trainers whose `fit` accepts them and is
+silently ignored by site-blind stages. Monolithic `forecast.py` and
+`trainers.py` split into typed subpackages.
+
 v0.3.0 — `DistributionForecast` becomes an `abc.ABC` base with five
 concrete subclasses; `BracketForecast` stores per-row edges natively;
 bracket-aware trainers (`CumulativeBinary`, `TailSpecialist`,
 `CDFBoostBracket`) and the `Isotonic` calibrator switch to id-keyed
 dict APIs so each row carries its own bracket grid. New
 `DistributionForecast.integrate(edges_per_row)` lifts any subclass to
-a per-row `BracketForecast`. See [CHANGELOG.md](CHANGELOG.md) for the
-full v0.3.0 entry including the breaking-change list.
+a per-row `BracketForecast`.
 
 v0.2 baseline carries forward: protocols, three CV modes
 (expanding-window / rolling-window / kfold), sample-weight threading,
-multi-target wrapper, grid-search wrapper, 19 trainers (incl. three
-Bayesian: `BayesianRidge`, `BMAStacking`, `HierarchicalNormal`, and
-the any-estimator pair `BracketClassifier` / `BracketRegressor`),
-6 prediction-market adapters, full distribution and contract-level
-scoring, pipeline `groups=` routing for cross-site trainers. See
-`bracketlearn/examples/` for runnable demos.
+multi-target wrapper, grid-search wrapper, 19 trainers, 6
+prediction-market adapters, full distribution and contract-level
+scoring. See `bracketlearn/examples/` for runnable demos.
 
 Not yet:
-- Empirical backing
-- `gpd` / `gaussian_match` tail rules (only `clip`)
 - Vanilla options / option-spread adapters (intentionally out of scope —
   prediction-market binaries only)
-- `Backing` + `ParametricFamily` enums survive as compat `@property`
-  shims this release; consumers will migrate to `isinstance` dispatch
-  in a follow-up.
 - Quantile-backed `DistributionForecast` requires a `TailPolicy` for
   `cdf` / `ppf` / `pdf` / `mean` / `variance` / `sample`; calling those
   without one raises `NotImplementedError`. Constructor demands the
   policy explicitly, so the failure is at construction time, not silent.
+  Only `TailRule.clip()` is implemented; if your use case needs
+  smoother tail extrapolation (`gpd`, slope-matched Gaussian, ...)
+  open an issue with the contract shape that requires it.
 
 ## License
 

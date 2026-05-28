@@ -17,7 +17,7 @@ import numpy as np
 from scipy import stats as _stats
 
 from bracketlearn.forecast._helpers import _quantile_via_brentq
-from bracketlearn.forecast._meta import Backing, ParametricFamily, ProvenanceMeta
+from bracketlearn.forecast._meta import ProvenanceMeta
 from bracketlearn.forecast.base import DistributionForecast
 
 # ---------------------------------------------------------------------------
@@ -128,15 +128,6 @@ class NormalForecast(_ParametricMixin, DistributionForecast):
     def _per_row_params(self) -> dict[str, np.ndarray]:
         return {"loc": self.mu, "scale": self.sigma}
 
-    # compat: backing/family + params dict.
-    @property
-    def backing(self) -> Backing:
-        return Backing.PARAMETRIC
-
-    @property
-    def family(self) -> ParametricFamily:
-        return ParametricFamily.NORMAL
-
     @property
     def params(self) -> dict[str, np.ndarray]:
         return {"mu": self.mu, "sigma": self.sigma}
@@ -234,14 +225,6 @@ class StudentTForecast(_ParametricMixin, DistributionForecast):
 
     def _per_row_params(self) -> dict[str, np.ndarray]:
         return {"df": self.df, "loc": self.mu, "scale": self.sigma}
-
-    @property
-    def backing(self) -> Backing:
-        return Backing.PARAMETRIC
-
-    @property
-    def family(self) -> ParametricFamily:
-        return ParametricFamily.STUDENT_T
 
     @property
     def params(self) -> dict[str, np.ndarray]:
@@ -346,14 +329,6 @@ class MixtureNormalForecast(DistributionForecast):
             ids=ids, timestamps=timestamps, provenance=provenance,
             weights=weights, mus=mus, sigmas=sigmas,
         )
-
-    @property
-    def backing(self) -> Backing:
-        return Backing.PARAMETRIC
-
-    @property
-    def family(self) -> ParametricFamily:
-        return ParametricFamily.MIXTURE_NORMAL
 
     @property
     def params(self) -> dict[str, np.ndarray]:

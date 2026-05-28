@@ -2,8 +2,8 @@
 
 Background
 ----------
-``BracketClassifier`` and ``BracketRegressor`` (and several siblings)
-historically conflated two concerns inside their ``fit``:
+Pre-v0.5.0 the deleted ``BracketClassifier`` / ``BracketRegressor``
+classes conflated two concerns inside ``fit``:
 
   1. **Expand**: a per-row design ``(N, F)`` becomes a per-(row, bracket)
      design ``(M, F + 2)`` with ``[..., lo_b, hi_b]`` appended.
@@ -11,47 +11,49 @@ historically conflated two concerns inside their ``fit``:
      derived from ``y`` — *always* the bracket-hit indicator
      ``1[y ∈ bracket_b]``.
 
-That hardcoded target made the regressor inflexible: any caller who
-wanted to learn a *different* per-(row, bracket) target (e.g. the
-mispricing residual ``hit − market_p``) had to fork the class. From
-v0.5.0 the two concerns are separated:
+That hardcoded target made them inflexible: any caller who wanted a
+*different* per-(row, bracket) target (e.g. the mispricing residual
+``hit − market_p``) had to fork the class. v0.5.0 split the two
+concerns and removed both classes — ``BracketExpander`` owns the
+reshape, and the caller picks any sklearn estimator and any target.
 
 - ``BracketExpander`` (this module): owns the per-row ↔ per-(row, bracket)
   conversion. Builds ``X_expanded`` and, by default, a bracket-hit
   target ``y_expanded`` — but the caller can ignore that and supply any
   target of shape ``(M,)`` they like.
 
-- ``BracketClassifier`` / ``BracketRegressor`` (in
-  ``bracketlearn.trainers.bracket``): become *plain sklearn* — their
-  ``fit(X, y)`` takes whatever ``(X, y)`` the caller hands them, with
-  no internal target derivation. ``predict`` returns raw scores. Assembling
-  those scores back into a per-row ``BracketForecast`` is a separate
-  method on the expander (``assemble_dist``), so callers can reach into
-  the middle of the pipeline if they want.
+- Model fit is plain sklearn: the caller calls ``.fit(X_expanded,
+  y_expanded)`` on whatever estimator they chose. ``assemble_dist``
+  packs raw per-(row, bracket) predictions back into a row-renormalised
+  ``BracketForecast``.
 
 API shape
 ---------
 ::
 
+    from lightgbm import LGBMClassifier
+
     expander = BracketExpander(brackets_by_id={...})
 
-    # Train side: expand X and (optionally) derive a default target.
+    # Train: expand X, get the default bracket-hit target, fit any estimator.
     X_expanded, y_expanded = expander.fit_transform(X, y, ids=train_ids)
-    reg = BracketRegressor(estimator=LGBMRegressor()).fit(X_expanded, y_expanded)
+    clf = LGBMClassifier().fit(X_expanded, y_expanded)
 
-    # Predict side: expand X only, predict, then assemble back to a dist.
+    # Predict: expand X only, score, assemble back to a dist.
     X_pred_expanded, _ = expander.transform(X_pred, ids=pred_ids)
-    raw_preds = reg.predict(X_pred_expanded)
-    dist = expander.assemble_dist(raw_preds, ids=pred_ids, timestamps=...)
+    scores = clf.predict_proba(X_pred_expanded)[:, 1]
+    dist = expander.assemble_dist(scores, ids=pred_ids, timestamps=...)
 
 Callers who want a custom target build it themselves on top of the
 expansion::
+
+    from lightgbm import LGBMRegressor
 
     X_expanded, y_hit = expander.fit_transform(X, y, ids=train_ids)
     market_p_expanded = ...  # caller-supplied, shape (M,)
     X_expanded = np.column_stack([X_expanded, market_p_expanded])
     y_target = y_hit - market_p_expanded
-    BracketRegressor(estimator=LGBMRegressor()).fit(X_expanded, y_target)
+    LGBMRegressor().fit(X_expanded, y_target)
 """
 
 from __future__ import annotations

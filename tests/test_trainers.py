@@ -561,7 +561,7 @@ def test_stacking_student_t_emits_t_backed_forecast_with_matching_variance():
         np.zeros((N, 1)), ids=ids, timestamps=ts, deps_oof={"a": d_a},
     )
     # t-backed with df=5 on every row.
-    assert out.backing.value == "parametric"
+    assert isinstance(out, StudentTForecast)
     assert "df" in out.params
     np.testing.assert_allclose(out.params["df"], 5.0)
     # Variance == σ̂² (constant-σ branch, so σ̂ = stack.sigma_).

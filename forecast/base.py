@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from bracketlearn.forecast._helpers import _clip_tiny_negatives, _to_dense_2d
-from bracketlearn.forecast._meta import Backing, ParametricFamily, ProvenanceMeta, TailPolicy
+from bracketlearn.forecast._meta import ProvenanceMeta, TailPolicy
 
 if TYPE_CHECKING:
     from bracketlearn.forecast.bracket import BracketForecast
@@ -49,16 +49,6 @@ class DistributionForecast(abc.ABC):
     ids: np.ndarray
     timestamps: np.ndarray
     provenance: ProvenanceMeta
-
-    # ---------- compat: backing/family discriminator (subclasses override) ----------
-
-    @property
-    def backing(self) -> Backing:
-        raise NotImplementedError
-
-    @property
-    def family(self) -> ParametricFamily | None:
-        return None
 
     # ---------- abstract math ----------
 
@@ -256,5 +246,4 @@ class DistributionForecast(abc.ABC):
     # Consumers in score.py / pipeline.py / lift.py / restrict.py and tests
     # still read ``dist.params["mu"]``, ``dist.taus``, ``dist.qvals``,
     # ``dist.edges``, ``dist.probs``, ``dist.tail_policy``. Subclasses keep
-    # those attributes so the dispatch tables don't need to change in this
-    # session. Removal is a follow-up.
+    # those attributes so the dispatch tables don't need to change.

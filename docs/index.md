@@ -22,6 +22,7 @@ guides/scoring
 guides/adapters
 guides/baselines
 guides/tail_policies
+guides/bracket_expander
 guides/examples
 ```
 
@@ -35,6 +36,7 @@ api/baselines
 api/lift
 api/forecast
 api/adapters
+api/transformers
 api/score
 api/multitarget
 api/search

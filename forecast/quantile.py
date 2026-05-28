@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from bracketlearn.forecast._helpers import _resolve_tail_kinds
-from bracketlearn.forecast._meta import Backing, ProvenanceMeta, TailPolicy
+from bracketlearn.forecast._meta import ProvenanceMeta, TailPolicy
 from bracketlearn.forecast.base import DistributionForecast
 
 
@@ -59,10 +59,6 @@ class QuantileForecast(DistributionForecast):
             ids=ids, timestamps=timestamps, provenance=provenance,
             taus=taus, qvals=qvals, tail_policy=tail_policy,
         )
-
-    @property
-    def backing(self) -> Backing:
-        return Backing.QUANTILE
 
     @property
     def params(self) -> dict[str, np.ndarray]:

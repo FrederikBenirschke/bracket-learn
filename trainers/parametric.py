@@ -18,11 +18,19 @@ from scipy.stats import norm as _scipy_norm
 from bracketlearn.base import BaseEstimator
 from bracketlearn.forecast import (
     DistributionForecast,
+    MixtureNormalForecast,
+    NormalForecast,
     ProvenanceMeta,
+    StudentTForecast,
 )
 from bracketlearn.trainers._common import (
     _weighted_lstsq2,
 )
+
+# Tuple of subclasses that count as "parametric upstream" for the stacking
+# trainers. Used in isinstance dispatch; replaces the v0.5.x Backing enum
+# check (`d.backing.value == "parametric"`).
+_PARAMETRIC_BACKINGS = (NormalForecast, StudentTForecast, MixtureNormalForecast)
 
 # Euler-Mascheroni constant. Used by StackedParametric(sigma_method=
 # 'geometric_mean_upstream') to debias E[log Z²] under Gaussian residuals:
@@ -397,9 +405,10 @@ class StackedParametric(BaseEstimator):
         upstream_ids = None
         for name in self.depends_on:
             d = deps_oof[name]
-            if d.backing.value != "parametric":
+            if not isinstance(d, _PARAMETRIC_BACKINGS):
                 raise NotImplementedError(
-                    f"StackedParametric expects parametric upstream; {name} is {d.backing}"
+                    f"StackedParametric expects parametric upstream; "
+                    f"{name} is {type(d).__name__}"
                 )
             if d.params["mu"].shape[0] != y.shape[0]:
                 raise ValueError(
@@ -543,7 +552,7 @@ class StackedParametric(BaseEstimator):
                 raise ValueError(
                     f"StackedParametric({where}, sigma_method='geometric_mean_upstream'): "
                     f"upstream {name!r} has no σ in params "
-                    f"(backing={d.backing!r}); either pick "
+                    f"(type={type(d).__name__}); either pick "
                     f"sigma_method='constant' or feed parametric upstreams"
                 )
             s = np.asarray(d.params["sigma"], dtype=float)
@@ -683,10 +692,10 @@ class BMAStacking(BaseEstimator):
     def _upstream_moments(dist: Any, N: int, name: str) -> tuple[np.ndarray, np.ndarray]:
         """Extract per-row (μ, σ) from any parametric upstream via the
         DistributionForecast moment API. Reject non-parametric backings."""
-        if dist.backing.value != "parametric":
+        if not isinstance(dist, _PARAMETRIC_BACKINGS):
             raise NotImplementedError(
                 f"BMAStacking expects parametric upstream; "
-                f"{name!r} is {dist.backing}"
+                f"{name!r} is {type(dist).__name__}"
             )
         mu = np.asarray(dist.mean(), dtype=float)
         var = np.asarray(dist.variance(), dtype=float)
