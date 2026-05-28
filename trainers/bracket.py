@@ -1,8 +1,8 @@
 """Bracket-backed DistForecasters and dist-pool combiners.
 
-CumulativeBinary, TailSpecialist, CDFBoostBracket, BracketClassifier
-(bracket-emitting trainers). LinearPoolDist (convex combination of upstream
-dists).
+CumulativeBinary, TailSpecialist, CDFBoostBracket, BracketClassifier,
+BracketRegressor (bracket-emitting trainers). LinearPoolDist (convex
+combination of upstream dists).
 """
 
 from __future__ import annotations
@@ -17,6 +17,11 @@ from bracketlearn.forecast import (
     DistributionForecast,
     ProvenanceMeta,
     bracket_probs_from_cdf_at_edges,
+)
+from bracketlearn.trainers._common import (
+    _augment_with_bracket_bounds,
+    _estimator_accepts_sample_weight,
+    _validate_brackets_by_id,
 )
 
 # ---------------------------------------------------------------------------
@@ -291,7 +296,7 @@ class TailSpecialist(BaseEstimator):
         try:
             return [np.asarray(self.brackets_by_id[k], dtype=float) for k in ids]
         except KeyError as e:
-            raise KeyError(f"TailSpecialist: brackets_by_id missing id {e!r}")
+            raise KeyError(f"TailSpecialist: brackets_by_id missing id {e!r}") from e
 
     def fit(
         self,
@@ -837,68 +842,14 @@ class BracketClassifier(BaseEstimator):
                 f"got {type(self.estimator).__name__}. Use a classifier such as "
                 "sklearn.linear_model.LogisticRegression, "
                 "sklearn.ensemble.GradientBoostingClassifier, "
-                "or lightgbm.LGBMClassifier."
+                "or lightgbm.LGBMClassifier. For regressors (predict-only) use "
+                "BracketRegressor instead."
             )
-        if not isinstance(self.brackets_by_id, dict) or not self.brackets_by_id:
-            raise ValueError(
-                "BracketClassifier needs a non-empty brackets_by_id dict "
-                "(id → 1-D edge array)"
-            )
-        for k, e in self.brackets_by_id.items():
-            e_arr = np.asarray(e, dtype=float)
-            if e_arr.ndim != 1 or e_arr.size < 3:
-                raise ValueError(
-                    f"brackets_by_id[{k!r}]: ladder must have ≥2 bins "
-                    f"(≥3 edges); got shape {e_arr.shape}"
-                )
-            if np.any(np.diff(e_arr) <= 0):
-                raise ValueError(
-                    f"brackets_by_id[{k!r}]: edges must be strictly increasing"
-                )
+        _validate_brackets_by_id(self.brackets_by_id, owner="BracketClassifier")
         if not (0.0 < self.clip_eps < 0.5):
             raise ValueError(
                 f"clip_eps must be in (0, 0.5); got {self.clip_eps}"
             )
-
-    def _augment(
-        self,
-        X: np.ndarray,
-        ids: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]:
-        """Build the per-bracket augmented design matrix.
-
-        Returns ``(X_aug, offsets, per_row_edges)`` where
-        ``offsets[i] : offsets[i+1]`` covers row i's B_i augmented
-        rows, and ``per_row_edges[i]`` is the row's edge array
-        (length B_i + 1).
-        """
-        N = X.shape[0]
-        per_row_edges: list[np.ndarray] = []
-        missing: list[Any] = []
-        for k in ids:
-            try:
-                per_row_edges.append(
-                    np.asarray(self.brackets_by_id[k], dtype=float),
-                )
-            except KeyError:
-                missing.append(k)
-        if missing:
-            raise KeyError(
-                f"BracketClassifier: brackets_by_id missing {len(missing)} "
-                f"id(s); first: {missing[:3]}"
-            )
-        B_per_row = np.array([e.size - 1 for e in per_row_edges], dtype=int)
-        offsets = np.concatenate([[0], np.cumsum(B_per_row)])
-        M = int(offsets[-1])
-        n_feat = X.shape[1]
-        X_aug = np.empty((M, n_feat + 2), dtype=float)
-        for i in range(N):
-            sl = slice(int(offsets[i]), int(offsets[i + 1]))
-            X_aug[sl, :n_feat] = X[i]
-            e_i = per_row_edges[i]
-            X_aug[sl, n_feat] = e_i[:-1]      # lo
-            X_aug[sl, n_feat + 1] = e_i[1:]   # hi
-        return X_aug, offsets, per_row_edges
 
     def fit(
         self,
@@ -917,7 +868,9 @@ class BracketClassifier(BaseEstimator):
                 f"shape mismatch: X N={X.shape[0]} y N={y.shape[0]} "
                 f"ids N={ids.shape[0]}"
             )
-        X_aug, offsets, per_row_edges = self._augment(X, ids)
+        X_aug, offsets, per_row_edges = _augment_with_bracket_bounds(
+            X, ids, self.brackets_by_id, owner="BracketClassifier",
+        )
         N = X.shape[0]
         y_aug = np.zeros(X_aug.shape[0], dtype=int)
         for i in range(N):
@@ -935,7 +888,6 @@ class BracketClassifier(BaseEstimator):
                 "configured brackets — every augmented target is 0. "
                 "Check brackets_by_id covers the y range."
             )
-        from bracketlearn.trainers._common import _estimator_accepts_sample_weight
 
         self.model_ = self.estimator
         if sample_weight is not None and _estimator_accepts_sample_weight(self.model_):
@@ -962,7 +914,9 @@ class BracketClassifier(BaseEstimator):
         ids = np.asarray(ids)
         timestamps = np.asarray(timestamps)
         N = X.shape[0]
-        X_aug, offsets, per_row_edges = self._augment(X, ids)
+        X_aug, offsets, per_row_edges = _augment_with_bracket_bounds(
+            X, ids, self.brackets_by_id, owner="BracketClassifier",
+        )
         proba_aug = self.model_.predict_proba(X_aug)
         if proba_aug.shape[1] != 2:
             raise RuntimeError(
@@ -971,28 +925,193 @@ class BracketClassifier(BaseEstimator):
                 f"This usually means the training labels were single-class."
             )
         p_aug = np.clip(proba_aug[:, 1], self.clip_eps, 1.0 - self.clip_eps)
-        B_per_row = np.array(
-            [e.size - 1 for e in per_row_edges], dtype=int,
+        return _assemble_bracket_forecast(
+            p_aug, offsets, per_row_edges, N,
+            ids=ids, timestamps=timestamps, name=self.name,
+            owner="BracketClassifier",
         )
-        B_max = int(B_per_row.max())
-        edges_out = np.full((N, B_max + 1), np.nan, dtype=float)
-        probs_out = np.full((N, B_max), np.nan, dtype=float)
+
+
+# ---------------------------------------------------------------------------
+# BracketRegressor — one regressor on (X, lo, hi) → ŷ ≈ P(y ∈ [lo, hi)).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class BracketRegressor(BaseEstimator):
+    """Single regressor with bracket bounds as features, trained on
+    bracket-hit indicator targets in [0, 1].
+
+    Regressor-sibling of ``BracketClassifier``. For each (row i, bracket b)
+    pair, augments to ``[X_i, lo_b, hi_b]`` with target
+    ``1[y_i ∈ [lo_b, hi_b))`` (last bracket closed on the right) and fits
+    a sklearn-style regressor (``fit`` + ``predict``). At predict time the
+    regressor scores every bracket; raw scores are clipped to
+    ``[clip_eps, 1-clip_eps]`` and row-renormalised across the row's bin
+    grid.
+
+    Why a regressor instead of a classifier
+    ---------------------------------------
+    Many sklearn-style learners only expose ``predict`` (Ridge, ElasticNet,
+    GradientBoostingRegressor, XGBoost/LGBM regressor, MLPRegressor with
+    `loss='squared_error'`, …). They estimate ``E[1[y∈bin] | X, lo, hi]``
+    — which is exactly the bracket-hit probability — without committing to
+    a probabilistic ``predict_proba`` interface. Useful when:
+
+    - The estimator family doesn't ship a classifier (e.g. a custom GAM).
+    - You want squared-error / quantile loss on the bracket-hit target
+      instead of cross-entropy.
+    - You already have a regressor-shaped pipeline and don't want to
+      switch metrics.
+
+    Trade-off: regressor outputs are not constrained to ``[0, 1]`` —
+    clipping + row-normalisation lose the calibration that a logistic-
+    style classifier gives for free. For most use cases prefer
+    ``BracketClassifier``; pick this only when the regressor-only
+    estimator is what you've got.
+
+    Output is bracket-backed (per-row ladder from ``brackets_by_id``).
+    """
+
+    estimator: Any
+    brackets_by_id: dict[Any, np.ndarray]
+    name: str = "BracketRegressor"
+    depends_on: tuple[str, ...] = ()
+    clip_eps: float = 1e-6
+    model_: Any = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        if not hasattr(self.estimator, "fit"):
+            raise ValueError(
+                "BracketRegressor: estimator must have a .fit() method"
+            )
+        if not hasattr(self.estimator, "predict"):
+            raise ValueError(
+                "BracketRegressor: estimator must have a .predict() method; "
+                f"got {type(self.estimator).__name__}. Use a regressor such as "
+                "sklearn.linear_model.Ridge, "
+                "sklearn.ensemble.GradientBoostingRegressor, "
+                "or lightgbm.LGBMRegressor."
+            )
+        _validate_brackets_by_id(self.brackets_by_id, owner="BracketRegressor")
+        if not (0.0 < self.clip_eps < 0.5):
+            raise ValueError(
+                f"clip_eps must be in (0, 0.5); got {self.clip_eps}"
+            )
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        ids: np.ndarray,
+        sample_weight: np.ndarray | None = None,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> Self:
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        ids = np.asarray(ids)
+        if X.shape[0] != y.shape[0] or X.shape[0] != ids.shape[0]:
+            raise ValueError(
+                f"shape mismatch: X N={X.shape[0]} y N={y.shape[0]} "
+                f"ids N={ids.shape[0]}"
+            )
+        X_aug, offsets, per_row_edges = _augment_with_bracket_bounds(
+            X, ids, self.brackets_by_id, owner="BracketRegressor",
+        )
+        N = X.shape[0]
+        y_aug = np.zeros(X_aug.shape[0], dtype=float)
         for i in range(N):
-            sl = slice(int(offsets[i]), int(offsets[i + 1]))
-            p_row = p_aug[sl]
-            s = float(p_row.sum())
-            if s <= 0:
-                raise RuntimeError(
-                    f"BracketClassifier row {i}: clipped probabilities "
-                    f"summed to {s}; should be unreachable given clip_eps > 0."
-                )
-            p_row = p_row / s
-            B_i = int(B_per_row[i])
-            probs_out[i, :B_i] = p_row
-            edges_out[i, : B_i + 1] = per_row_edges[i]
-        prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
-        return DistributionForecast.from_brackets(
-            edges=edges_out, probs=probs_out,
-            ids=ids, timestamps=timestamps,
-            provenance=prov,
+            e_i = per_row_edges[i]
+            k = int(np.searchsorted(e_i, y[i], side="right") - 1)
+            if 0 <= k < e_i.size - 1:
+                y_aug[int(offsets[i]) + k] = 1.0
+        # Loud rail: identical-target augmented y collapses regression to
+        # a constant — caller almost certainly misconfigured brackets.
+        if not np.any(y_aug > 0):
+            raise RuntimeError(
+                "BracketRegressor: no row's y landed in any of its "
+                "configured brackets — every augmented target is 0. "
+                "Check brackets_by_id covers the y range."
+            )
+
+        self.model_ = self.estimator
+        if sample_weight is not None and _estimator_accepts_sample_weight(self.model_):
+            sw = np.asarray(sample_weight, dtype=float)
+            sw_aug = np.empty(X_aug.shape[0], dtype=float)
+            for i in range(N):
+                sl = slice(int(offsets[i]), int(offsets[i + 1]))
+                sw_aug[sl] = sw[i]
+            self.model_.fit(X_aug, y_aug, sample_weight=sw_aug)
+        else:
+            self.model_.fit(X_aug, y_aug)
+        return self
+
+    def predict_dist(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+    ) -> DistributionForecast:
+        if self.model_ is None:
+            raise RuntimeError("BracketRegressor.predict_dist called before fit")
+        X = np.asarray(X, dtype=float)
+        ids = np.asarray(ids)
+        timestamps = np.asarray(timestamps)
+        N = X.shape[0]
+        X_aug, offsets, per_row_edges = _augment_with_bracket_bounds(
+            X, ids, self.brackets_by_id, owner="BracketRegressor",
         )
+        y_hat = np.asarray(self.model_.predict(X_aug), dtype=float)
+        if y_hat.ndim != 1 or y_hat.shape[0] != X_aug.shape[0]:
+            raise RuntimeError(
+                f"BracketRegressor: estimator.predict returned shape "
+                f"{y_hat.shape}, expected 1-D length {X_aug.shape[0]}."
+            )
+        p_aug = np.clip(y_hat, self.clip_eps, 1.0 - self.clip_eps)
+        return _assemble_bracket_forecast(
+            p_aug, offsets, per_row_edges, N,
+            ids=ids, timestamps=timestamps, name=self.name,
+            owner="BracketRegressor",
+        )
+
+
+def _assemble_bracket_forecast(
+    p_aug: np.ndarray,
+    offsets: np.ndarray,
+    per_row_edges: list[np.ndarray],
+    N: int,
+    *,
+    ids: np.ndarray,
+    timestamps: np.ndarray,
+    name: str,
+    owner: str,
+) -> DistributionForecast:
+    """Row-renormalise augmented per-bracket scores → BracketForecast.
+
+    Shared by ``BracketClassifier`` and ``BracketRegressor`` post-clip.
+    """
+    B_per_row = np.array([e.size - 1 for e in per_row_edges], dtype=int)
+    B_max = int(B_per_row.max())
+    edges_out = np.full((N, B_max + 1), np.nan, dtype=float)
+    probs_out = np.full((N, B_max), np.nan, dtype=float)
+    for i in range(N):
+        sl = slice(int(offsets[i]), int(offsets[i + 1]))
+        p_row = p_aug[sl]
+        s = float(p_row.sum())
+        if s <= 0:
+            raise RuntimeError(
+                f"{owner} row {i}: clipped scores summed to {s}; "
+                "should be unreachable given clip_eps > 0."
+            )
+        p_row = p_row / s
+        B_i = int(B_per_row[i])
+        probs_out[i, :B_i] = p_row
+        edges_out[i, : B_i + 1] = per_row_edges[i]
+    prov = ProvenanceMeta.placeholder(name, sigma_source="native")
+    return DistributionForecast.from_brackets(
+        edges=edges_out, probs=probs_out,
+        ids=ids, timestamps=timestamps,
+        provenance=prov,
+    )

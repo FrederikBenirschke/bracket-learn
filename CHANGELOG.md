@@ -4,14 +4,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions
 follow semver: MAJOR.MINOR.PATCH. Pre-1.0 the public API can break in any
 minor release; patch releases are bug-fixes and additive tests.
 
-## [Unreleased]
+## [0.4.0] — 2026-05-27
 
 Three Bayesian trainers added — one with empirical wins on this repo's
 domain, one that ties the existing baseline, one that didn't justify
 its structural pitch but ships as an alternative. Pipeline grows a
 ``groups`` kwarg so site-aware trainers compose with the existing CV
-machinery. New ``BracketClassifier`` unifies "predict bracket-resolves-
-YES with any sklearn classifier".
+machinery. New ``BracketClassifier`` / ``BracketRegressor`` pair
+unifies "predict bracket-resolves-YES with any sklearn classifier or
+regressor". Two internal refactors: monolithic ``forecast.py`` split
+into the ``forecast/`` subpackage (typed subclasses + helpers);
+monolithic ``trainers.py`` split into the ``trainers/`` subpackage
+(grouped by output shape). Both are pure code-organisation changes;
+all public imports (``from bracketlearn import …``, ``from
+bracketlearn.forecast import …``, ``from bracketlearn.trainers import
+…``) are unchanged.
 
 ### Added
 
@@ -32,6 +39,21 @@ YES with any sklearn classifier".
   as a Gaussian-ish floor. Sells flexibility — same trainer, any
   classifier — rather than peak accuracy. See bench
   ``/tmp/bracket_classifier_bench.py`` for numbers.
+- ``bracketlearn.trainers.BracketRegressor`` — regressor-sibling of
+  ``BracketClassifier``. Same augmentation (``[X_i, lo_b, hi_b]``)
+  and same target ``1[y_i ∈ [lo_b, hi_b))``, but fits any sklearn-
+  style regressor (``fit`` + ``predict``) instead of a classifier.
+  Raw scores are clipped to ``[clip_eps, 1-clip_eps]`` and row-
+  renormalised across the row's bin grid → BracketForecast. Useful
+  when the estimator family ships only ``predict`` (Ridge,
+  ElasticNet, GradientBoostingRegressor, LGBMRegressor, MLPRegressor,
+  custom GAMs), or when squared-error loss on the bracket-hit target
+  is preferable to cross-entropy. Trade-off: regressor outputs aren't
+  constrained to ``[0, 1]`` — clipping + row-normalisation lose the
+  calibration logistic-style classifiers get for free. Same loud
+  rails as ``BracketClassifier``. Shares the ``_augment_with_bracket_
+  bounds`` and ``_assemble_bracket_forecast`` helpers with the
+  classifier so behaviour stays in lockstep.
 - ``bracketlearn.trainers.BayesianRidge`` — conjugate
   Normal-Inverse-Gamma Bayesian linear regression. Predictive per row
   is Student-t with ``ν = 2·a_n``; predictive σ inflates via
@@ -78,6 +100,25 @@ YES with any sklearn classifier".
   signature introspection. ``_predict_with_deps`` kept as a
   back-compat wrapper.
 
+### Changed
+
+- Internal: ``bracketlearn/forecast.py`` split into the
+  ``bracketlearn/forecast/`` subpackage (``base``, ``parametric``,
+  ``quantile``, ``bracket``, ``contract``, ``_meta``, ``_helpers``).
+  Pure code-organisation; public re-exports unchanged. See commit
+  70b8231.
+- Internal: ``bracketlearn/trainers.py`` split into the
+  ``bracketlearn/trainers/`` subpackage grouped by output shape
+  (``point``, ``parametric``, ``quantile``, ``bracket``, ``meta``)
+  with shared utilities in ``_common`` and convenience factories in
+  ``_factories``. Pure code-organisation; public re-exports
+  unchanged. See commit c29abdc.
+- ``BracketClassifier`` refactored to share its augmentation +
+  output-assembly helpers with the new ``BracketRegressor``
+  (``_augment_with_bracket_bounds`` and ``_assemble_bracket_forecast``
+  in ``bracketlearn.trainers._common`` / ``bracketlearn.trainers.
+  bracket``). Behaviour unchanged; tests still green.
+
 ### Tests
 
 - 7 ``BracketClassifier`` unit tests (BracketForecast shape under
@@ -86,6 +127,12 @@ YES with any sklearn classifier".
   ``predict_proba``, rejects non-monotonic edges, raises on
   missing-id predict, raises when no y lands in any bracket,
   raises on predict-before-fit).
+- 7 ``BracketRegressor`` unit tests mirroring the classifier suite
+  (BracketForecast shape under Ridge, ragged per-row brackets,
+  in-sample mode accuracy with LGBMRegressor on tight signal,
+  rejects estimator without ``.predict``, rejects non-monotonic
+  edges, raises on missing-id predict, raises when no y lands in
+  any bracket, raises on predict-before-fit).
 - 6 ``BayesianRidge`` unit tests (parametric/student_t shape,
   coefficient recovery, distance-based σ inflation, zero-variance /
   collinearity / predict-before-fit raises).

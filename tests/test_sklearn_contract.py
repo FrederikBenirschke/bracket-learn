@@ -22,7 +22,13 @@ from sklearn.linear_model import LinearRegression
 from bracketlearn.base import clone
 from bracketlearn.lift import GlobalResidual
 from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster
-from bracketlearn.trainers import EMOS, MixtureNormals, OnlineAggregator, SklearnPoint, StackedParametric
+from bracketlearn.trainers import (
+    EMOS,
+    MixtureNormals,
+    OnlineAggregator,
+    SklearnPoint,
+    StackedParametric,
+)
 
 
 def _synthetic(n: int = 200, k: int = 3, seed: int = 0):

@@ -207,7 +207,6 @@ class BracketForecast(DistributionForecast):
         probs_clean = np.nan_to_num(self.probs, nan=0.0)
         cum = self._row_cum()                           # (N, B_max+1)
         k, below, above = self._per_row_search(vals)    # (N, M) each
-        rows_idx = np.arange(N)[:, None]                # (N, 1)
         # Gather per-row edge[k] and edge[k+1] and prob[k].
         lo = np.take_along_axis(edges, k, axis=1)       # (N, M)
         hi = np.take_along_axis(edges, k + 1, axis=1)   # (N, M)
@@ -250,7 +249,6 @@ class BracketForecast(DistributionForecast):
             raise ValueError("tau must be in [0, 1]")
         N = self.ids.shape[0]
         edges = self.edges
-        probs_clean = np.nan_to_num(self.probs, nan=0.0)
         cum = self._row_cum()
         B_per_row = self._row_valid_B()
         out = np.empty((N, tau_arr.shape[0]))
@@ -287,9 +285,7 @@ class BracketForecast(DistributionForecast):
         vals = np.broadcast_to(x_arr[None, :], (N, M)).copy()
         edges = self.edges
         probs_clean = np.nan_to_num(self.probs, nan=0.0)
-        B_per_row = self._row_valid_B()
         k, below, above = self._per_row_search(vals)
-        rows_idx = np.arange(N)[:, None]
         lo = np.take_along_axis(edges, k, axis=1)
         hi = np.take_along_axis(edges, k + 1, axis=1)
         p_k = np.take_along_axis(probs_clean, k, axis=1)

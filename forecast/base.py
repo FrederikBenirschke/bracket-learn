@@ -105,11 +105,11 @@ class DistributionForecast(abc.ABC):
     @abc.abstractmethod
     def stitch(
         cls,
-        folds: list[tuple[np.ndarray, "DistributionForecast"]],
+        folds: list[tuple[np.ndarray, DistributionForecast]],
         *,
         timestamps: np.ndarray,
-        provenance: "ProvenanceMeta",
-    ) -> "DistributionForecast":
+        provenance: ProvenanceMeta,
+    ) -> DistributionForecast:
         """Concatenate per-fold OOF dists into one whole-data OOF dist.
 
         ``folds`` is a list of ``(orig_row_indices, dist_for_that_fold)`` pairs.
@@ -122,7 +122,7 @@ class DistributionForecast(abc.ABC):
 
     # ---------- per-row bracket projection ----------
 
-    def integrate(self, edges_per_row) -> "BracketForecast":
+    def integrate(self, edges_per_row) -> BracketForecast:
         """Project this distribution onto a per-row bracket grid.
 
         ``edges_per_row`` may be:
@@ -173,7 +173,7 @@ class DistributionForecast(abc.ABC):
         ids: np.ndarray,
         timestamps: np.ndarray,
         provenance: ProvenanceMeta,
-    ) -> "NormalForecast":
+    ) -> NormalForecast:
         from bracketlearn.forecast.parametric import NormalForecast
 
         return NormalForecast.from_arrays(
@@ -190,7 +190,7 @@ class DistributionForecast(abc.ABC):
         ids: np.ndarray,
         timestamps: np.ndarray,
         provenance: ProvenanceMeta,
-    ) -> "StudentTForecast":
+    ) -> StudentTForecast:
         from bracketlearn.forecast.parametric import StudentTForecast
 
         return StudentTForecast.from_arrays(
@@ -208,7 +208,7 @@ class DistributionForecast(abc.ABC):
         ids: np.ndarray,
         timestamps: np.ndarray,
         provenance: ProvenanceMeta,
-    ) -> "MixtureNormalForecast":
+    ) -> MixtureNormalForecast:
         from bracketlearn.forecast.parametric import MixtureNormalForecast
 
         return MixtureNormalForecast.from_arrays(
@@ -226,7 +226,7 @@ class DistributionForecast(abc.ABC):
         ids: np.ndarray,
         timestamps: np.ndarray,
         provenance: ProvenanceMeta,
-    ) -> "QuantileForecast":
+    ) -> QuantileForecast:
         from bracketlearn.forecast.quantile import QuantileForecast
 
         return QuantileForecast.from_arrays(
@@ -243,7 +243,7 @@ class DistributionForecast(abc.ABC):
         ids: np.ndarray,
         timestamps: np.ndarray,
         provenance: ProvenanceMeta,
-    ) -> "BracketForecast":
+    ) -> BracketForecast:
         from bracketlearn.forecast.bracket import BracketForecast
 
         return BracketForecast.from_arrays(

@@ -25,7 +25,6 @@ except ModuleNotFoundError:  # pragma: no cover
 from bracketlearn.trainers import QuantileReg
 from bracketlearn.trainers.quantile import _repair_quantile_crossings
 
-
 _TAUS = (0.05, 0.1, 0.5, 0.9, 0.95)
 
 

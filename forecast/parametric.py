@@ -20,7 +20,6 @@ from bracketlearn.forecast._helpers import _quantile_via_brentq
 from bracketlearn.forecast._meta import Backing, ParametricFamily, ProvenanceMeta
 from bracketlearn.forecast.base import DistributionForecast
 
-
 # ---------------------------------------------------------------------------
 # _ParametricMixin — shared math for single-rv scipy-backed dists.
 #

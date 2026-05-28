@@ -20,7 +20,6 @@ from scipy.stats import norm
 
 from bracketlearn.trainers import EMOS
 
-
 # ---------------------------------------------------------------------------
 # Reference implementation — copied verbatim from the snowflake at
 # prediction_market_weather/ml/trainers/emos.py (functions _gaussian_crps,

@@ -486,9 +486,9 @@ def test_stacking_student_t_emits_t_backed_forecast_with_matching_variance():
 
 def test_stacking_invalid_options_raise_loudly():
     """__post_init__ guards against unknown enum values and df ≤ 2."""
-    from bracketlearn.trainers import StackedParametric
-
     import pytest
+
+    from bracketlearn.trainers import StackedParametric
 
     with pytest.raises(ValueError, match="weight_constraint"):
         StackedParametric(deps=("a",), weight_constraint="bogus")  # type: ignore[arg-type]
@@ -1047,3 +1047,338 @@ def test_bracket_classifier_predict_before_fit_raises():
     with pytest.raises(RuntimeError, match="before fit"):
         bc.predict_dist(np.zeros((1, 2)), ids=np.array([0]),
                         timestamps=np.array([0.0]))
+
+
+# ---------------------------------------------------------------------------
+# BracketRegressor — one regressor on (X, lo, hi) → ŷ ≈ P(y ∈ [lo, hi)).
+# ---------------------------------------------------------------------------
+
+
+def test_bracket_regressor_emits_bracketforecast_ridge():
+    """Ridge regressor → BracketForecast with row-sums == 1."""
+    from sklearn.linear_model import Ridge
+
+    from bracketlearn.trainers import BracketRegressor
+
+    rng = np.random.default_rng(0)
+    N, K = 150, 3
+    X = rng.standard_normal((N, K))
+    y = X[:, 0] + 0.5 * rng.standard_normal(N)
+    ids = np.arange(N)
+    ts = np.arange(N, dtype=float)
+    edges = np.linspace(-3, 3, 7)
+    brackets_by_id = {int(k): edges for k in ids}
+
+    br = BracketRegressor(
+        estimator=Ridge(alpha=1.0),
+        brackets_by_id=brackets_by_id,
+    ).fit(X, y, ids=ids)
+    d = br.predict_dist(X, ids=ids, timestamps=ts)
+    assert isinstance(d, BracketForecast)
+    assert d.probs.shape == (N, 6)
+    np.testing.assert_allclose(np.nansum(d.probs, axis=1), 1.0, atol=1e-9)
+
+
+def test_bracket_regressor_supports_ragged_brackets():
+    from sklearn.linear_model import Ridge
+
+    from bracketlearn.trainers import BracketRegressor
+
+    rng = np.random.default_rng(0)
+    N, K = 120, 3
+    X = rng.standard_normal((N, K))
+    y = X[:, 0] + 0.5 * rng.standard_normal(N)
+    ids = np.arange(N)
+    ts = np.arange(N, dtype=float)
+    edges_a = np.linspace(-3, 3, 5)
+    edges_b = np.linspace(-3, 3, 8)
+    brackets_by_id = {int(k): (edges_a if k % 2 == 0 else edges_b) for k in ids}
+
+    br = BracketRegressor(
+        estimator=Ridge(alpha=1.0),
+        brackets_by_id=brackets_by_id,
+    ).fit(X, y, ids=ids)
+    d = br.predict_dist(X, ids=ids, timestamps=ts)
+    valid = (~np.isnan(d.probs)).sum(axis=1)
+    np.testing.assert_array_equal(valid[ids % 2 == 0], 4)
+    np.testing.assert_array_equal(valid[ids % 2 != 0], 7)
+    np.testing.assert_allclose(np.nansum(d.probs, axis=1), 1.0, atol=1e-9)
+
+
+def test_bracket_regressor_concentrates_mass_at_true_y():
+    """Tree regressor on tight signal → predicted mode bin ≈ true bin."""
+    _skip_if_missing("lightgbm")
+    import lightgbm as lgb
+
+    from bracketlearn.trainers import BracketRegressor
+
+    rng = np.random.default_rng(0)
+    N, K = 300, 3
+    X = rng.standard_normal((N, K))
+    y = X[:, 0] + 0.2 * rng.standard_normal(N)
+    ids = np.arange(N)
+    ts = np.arange(N, dtype=float)
+    edges = np.linspace(-4, 4, 9)
+    brackets_by_id = {int(k): edges for k in ids}
+
+    br = BracketRegressor(
+        estimator=lgb.LGBMRegressor(
+            n_estimators=80, learning_rate=0.05, num_leaves=15,
+            verbose=-1,
+        ),
+        brackets_by_id=brackets_by_id,
+    ).fit(X, y, ids=ids)
+    d = br.predict_dist(X, ids=ids, timestamps=ts)
+    pred_bin = np.nanargmax(d.probs, axis=1)
+    true_bin = np.searchsorted(edges, y, side="right") - 1
+    true_bin = np.clip(true_bin, 0, edges.size - 2)
+    acc = float((pred_bin == true_bin).mean())
+    assert acc > 0.60, f"in-sample mode accuracy {acc:.2f} < 0.60"
+
+
+def test_bracket_regressor_rejects_object_without_predict():
+    """Estimator without .predict (e.g. plain object) raises at construction."""
+    from bracketlearn.trainers import BracketRegressor
+
+    class _NoPredict:
+        def fit(self, X, y, sample_weight=None):
+            return self
+
+    edges = np.linspace(0, 10, 5)
+    with pytest.raises(ValueError, match=r"\.predict\(\) method"):
+        BracketRegressor(
+            estimator=_NoPredict(),
+            brackets_by_id={0: edges, 1: edges},
+        )
+
+
+def test_bracket_regressor_rejects_non_monotonic_edges():
+    from sklearn.linear_model import Ridge
+
+    from bracketlearn.trainers import BracketRegressor
+
+    bad = np.array([0.0, 1.0, 0.5, 2.0])
+    with pytest.raises(ValueError, match="strictly increasing"):
+        BracketRegressor(
+            estimator=Ridge(),
+            brackets_by_id={0: bad},
+        )
+
+
+def test_bracket_regressor_missing_id_raises():
+    from sklearn.linear_model import Ridge
+
+    from bracketlearn.trainers import BracketRegressor
+
+    rng = np.random.default_rng(0)
+    X = rng.standard_normal((20, 2))
+    y = X[:, 0] + 0.3 * rng.standard_normal(20)
+    ids = np.arange(20)
+    ts = np.arange(20, dtype=float)
+    edges = np.linspace(-3, 3, 5)
+    brackets_by_id = {int(k): edges for k in ids}
+    br = BracketRegressor(
+        estimator=Ridge(alpha=1.0),
+        brackets_by_id=brackets_by_id,
+    ).fit(X, y, ids=ids)
+    bad_ids = np.array([999, 1000])
+    with pytest.raises(KeyError, match="missing"):
+        br.predict_dist(X[:2], ids=bad_ids, timestamps=ts[:2])
+
+
+def test_bracket_regressor_raises_when_y_outside_all_brackets():
+    from sklearn.linear_model import Ridge
+
+    from bracketlearn.trainers import BracketRegressor
+
+    rng = np.random.default_rng(0)
+    X = rng.standard_normal((30, 2))
+    y = np.full(30, 1000.0)
+    ids = np.arange(30)
+    edges = np.linspace(-3, 3, 5)
+    br = BracketRegressor(
+        estimator=Ridge(alpha=1.0),
+        brackets_by_id={int(k): edges for k in ids},
+    )
+    with pytest.raises(RuntimeError, match="no row's y landed"):
+        br.fit(X, y, ids=ids)
+
+
+def test_bracket_regressor_predict_before_fit_raises():
+    from sklearn.linear_model import Ridge
+
+    from bracketlearn.trainers import BracketRegressor
+
+    edges = np.linspace(0, 10, 5)
+    br = BracketRegressor(
+        estimator=Ridge(),
+        brackets_by_id={0: edges},
+    )
+    with pytest.raises(RuntimeError, match="before fit"):
+        br.predict_dist(np.zeros((1, 2)), ids=np.array([0]),
+                        timestamps=np.array([0.0]))
+
+
+# ---------------------------------------------------------------------------
+# BracketStacking — multiclass head over concatenated bracket-prob deps.
+# ---------------------------------------------------------------------------
+
+
+def _mk_bracket_upstream(
+    probs: np.ndarray, edges: np.ndarray, *, source: str = "test",
+):
+    from bracketlearn.forecast import BracketForecast, ProvenanceMeta
+
+    N = probs.shape[0]
+    prov = ProvenanceMeta.placeholder(source)
+    return BracketForecast.from_arrays(
+        edges=edges,
+        probs=probs,
+        ids=np.arange(N),
+        timestamps=np.arange(N, dtype=float),
+        provenance=prov,
+    )
+
+
+def test_bracket_stacking_emits_bracket_forecast_with_correct_K():
+    _skip_if_missing("lightgbm")
+    import lightgbm as lgb
+
+    from bracketlearn.trainers import BracketStacking
+
+    rng = np.random.default_rng(0)
+    N, K = 300, 4
+    edges = np.linspace(0.0, 10.0, K + 1)
+    # Two upstreams with noisy probs over K bins.
+    pa = rng.dirichlet(np.full(K, 2.0), size=N)
+    pb = rng.dirichlet(np.full(K, 2.0), size=N)
+    d_a = _mk_bracket_upstream(pa, edges, source="a")
+    d_b = _mk_bracket_upstream(pb, edges, source="b")
+    # Truth concentrated in one of the bins per row.
+    y = rng.uniform(edges[0], edges[-1], N)
+    stack = BracketStacking(
+        deps=("a", "b"),
+        estimator=lgb.LGBMClassifier(
+            n_estimators=20, num_leaves=4, min_child_samples=10,
+            objective="multiclass", verbose=-1,
+        ),
+    )
+    stack.fit(np.zeros((N, 1)), y,
+              ids=np.arange(N),
+              deps_oof={"a": d_a, "b": d_b})
+    out = stack.predict_dist(
+        np.zeros((N, 1)),
+        ids=np.arange(N),
+        timestamps=np.arange(N, dtype=float),
+        deps_oof={"a": d_a, "b": d_b},
+    )
+    from bracketlearn.forecast import BracketForecast
+    assert isinstance(out, BracketForecast)
+    assert out.probs.shape == (N, K)
+    np.testing.assert_allclose(out.probs.sum(axis=1), 1.0, atol=1e-6)
+    assert stack.K_ == K
+
+
+def test_bracket_stacking_rejects_K_mismatch():
+    _skip_if_missing("lightgbm")
+    import lightgbm as lgb
+
+    from bracketlearn.trainers import BracketStacking
+
+    rng = np.random.default_rng(1)
+    N = 100
+    edges_a = np.linspace(0, 10, 5)  # K=4
+    edges_b = np.linspace(0, 10, 4)  # K=3
+    pa = rng.dirichlet(np.full(4, 2.0), size=N)
+    pb = rng.dirichlet(np.full(3, 2.0), size=N)
+    d_a = _mk_bracket_upstream(pa, edges_a)
+    d_b = _mk_bracket_upstream(pb, edges_b)
+    stack = BracketStacking(
+        deps=("a", "b"),
+        estimator=lgb.LGBMClassifier(verbose=-1),
+    )
+    with pytest.raises(ValueError, match="must share bracket count"):
+        stack.fit(np.zeros((N, 1)), np.zeros(N),
+                  ids=np.arange(N),
+                  deps_oof={"a": d_a, "b": d_b})
+
+
+def test_bracket_stacking_rejects_misaligned_ids():
+    _skip_if_missing("lightgbm")
+    import lightgbm as lgb
+
+    from bracketlearn.forecast import BracketForecast, ProvenanceMeta
+    from bracketlearn.trainers import BracketStacking
+
+    rng = np.random.default_rng(2)
+    N, K = 60, 3
+    edges = np.linspace(0, 10, K + 1)
+    pa = rng.dirichlet(np.full(K, 2.0), size=N)
+    pb = rng.dirichlet(np.full(K, 2.0), size=N)
+    prov = ProvenanceMeta.placeholder("t")
+    d_a = BracketForecast.from_arrays(
+        edges=edges, probs=pa,
+        ids=np.arange(N), timestamps=np.arange(N, dtype=float),
+        provenance=prov,
+    )
+    d_b = BracketForecast.from_arrays(
+        edges=edges, probs=pb,
+        ids=np.arange(N) + 1000, timestamps=np.arange(N, dtype=float),
+        provenance=prov,
+    )
+    stack = BracketStacking(
+        deps=("a", "b"),
+        estimator=lgb.LGBMClassifier(verbose=-1),
+    )
+    with pytest.raises(ValueError, match="ids does not match"):
+        stack.fit(np.zeros((N, 1)), np.zeros(N),
+                  ids=np.arange(N),
+                  deps_oof={"a": d_a, "b": d_b})
+
+
+def test_bracket_stacking_rejects_non_bracket_upstream():
+    _skip_if_missing("lightgbm")
+    import lightgbm as lgb
+
+    from bracketlearn.trainers import BracketStacking
+
+    rng = np.random.default_rng(3)
+    N, K = 60, 3
+    edges = np.linspace(0, 10, K + 1)
+    pa = rng.dirichlet(np.full(K, 2.0), size=N)
+    d_a = _mk_bracket_upstream(pa, edges)
+    d_normal = _mk_normal_upstream(np.zeros(N), np.ones(N))
+    stack = BracketStacking(
+        deps=("a", "normal"),
+        estimator=lgb.LGBMClassifier(verbose=-1),
+    )
+    with pytest.raises(NotImplementedError, match="bracket-backed"):
+        stack.fit(np.zeros((N, 1)), np.zeros(N),
+                  ids=np.arange(N),
+                  deps_oof={"a": d_a, "normal": d_normal})
+
+
+def test_bracket_stacking_predict_before_fit_raises():
+    from sklearn.dummy import DummyClassifier
+
+    from bracketlearn.trainers import BracketStacking
+
+    stack = BracketStacking(
+        deps=("a",),
+        estimator=DummyClassifier(strategy="uniform"),
+    )
+    with pytest.raises(RuntimeError, match="before fit"):
+        stack.predict_dist(
+            np.zeros((1, 1)), ids=np.array([0]),
+            timestamps=np.array([0.0]),
+            deps_oof={"a": None},
+        )
+
+
+def test_bracket_stacking_requires_at_least_one_dep():
+    from sklearn.dummy import DummyClassifier
+
+    from bracketlearn.trainers import BracketStacking
+
+    with pytest.raises(ValueError, match="at least one"):
+        BracketStacking(deps=(), estimator=DummyClassifier())

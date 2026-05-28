@@ -44,7 +44,7 @@ pip install -e ./bracketlearn
 pip install -e "./bracketlearn[demo]"
 ```
 
-PyPI publication is planned for the `v0.2.0` tag; once live the install
+PyPI publication is planned for the `v0.4.0` tag; once live the install
 becomes `pip install bracketlearn` / `pip install "bracketlearn[demo]"`.
 
 ## Adapter catalogue — venue → math
@@ -337,12 +337,12 @@ Two fundamentally different trainer families:
   continuous-ish distribution. Call `.integrate(edges_per_row)` to
   price on a specific grid.
 - **Bracket-aware** (`CumulativeBinary`, `TailSpecialist`,
-  `CDFBoostBracket`, `BracketClassifier`): train on bracket-derived
-  indicators. Each takes a `cutpoints_by_id` or `brackets_by_id`
-  dict (id → 1-D edge array) at construction so per-row grids flow
-  through fit and predict. Their `fit()` signatures require an
-  explicit `ids=` kwarg; inside `ForecastPipeline` this is
-  forwarded automatically.
+  `CDFBoostBracket`, `BracketClassifier`, `BracketRegressor`): train
+  on bracket-derived indicators. Each takes a `cutpoints_by_id` or
+  `brackets_by_id` dict (id → 1-D edge array) at construction so
+  per-row grids flow through fit and predict. Their `fit()`
+  signatures require an explicit `ids=` kwarg; inside
+  `ForecastPipeline` this is forwarded automatically.
 
   `BracketClassifier` is the "use any sklearn classifier" entry
   point: it builds one augmented row per (sample, bracket) with
@@ -354,6 +354,16 @@ Two fundamentally different trainer families:
   `CumulativeBinary`: classifier flexibility but no monotonicity
   constraint, so on smooth problems CumulativeBinary's LGBM-with-
   monotone-cutpoints variant tends to win narrowly.
+
+  `BracketRegressor` is the regressor sibling — same augmentation,
+  same `[0/1]` target, but `predict` instead of `predict_proba`.
+  Use it when your estimator family only ships a regressor (Ridge,
+  ElasticNet, GradientBoostingRegressor, LGBMRegressor,
+  MLPRegressor, custom GAMs) or when squared-error loss on the
+  bracket-hit target fits the problem better than cross-entropy.
+  Outputs are clipped to `[eps, 1-eps]` and row-normalised; prefer
+  `BracketClassifier` when both are available since clip+normalise
+  loses the calibration logistic-style heads give for free.
 
 ## CV variants
 
@@ -447,11 +457,11 @@ full v0.3.0 entry including the breaking-change list.
 
 v0.2 baseline carries forward: protocols, three CV modes
 (expanding-window / rolling-window / kfold), sample-weight threading,
-multi-target wrapper, grid-search wrapper, 18 trainers (incl. three
+multi-target wrapper, grid-search wrapper, 19 trainers (incl. three
 Bayesian: `BayesianRidge`, `BMAStacking`, `HierarchicalNormal`, and
-the any-classifier `BracketClassifier`), 6 prediction-market
-adapters, full distribution and contract-level scoring, pipeline
-`groups=` routing for cross-site trainers. See
+the any-estimator pair `BracketClassifier` / `BracketRegressor`),
+6 prediction-market adapters, full distribution and contract-level
+scoring, pipeline `groups=` routing for cross-site trainers. See
 `bracketlearn/examples/` for runnable demos.
 
 Not yet:

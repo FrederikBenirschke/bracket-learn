@@ -25,7 +25,7 @@ Less commonly used symbols live in their submodules:
 
 from __future__ import annotations
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 from bracketlearn.adapters import (
     BinaryAbove,
@@ -73,6 +73,8 @@ from bracketlearn.trainers import (
     BayesianRidge,
     BMAStacking,
     BracketClassifier,
+    BracketRegressor,
+    BracketStacking,
     CDFBoostBracket,
     CumulativeBinary,
     DistAsFeatures,
@@ -120,6 +122,8 @@ __all__ = [
     "BMAStacking",
     "BayesianRidge",
     "BracketClassifier",
+    "BracketRegressor",
+    "BracketStacking",
     "HierarchicalNormal",
     "CDFBoostBracket",
     "CumulativeBinary",

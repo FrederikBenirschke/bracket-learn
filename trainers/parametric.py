@@ -935,7 +935,7 @@ class BayesianRidge(BaseEstimator):
         y = np.asarray(y, dtype=float)
         A = self._design(X, fit_phase=True)
         N, k = A.shape
-        if N <= k:
+        if k >= N:
             raise ValueError(
                 f"BayesianRidge.fit: N={N} ≤ d+1={k}; posterior df "
                 "would be too small for a finite-variance Student-t."
@@ -1221,7 +1221,7 @@ class HierarchicalNormal(BaseEstimator):
             )
         A = self._design(X, fit_phase=True)
         N, K = A.shape
-        if N != y.shape[0]:
+        if y.shape[0] != N:
             raise ValueError(f"X has N={N} but y has N={y.shape[0]}")
         stats = self._per_site_sufficient_stats(A, y, groups)
         if any(n_s < 1 for (_, _, _, n_s) in stats.values()):
