@@ -170,6 +170,60 @@ def test_stacking_receives_deps_oof():
 
 
 # ---------------------------------------------------------------------------
+# Groups routing for hierarchical / cross-site trainers.
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_routes_groups_to_hierarchical_normal():
+    """fit_predict and predict thread the ``groups`` kwarg through to any
+    stage whose signature declares it. Trainers without ``groups`` ignore it.
+    """
+    from bracketlearn.trainers import HierarchicalNormal
+
+    rng = np.random.default_rng(0)
+    K = 3
+    site_sizes = [40, 80, 120, 200]
+    Xs, ys, gs, tss = [], [], [], []
+    t = 0
+    for s, n in enumerate(site_sizes):
+        beta_s = np.array([0.5, -1.0, 2.0]) + rng.standard_normal(K) * 0.3
+        X_s = rng.standard_normal((n, K))
+        y_s = X_s @ beta_s + rng.standard_normal(n) * 0.5
+        Xs.append(X_s); ys.append(y_s); gs.extend([s] * n)
+        tss.extend(range(t, t + n)); t += n
+    X = np.vstack(Xs); y = np.concatenate(ys)
+    groups = np.array(gs); ts = np.array(tss, dtype=float); ids = np.arange(len(y))
+    # Shuffle so folds aren't site-segregated.
+    perm = rng.permutation(len(y))
+    X, y, groups, ids, ts = X[perm], y[perm], groups[perm], ids[perm], ts[perm]
+
+    p = ForecastPipeline(
+        steps=[("hn", HierarchicalNormal())],
+        cv="kfold", n_folds=4,
+    )
+    res = p.fit_predict(X, y, ids=ids, timestamps=ts, groups=groups)
+    oof = res.forecasts["hn"]
+    assert oof.ids.shape[0] == len(y)
+    # OOF must be at least as good as a no-pool σ baseline; check it's
+    # not blowing up (within 3× the in-sample residual scale).
+    y_oof = y[oof.ids.astype(int)]
+    assert np.sqrt(((oof.mu - y_oof) ** 2).mean()) < 1.5
+
+    # Predict path also routes groups.
+    X_te = rng.standard_normal((20, K))
+    g_te = np.array([0, 1, 2, 3] * 5)
+    out = p.predict(
+        X_te, ids=np.arange(20), timestamps=np.arange(20, dtype=float), groups=g_te,
+    )
+    assert "hn" in out
+    assert out["hn"].mu.shape == (20,)
+
+    # Predict without groups should fall through HN's loud rail.
+    with pytest.raises(ValueError, match="groups is required"):
+        p.predict(X_te, ids=np.arange(20), timestamps=np.arange(20, dtype=float))
+
+
+# ---------------------------------------------------------------------------
 # to_table renders without crashing.
 # ---------------------------------------------------------------------------
 

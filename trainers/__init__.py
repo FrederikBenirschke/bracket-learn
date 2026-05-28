@@ -10,7 +10,7 @@ Layout
 - ``bracketlearn.trainers.parametric`` — EMOS, NGBoostNormal, MixtureNormals,
   StackedParametric (legacy alias ``Stacking``).
 - ``bracketlearn.trainers.quantile`` — QuantileReg, QuantileForest.
-- ``bracketlearn.trainers.bracket`` — CumulativeBinary, TailSpecialist, CDFBoostBracket, LinearPoolDist.
+- ``bracketlearn.trainers.bracket`` — CumulativeBinary, TailSpecialist, CDFBoostBracket, BracketClassifier, LinearPoolDist.
 - ``bracketlearn.trainers.meta`` — DistAsFeatures.
 
 Convenience builders (``ridge``, ``emos_calibrated``) live in
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from bracketlearn.trainers._factories import emos_calibrated, ridge
 from bracketlearn.trainers.bracket import (
+    BracketClassifier,
     CDFBoostBracket,
     CumulativeBinary,
     LinearPoolDist,
@@ -31,6 +32,7 @@ from bracketlearn.trainers.parametric import (
     EMOS,
     BayesianRidge,
     BMAStacking,
+    HierarchicalNormal,
     MixtureNormals,
     NGBoostNormal,
     StackedParametric,
@@ -48,6 +50,7 @@ __all__ = [
     "BMAStacking",
     "BayesianRidge",
     "EMOS",
+    "HierarchicalNormal",
     "MixtureNormals",
     "NGBoostNormal",
     "StackedParametric",
@@ -56,6 +59,7 @@ __all__ = [
     "QuantileForest",
     "QuantileReg",
     # bracket
+    "BracketClassifier",
     "CDFBoostBracket",
     "CumulativeBinary",
     "LinearPoolDist",

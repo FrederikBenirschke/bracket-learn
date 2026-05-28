@@ -382,6 +382,7 @@ class ForecastPipeline:
         ids: np.ndarray,
         timestamps: np.ndarray,
         sample_weight: np.ndarray | None = None,
+        groups: np.ndarray | None = None,
     ) -> PipelineResult:
         X = np.asarray(X)
         y = np.asarray(y, dtype=float)
@@ -392,6 +393,12 @@ class ForecastPipeline:
             if sample_weight.shape[0] != y.shape[0]:
                 raise ValueError(
                     f"sample_weight length {sample_weight.shape[0]} != y length {y.shape[0]}"
+                )
+        if groups is not None:
+            groups = np.asarray(groups)
+            if groups.shape[0] != y.shape[0]:
+                raise ValueError(
+                    f"groups length {groups.shape[0]} != y length {y.shape[0]}"
                 )
         N = y.shape[0]
 
@@ -409,6 +416,7 @@ class ForecastPipeline:
         ids_o = ids[order]
         ts_o = timestamps[order]
         sw_o = sample_weight[order] if sample_weight is not None else None
+        g_o = groups[order] if groups is not None else None
 
         folds = self._make_folds(N)
 
@@ -441,7 +449,7 @@ class ForecastPipeline:
                 dist_train, dist_test = self._fit_stage_on_fold(
                     fold_forecaster, Xo, yo, ids_o, ts_o, train_idx, test_idx,
                     deps_for_fit=deps_for_fit, deps_for_pred=deps_for_pred,
-                    prov=prov, sample_weight=sw_o,
+                    prov=prov, sample_weight=sw_o, groups=g_o,
                 )
                 fold_train_dist[stage.name] = dist_train
                 fold_test_dist[stage.name] = dist_test
@@ -474,7 +482,7 @@ class ForecastPipeline:
         # This is sklearn's standard pattern: CV produces OOF metrics, the
         # final-model fit produces the artefact that scores new data.
         if self.refit_on_full:
-            self._fit_canonical_models(Xo, yo, ids_o, ts_o, sw_o)
+            self._fit_canonical_models(Xo, yo, ids_o, ts_o, sw_o, groups=g_o)
 
         return PipelineResult(forecasts=out)
 
@@ -482,6 +490,8 @@ class ForecastPipeline:
         self,
         X: np.ndarray, y: np.ndarray, ids: np.ndarray, ts: np.ndarray,
         sample_weight: np.ndarray | None = None,
+        *,
+        groups: np.ndarray | None = None,
     ) -> None:
         """Fit each stage on the *full* training data, storing the result on
         ``self._fitted_stages`` for later use by ``predict()``.
@@ -515,7 +525,7 @@ class ForecastPipeline:
                 if len(tr_minus) >= 2:
                     _, cal_dist = self._fit_inner(
                         inner, X, y, ids, ts, tr_minus, calib_idx, deps, deps,
-                        sample_weight=sample_weight,
+                        sample_weight=sample_weight, groups=groups,
                     )
                     calibrator.fit(cal_dist, y[calib_idx])
                 else:
@@ -527,6 +537,7 @@ class ForecastPipeline:
             # holds for whatever downstream StackedParametric expects.
             dist_train_full = self._refit_and_predict_full(
                 inner, X, y, ids, ts, deps, sample_weight=sample_weight,
+                groups=groups,
             )
             if calibrator is not None:
                 dist_train_full = calibrator.transform(dist_train_full)
@@ -540,6 +551,8 @@ class ForecastPipeline:
         X: np.ndarray, y: np.ndarray, ids: np.ndarray, ts: np.ndarray,
         deps: dict[str, DistributionForecast],
         sample_weight: np.ndarray | None = None,
+        *,
+        groups: np.ndarray | None = None,
     ) -> DistributionForecast:
         """Refit ``f`` on full (X, y); return its in-sample predict_dist."""
 
@@ -555,14 +568,15 @@ class ForecastPipeline:
             else:
                 f.lifter.fit(base_pt_oof, y[half:])
             return f.predict_dist(X, ids=ids, timestamps=ts)
+        extras: dict[str, Any] = {"ids": ids, "timestamps": ts}
         if deps:
-            _fit_with_optional_weight(
-                f, X, y, sample_weight,
-                ids=ids, timestamps=ts, deps_oof=deps,
-            )
-            return _predict_with_deps(f, X, ids, ts, deps)
-        _fit_with_optional_weight(f, X, y, sample_weight)
-        return f.predict_dist(X, ids=ids, timestamps=ts)
+            extras["deps_oof"] = deps
+        if groups is not None:
+            extras["groups"] = groups
+        _fit_with_optional_weight(f, X, y, sample_weight, **extras)
+        return _predict_with_extras(
+            f, X, ids, ts, deps_oof=deps if deps else None, groups=groups,
+        )
 
     def predict(
         self,
@@ -570,12 +584,14 @@ class ForecastPipeline:
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
+        groups: np.ndarray | None = None,
     ) -> dict[str, DistributionForecast]:
         """Predict on unseen X using the canonical (full-train) models.
 
         Returns ``{stage_name: DistributionForecast}``. Requires
         ``refit_on_full=True`` at construction (the default) and a prior
-        ``fit_predict()`` call.
+        ``fit_predict()`` call. ``groups`` is forwarded to any stage whose
+        ``predict_dist`` declares it (e.g. ``HierarchicalNormal``).
         """
 
         if not self._fitted_stages:
@@ -585,16 +601,20 @@ class ForecastPipeline:
         X = np.asarray(X)
         ids = np.asarray(ids)
         timestamps = np.asarray(timestamps)
+        if groups is not None:
+            groups = np.asarray(groups)
         out: dict[str, DistributionForecast] = {}
         for stage in self._stages:
             f = self._fitted_stages[stage.name]
             deps = {d: out[d] for d in stage.depends_on}
             if isinstance(f, LiftedForecaster):
                 dist = f.predict_dist(X, ids=ids, timestamps=timestamps)
-            elif deps:
-                dist = _predict_with_deps(f, X, ids, timestamps, deps)
             else:
-                dist = f.predict_dist(X, ids=ids, timestamps=timestamps)
+                dist = _predict_with_extras(
+                    f, X, ids, timestamps,
+                    deps_oof=deps if deps else None,
+                    groups=groups,
+                )
             cal = self._fitted_calibrators.get(stage.name)
             if cal is not None:
                 dist = cal.transform(dist)
@@ -693,6 +713,7 @@ class ForecastPipeline:
         deps_for_pred: dict[str, DistributionForecast],
         prov: ProvenanceMeta,
         sample_weight: np.ndarray | None = None,
+        groups: np.ndarray | None = None,
     ) -> tuple[DistributionForecast, DistributionForecast]:
         """Fit ``f`` on train_idx; return (dist_on_train, dist_on_test).
 
@@ -721,21 +742,21 @@ class ForecastPipeline:
             dist_train, dist_test = self._fit_inner(
                 inner, X, y, ids, ts, train_idx, test_idx,
                 deps_for_fit, deps_for_pred,
-                sample_weight=sample_weight,
+                sample_weight=sample_weight, groups=groups,
             )
         else:
             # 1) fit on train minus calibration tail
             cal_train_dist, cal_dist = self._fit_inner(
                 inner, X, y, ids, ts, tr_minus, calib_idx,
                 deps_for_fit, deps_for_pred,    # deps approximation OK in v0.1
-                sample_weight=sample_weight,
+                sample_weight=sample_weight, groups=groups,
             )
             calibrator.fit(cal_dist, y[calib_idx])
             # 2) refit on full train for canonical predictions
             dist_train, dist_test = self._fit_inner(
                 inner, X, y, ids, ts, train_idx, test_idx,
                 deps_for_fit, deps_for_pred,
-                sample_weight=sample_weight,
+                sample_weight=sample_weight, groups=groups,
             )
             dist_train = calibrator.transform(dist_train)
             dist_test = calibrator.transform(dist_test)
@@ -752,6 +773,8 @@ class ForecastPipeline:
         deps_for_fit: dict[str, DistributionForecast],
         deps_for_pred: dict[str, DistributionForecast],
         sample_weight: np.ndarray | None = None,
+        *,
+        groups: np.ndarray | None = None,
     ) -> tuple[DistributionForecast, DistributionForecast]:
 
         X_tr, y_tr = X[train_idx], y[train_idx]
@@ -759,6 +782,8 @@ class ForecastPipeline:
         ids_tr, ts_tr = ids[train_idx], ts[train_idx]
         ids_te, ts_te = ids[test_idx], ts[test_idx]
         sw_tr = sample_weight[train_idx] if sample_weight is not None else None
+        g_tr = groups[train_idx] if groups is not None else None
+        g_te = groups[test_idx] if groups is not None else None
 
         if isinstance(f, LiftedForecaster):
             half = len(train_idx) // 2
@@ -778,20 +803,25 @@ class ForecastPipeline:
             dist_test = f.predict_dist(X_te, ids=ids_te, timestamps=ts_te)
             return dist_train, dist_test
 
+        # Pass ids/timestamps/deps/groups explicitly. Signature-based
+        # routing in _fit_with_optional_weight + _predict_with_extras
+        # drops anything a particular trainer doesn't declare.
+        fit_extras: dict[str, Any] = {"ids": ids_tr, "timestamps": ts_tr}
         if deps_for_fit:
-            # Pass ids/timestamps explicitly so trainers that check
-            # row-alignment against deps_oof.ids (e.g. StackedParametric) see the
-            # fold-relative ids, not the auto-filled arange(N).
-            _fit_with_optional_weight(
-                f, X_tr, y_tr, sw_tr,
-                ids=ids_tr, timestamps=ts_tr, deps_oof=deps_for_fit,
-            )
-            dist_train = _predict_with_deps(f, X_tr, ids_tr, ts_tr, deps_for_fit)
-            dist_test = _predict_with_deps(f, X_te, ids_te, ts_te, deps_for_pred)
-        else:
-            _fit_with_optional_weight(f, X_tr, y_tr, sw_tr)
-            dist_train = f.predict_dist(X_tr, ids=ids_tr, timestamps=ts_tr)
-            dist_test = f.predict_dist(X_te, ids=ids_te, timestamps=ts_te)
+            fit_extras["deps_oof"] = deps_for_fit
+        if g_tr is not None:
+            fit_extras["groups"] = g_tr
+        _fit_with_optional_weight(f, X_tr, y_tr, sw_tr, **fit_extras)
+        dist_train = _predict_with_extras(
+            f, X_tr, ids_tr, ts_tr,
+            deps_oof=deps_for_fit if deps_for_fit else None,
+            groups=g_tr,
+        )
+        dist_test = _predict_with_extras(
+            f, X_te, ids_te, ts_te,
+            deps_oof=deps_for_pred if deps_for_pred else None,
+            groups=g_te,
+        )
         return dist_train, dist_test
 
 
@@ -858,17 +888,18 @@ def _fit_with_optional_weight(
     forecaster.fit(X, y, **call_kwargs)
 
 
-def _predict_with_deps(
+def _predict_with_extras(
     forecaster: Any,
     X: np.ndarray,
     ids: np.ndarray,
     ts: np.ndarray,
-    deps_oof: dict[str, DistributionForecast],
+    **extra: Any,
 ) -> DistributionForecast:
-    """Call predict_dist with ``deps_oof`` if the signature accepts it.
+    """Call predict_dist threading any extras (``deps_oof``, ``groups``, …)
+    that the forecaster's signature declares.
 
-    We introspect the signature instead of using a bare ``except TypeError``
-    (which would swallow real bugs raised inside predict_dist).
+    Signature-based introspection — never a bare ``except TypeError``,
+    which would swallow real bugs raised inside predict_dist.
     """
     import inspect
 
@@ -877,13 +908,31 @@ def _predict_with_deps(
         params = sig.parameters
     except (TypeError, ValueError):
         params = {}
-    accepts_deps = (
-        "deps_oof" in params
-        or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    accepts_var_kw = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
     )
-    if accepts_deps:
-        return forecaster.predict_dist(X, ids=ids, timestamps=ts, deps_oof=deps_oof)
-    return forecaster.predict_dist(X, ids=ids, timestamps=ts)
+
+    def _accepts(name: str) -> bool:
+        return accepts_var_kw or name in params
+
+    call_kwargs: dict[str, Any] = {"ids": ids, "timestamps": ts}
+    for k, v in extra.items():
+        if v is None:
+            continue
+        if _accepts(k):
+            call_kwargs[k] = v
+    return forecaster.predict_dist(X, **call_kwargs)
+
+
+def _predict_with_deps(
+    forecaster: Any,
+    X: np.ndarray,
+    ids: np.ndarray,
+    ts: np.ndarray,
+    deps_oof: dict[str, DistributionForecast],
+) -> DistributionForecast:
+    """Back-compat wrapper for the deps-only call path."""
+    return _predict_with_extras(forecaster, X, ids, ts, deps_oof=deps_oof)
 
 
 def _stitch_folds(

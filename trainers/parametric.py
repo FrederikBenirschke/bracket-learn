@@ -664,7 +664,7 @@ class BMAStacking(BaseEstimator):
 
     deps: tuple[str, ...]
     alpha_prior: float = 1.0
-    max_iter: int = 200
+    max_iter: int = 500
     tol: float = 1e-6
     name: str = "BMAStacking"
     weights_: np.ndarray | None = field(default=None, init=False)
@@ -760,8 +760,17 @@ class BMAStacking(BaseEstimator):
             raise ValueError(
                 "BMAStacking: sample_weight must be 1-D, same length as y, non-negative."
             )
-        # EM loop.
+        # EM loop. Convergence on Δ weighted-log-likelihood (the EM objective)
+        # rather than Δw — when upstreams are near-duplicates, w drifts
+        # linearly toward the fixed point with no real change in the
+        # objective, and tol-on-Δw spuriously fails. Δll is the proper
+        # criterion (and Σ Δll = 0 implies w is stationary).
         w = np.full(K, 1.0 / K)
+        prev_ll = -np.inf
+        delta_ll = np.inf
+        # Constant offset from the per-row log_L_max subtraction (cancels in
+        # γ but matters for the true log-likelihood reported below).
+        offset = float((s * log_L_max[:, 0]).sum())
         for it in range(self.max_iter):
             num = w[None, :] * L            # (N, K)
             denom = num.sum(axis=1, keepdims=True)
@@ -771,18 +780,20 @@ class BMAStacking(BaseEstimator):
                     "upstream μ̂'s sit too far from y on some rows. Check upstream "
                     "fit or widen σ_floor on upstreams."
                 )
-            gamma = num / denom              # (N, K), rows sum to 1
-            alpha_n = float(self.alpha_prior) + (s[:, None] * gamma).sum(axis=0)
-            w_new = alpha_n / alpha_n.sum()
-            if np.max(np.abs(w_new - w)) < self.tol:
-                w = w_new
+            # Marginal log-likelihood under the current mixture weights.
+            ll = float((s * np.log(denom[:, 0])).sum()) + offset
+            delta_ll = ll - prev_ll
+            if it > 0 and abs(delta_ll) < self.tol * max(abs(ll), 1.0):
                 self.n_iter_ = it + 1
                 break
-            w = w_new
+            gamma = num / denom              # (N, K), rows sum to 1
+            alpha_n = float(self.alpha_prior) + (s[:, None] * gamma).sum(axis=0)
+            w = alpha_n / alpha_n.sum()
+            prev_ll = ll
         else:
             raise RuntimeError(
                 f"BMAStacking.fit: EM did not converge in {self.max_iter} "
-                f"iterations (last Δw = {np.max(np.abs(w_new - w)):.3g}). "
+                f"iterations (last Δlog-lik = {delta_ll:.3g}). "
                 "Raise max_iter or check upstream quality."
             )
         self.weights_ = w
@@ -1014,6 +1025,315 @@ class BayesianRidge(BaseEstimator):
         return DistributionForecast.from_student_t(
             mu, sigma, df,
             ids=np.asarray(ids), timestamps=np.asarray(timestamps),
+            provenance=prov,
+        )
+
+
+# ---------------------------------------------------------------------------
+# HierarchicalNormal — cross-site partial-pooling regression. Empirical Bayes
+# on the shrinkage variance τ²; closed-form posterior per site.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class HierarchicalNormal(BaseEstimator):
+    """Hierarchical normal regression with site-level partial pooling.
+
+    Cross-site (Form C) model. For each row i belonging to site s_i with
+    K-dim feature vector x_i:
+
+        y_i      = x_iᵀ β_{s_i} + ε_i,    ε_i ~ N(0, σ²)
+        β_s | β₀ ~ N(β₀, τ² · I_K)        site coefficients ∈ R^K
+        β₀        flat (improper)
+
+    Each site has its own coefficient vector β_s. All sites' coefs are
+    shrunk toward the global mean β₀ by an amount τ that the data
+    itself estimates (empirical Bayes — Type-II marginal-likelihood
+    maximisation over (log σ², log τ²); β₀ profiled out by GLS).
+
+    Predictive at a new row in site s:
+
+        μ̂   = xᵀ E[β_s | data]
+        σ̂²  = σ² + xᵀ Cov(β_s | data) x
+
+    For a row in a site not seen at fit time, predictive uses β₀ with
+    the marginal prior τ² added to the posterior on β₀ (proper
+    Bayesian predictive for a new group). Raises by default
+    (``allow_unseen_sites=False``) — Rule #0.5.
+
+    Inputs require a ``groups`` array of length N giving the site
+    identifier per row (str or int). Features are standardised before
+    fit (with stored stats reused at predict time).
+
+    Pipeline integration: this trainer needs ``groups`` at both fit
+    and predict time, which the current ``ForecastPipeline`` does not
+    thread. Use standalone or wrap it with a pipeline that propagates
+    the array. Closed-form fit; no MCMC.
+
+    Computational shortcut: per-site Σ_s = σ²·I + τ²·X_s X_sᵀ is a
+    rank-K perturbation of σ²·I, so by Woodbury we only invert K×K
+    matrices regardless of per-site n_s. Fit cost ≈ O(N·K² + S·K³·iters).
+    """
+
+    allow_unseen_sites: bool = False
+    standardize: bool = True
+    sigma2_init: float = 1.0
+    tau2_init: float = 1.0
+    max_iter: int = 500
+    name: str = "HierarchicalNormal"
+    depends_on: tuple[str, ...] = ()
+    # fitted state
+    sigma2_: float | None = field(default=None, init=False)
+    tau2_: float | None = field(default=None, init=False)
+    beta_0_: np.ndarray | None = field(default=None, init=False)
+    V_beta_0_: np.ndarray | None = field(default=None, init=False)
+    site_m_: dict[Any, np.ndarray] | None = field(default=None, init=False)
+    site_V_: dict[Any, np.ndarray] | None = field(default=None, init=False)
+    x_mean_: np.ndarray | None = field(default=None, init=False)
+    x_scale_: np.ndarray | None = field(default=None, init=False)
+    n_iter_: int | None = field(default=None, init=False)
+
+    def _design(self, X: np.ndarray, *, fit_phase: bool) -> np.ndarray:
+        X = np.asarray(X, dtype=float)
+        if X.ndim != 2:
+            raise ValueError(
+                f"HierarchicalNormal: X must be 2-D; got shape {X.shape}"
+            )
+        if self.standardize:
+            if fit_phase:
+                self.x_mean_ = X.mean(axis=0)
+                self.x_scale_ = X.std(axis=0, ddof=0)
+                if np.any(self.x_scale_ <= 0):
+                    bad = np.where(self.x_scale_ <= 0)[0].tolist()
+                    raise ValueError(
+                        f"HierarchicalNormal.fit: zero-variance column(s) "
+                        f"at indices {bad}; drop them before fitting."
+                    )
+            else:
+                if self.x_mean_ is None or self.x_scale_ is None:
+                    raise RuntimeError(
+                        "HierarchicalNormal._design: predict before fit."
+                    )
+            X = (X - self.x_mean_) / self.x_scale_
+        return np.column_stack([np.ones(X.shape[0]), X])
+
+    @staticmethod
+    def _per_site_sufficient_stats(
+        A_full: np.ndarray, y: np.ndarray, groups: np.ndarray,
+    ) -> dict[Any, tuple[np.ndarray, np.ndarray, float, int]]:
+        """Per site, precompute (X_sᵀX_s, X_sᵀy_s, y_sᵀy_s, n_s)."""
+        out: dict[Any, tuple[np.ndarray, np.ndarray, float, int]] = {}
+        for s in np.unique(groups):
+            mask = groups == s
+            X_s = A_full[mask]
+            y_s = y[mask]
+            out[s] = (
+                X_s.T @ X_s,            # (K, K)
+                X_s.T @ y_s,            # (K,)
+                float(y_s @ y_s),       # scalar
+                int(mask.sum()),
+            )
+        return out
+
+    def _neg_log_marginal(
+        self,
+        log_psi: float,
+        log_phi: float,
+        stats: dict[Any, tuple[np.ndarray, np.ndarray, float, int]],
+        K: int,
+    ) -> float:
+        """-log p(y | σ², τ²) after profiling out β₀ by GLS.
+
+        Uses Woodbury so we only invert K×K matrices per site.
+        """
+        psi = math.exp(log_psi)
+        phi = math.exp(log_phi)
+        I_K = np.eye(K)
+        Q = np.zeros((K, K))   # accumulator for GLS β̂_0 denominator
+        g = np.zeros(K)        # numerator
+        const_terms = 0.0
+        quad_yy = 0.0
+        for (A_s, c_s, d_s, n_s) in stats.values():
+            # Woodbury core: H_s = (I_K/φ + A_s/ψ).
+            H_s = I_K / phi + A_s / psi
+            try:
+                L_s = np.linalg.cholesky(H_s)
+            except np.linalg.LinAlgError:
+                return float("inf")
+            # Σ_s^{-1} terms via Woodbury identity. Define
+            #   M_s = A_s / ψ - (A_s / ψ²) · H_s^{-1} · A_s  (this is X_sᵀ Σ_s^{-1} X_s)
+            #   u_s = c_s / ψ - (1/ψ²) · A_s · H_s^{-1} · c_s  (X_sᵀ Σ_s^{-1} y_s)
+            #   q_s = d_s / ψ - (1/ψ²) · c_sᵀ · H_s^{-1} · c_s (y_sᵀ Σ_s^{-1} y_s)
+            H_inv_A = np.linalg.solve(L_s.T, np.linalg.solve(L_s, A_s))
+            H_inv_c = np.linalg.solve(L_s.T, np.linalg.solve(L_s, c_s))
+            M_s = A_s / psi - (A_s @ H_inv_A) / (psi ** 2)
+            u_s = c_s / psi - (A_s @ H_inv_c) / (psi ** 2)
+            q_s = d_s / psi - float(c_s @ H_inv_c) / (psi ** 2)
+            Q += M_s
+            g += u_s
+            quad_yy += q_s
+            # log|Σ_s| = n_s log ψ + log|I_K + (φ/ψ) A_s| = n_s log ψ + log|φ H_s|
+            #         = n_s log ψ + K log φ + log|H_s|
+            log_det_H_s = 2.0 * float(np.log(np.diag(L_s)).sum())
+            const_terms += n_s * log_psi + K * log_phi + log_det_H_s
+        # GLS β̂_0.
+        try:
+            L_Q = np.linalg.cholesky(Q)
+        except np.linalg.LinAlgError:
+            return float("inf")
+        beta_0 = np.linalg.solve(L_Q.T, np.linalg.solve(L_Q, g))
+        log_det_Q = 2.0 * float(np.log(np.diag(L_Q)).sum())
+        # Marginal quadratic form: yᵀΣ^{-1}y - β̂_0ᵀ Q β̂_0 - log|Q| (Schur).
+        quad = quad_yy - float(beta_0 @ g)
+        N_total = sum(n_s for (_, _, _, n_s) in stats.values())
+        nll = 0.5 * (
+            N_total * math.log(2.0 * math.pi)
+            + const_terms
+            + quad
+            + log_det_Q
+        )
+        return float(nll)
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        groups: np.ndarray | None = None,
+        sample_weight: np.ndarray | None = None,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> Self:
+        if groups is None:
+            raise ValueError(
+                "HierarchicalNormal.fit: groups (site identifier per row) "
+                "is required; this trainer has no fallback."
+            )
+        if sample_weight is not None:
+            raise NotImplementedError(
+                "HierarchicalNormal: sample_weight not yet threaded through "
+                "the marginal-likelihood optimisation."
+            )
+        groups = np.asarray(groups)
+        y = np.asarray(y, dtype=float)
+        if groups.shape != y.shape:
+            raise ValueError(
+                f"groups shape {groups.shape} != y shape {y.shape}"
+            )
+        A = self._design(X, fit_phase=True)
+        N, K = A.shape
+        if N != y.shape[0]:
+            raise ValueError(f"X has N={N} but y has N={y.shape[0]}")
+        stats = self._per_site_sufficient_stats(A, y, groups)
+        if any(n_s < 1 for (_, _, _, n_s) in stats.values()):
+            raise ValueError("HierarchicalNormal: every site needs ≥1 row")
+        if len(stats) < 2:
+            raise ValueError(
+                "HierarchicalNormal: needs ≥2 sites for pooling to be "
+                "meaningful; got 1. Use BayesianRidge for single-site data."
+            )
+        # Optimise (log σ², log τ²) by Nelder-Mead on the negative marginal
+        # log-likelihood. Bound-friendly via log parameterisation.
+        x0 = np.array(
+            [math.log(self.sigma2_init), math.log(self.tau2_init)],
+            dtype=float,
+        )
+        res = minimize(
+            lambda lp: self._neg_log_marginal(lp[0], lp[1], stats, K),
+            x0,
+            method="Nelder-Mead",
+            options={
+                "xatol": 1e-4, "fatol": 1e-5,
+                "maxiter": self.max_iter, "adaptive": True,
+            },
+        )
+        if not res.success and not np.isfinite(res.fun):
+            raise RuntimeError(
+                f"HierarchicalNormal.fit: marginal-likelihood optimisation "
+                f"failed ({res.message}). Try different sigma2_init/tau2_init."
+            )
+        log_psi, log_phi = float(res.x[0]), float(res.x[1])
+        self.sigma2_ = math.exp(log_psi)
+        self.tau2_ = math.exp(log_phi)
+        self.n_iter_ = int(res.nit)
+        # Recompute β̂_0 and V_β0 at the fitted variance components.
+        psi, phi = self.sigma2_, self.tau2_
+        I_K = np.eye(K)
+        Q = np.zeros((K, K))
+        g = np.zeros(K)
+        for (A_s, c_s, _, _) in stats.values():
+            H_s = I_K / phi + A_s / psi
+            L_s = np.linalg.cholesky(H_s)
+            H_inv_A = np.linalg.solve(L_s.T, np.linalg.solve(L_s, A_s))
+            H_inv_c = np.linalg.solve(L_s.T, np.linalg.solve(L_s, c_s))
+            Q += A_s / psi - (A_s @ H_inv_A) / (psi ** 2)
+            g += c_s / psi - (A_s @ H_inv_c) / (psi ** 2)
+        L_Q = np.linalg.cholesky(Q)
+        beta_0 = np.linalg.solve(L_Q.T, np.linalg.solve(L_Q, g))
+        V_beta_0 = np.linalg.solve(L_Q.T, np.linalg.solve(L_Q, I_K))
+        self.beta_0_ = beta_0
+        self.V_beta_0_ = V_beta_0
+        # Per-site posterior (m_s, V_s).
+        site_m: dict[Any, np.ndarray] = {}
+        site_V: dict[Any, np.ndarray] = {}
+        for s, (A_s, c_s, _, _) in stats.items():
+            V_s_inv = A_s / psi + I_K / phi
+            L_V = np.linalg.cholesky(V_s_inv)
+            rhs = c_s / psi + beta_0 / phi
+            site_m[s] = np.linalg.solve(L_V.T, np.linalg.solve(L_V, rhs))
+            site_V[s] = np.linalg.solve(L_V.T, np.linalg.solve(L_V, I_K))
+        self.site_m_ = site_m
+        self.site_V_ = site_V
+        return self
+
+    def predict_dist(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+        groups: np.ndarray | None = None,
+    ) -> DistributionForecast:
+        if self.sigma2_ is None:
+            raise RuntimeError("HierarchicalNormal.predict_dist called before fit")
+        if groups is None:
+            raise ValueError(
+                "HierarchicalNormal.predict_dist: groups is required."
+            )
+        groups = np.asarray(groups)
+        A = self._design(X, fit_phase=False)
+        N = A.shape[0]
+        if groups.shape != (N,):
+            raise ValueError(
+                f"groups shape {groups.shape} != ({N},)"
+            )
+        unseen = [s for s in np.unique(groups) if s not in self.site_m_]
+        if unseen and not self.allow_unseen_sites:
+            raise ValueError(
+                f"HierarchicalNormal.predict_dist: sites {unseen} unseen at "
+                "fit; pass allow_unseen_sites=True to use β₀ fallback "
+                "(predictive σ will be larger to reflect missing site data)."
+            )
+        mu = np.empty(N)
+        var = np.empty(N)
+        psi, phi = self.sigma2_, self.tau2_
+        # Unseen-site predictive: β_new ~ N(β̂_0, V_β0 + φ I).
+        I_K = np.eye(A.shape[1]) if unseen else None
+        for i in range(N):
+            s = groups[i]
+            x = A[i]
+            if s in self.site_m_:
+                m_s = self.site_m_[s]
+                V_s = self.site_V_[s]
+                mu[i] = float(x @ m_s)
+                var[i] = psi + float(x @ V_s @ x)
+            else:
+                mu[i] = float(x @ self.beta_0_)
+                V_new = self.V_beta_0_ + phi * I_K
+                var[i] = psi + float(x @ V_new @ x)
+        sigma = np.sqrt(var)
+        prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
+        return DistributionForecast.from_normal(
+            mu, sigma, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
             provenance=prov,
         )
 

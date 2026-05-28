@@ -609,6 +609,146 @@ def test_bma_stacking_rejects_invalid_alpha_prior():
 
 
 # ---------------------------------------------------------------------------
+# HierarchicalNormal — cross-site partial-pooling regression.
+# ---------------------------------------------------------------------------
+
+
+def _make_multisite(*, K, S, n_per_site, beta_0, tau, sigma, seed):
+    rng = np.random.default_rng(seed)
+    Xs, ys, gs = [], [], []
+    for s in range(S):
+        beta_s = beta_0 + rng.standard_normal(K) * tau
+        X = rng.standard_normal((n_per_site, K))
+        y = X @ beta_s + rng.standard_normal(n_per_site) * sigma
+        Xs.append(X); ys.append(y); gs.extend([s] * n_per_site)
+    return np.vstack(Xs), np.concatenate(ys), np.array(gs)
+
+
+def test_hierarchical_normal_recovers_variance_components():
+    """EB estimates of σ², τ² should land within ~30% of truth for moderate N."""
+    from bracketlearn.trainers import HierarchicalNormal
+    K = 3
+    X, y, g = _make_multisite(
+        K=K, S=5, n_per_site=120,
+        beta_0=np.array([0.5, -1.0, 2.0]),
+        tau=0.4, sigma=0.5, seed=0,
+    )
+    hn = HierarchicalNormal().fit(X, y, groups=g)
+    assert 0.15 < hn.sigma2_ < 0.4   # truth = 0.25
+    assert 0.05 < hn.tau2_ < 0.4     # truth = 0.16
+
+
+def test_hierarchical_normal_emits_normal_predictive():
+    from bracketlearn.trainers import HierarchicalNormal
+    X, y, g = _make_multisite(
+        K=2, S=3, n_per_site=80,
+        beta_0=np.array([1.0, -1.0]), tau=0.2, sigma=0.5, seed=1,
+    )
+    hn = HierarchicalNormal().fit(X, y, groups=g)
+    out = hn.predict_dist(
+        X[:10], ids=np.arange(10), timestamps=np.zeros(10), groups=g[:10],
+    )
+    assert isinstance(out, NormalForecast)
+    assert out.mu.shape == (10,)
+    assert np.all(out.sigma > 0)
+
+
+def test_hierarchical_normal_rejects_unseen_site_by_default():
+    from bracketlearn.trainers import HierarchicalNormal
+    X, y, g = _make_multisite(
+        K=2, S=3, n_per_site=50,
+        beta_0=np.array([1.0, -1.0]), tau=0.2, sigma=0.5, seed=2,
+    )
+    hn = HierarchicalNormal().fit(X, y, groups=g)
+    with pytest.raises(ValueError, match="unseen at fit"):
+        hn.predict_dist(
+            X[:5], ids=np.arange(5), timestamps=np.zeros(5),
+            groups=np.array([999] * 5),
+        )
+
+
+def test_hierarchical_normal_unseen_site_sigma_inflates():
+    """With allow_unseen_sites=True, predictive σ on a new site must
+    exceed σ on a known site (extra τ² + posterior on β₀)."""
+    from bracketlearn.trainers import HierarchicalNormal
+    X, y, g = _make_multisite(
+        K=2, S=3, n_per_site=50,
+        beta_0=np.array([1.0, -1.0]), tau=0.5, sigma=0.5, seed=3,
+    )
+    hn = HierarchicalNormal(allow_unseen_sites=True).fit(X, y, groups=g)
+    X_new = np.random.default_rng(9).standard_normal((20, 2))
+    out_seen = hn.predict_dist(
+        X_new, ids=np.arange(20), timestamps=np.zeros(20),
+        groups=np.array([0] * 20),
+    )
+    out_unseen = hn.predict_dist(
+        X_new, ids=np.arange(20), timestamps=np.zeros(20),
+        groups=np.array([999] * 20),
+    )
+    assert out_unseen.sigma.mean() > out_seen.sigma.mean() * 1.2
+
+
+def test_hierarchical_normal_beats_per_site_on_thin_sites():
+    """Imbalanced sites: per-site Ridge overfits the thin one,
+    HierarchicalNormal pools toward β₀ and wins."""
+    from sklearn.linear_model import Ridge
+
+    from bracketlearn.trainers import HierarchicalNormal
+
+    rng = np.random.default_rng(4)
+    K = 4
+    beta_0 = np.array([0.5, -1.0, 0.0, 2.0])
+    tau = 0.5
+    sigma = 0.5
+    Xs, ys, gs = [], [], []
+    test_X, test_y, test_g = [], [], []
+    for s, n_tr in enumerate([10, 200, 200, 200]):
+        beta_s = beta_0 + rng.standard_normal(K) * tau
+        X_all = rng.standard_normal((n_tr + 40, K))
+        y_all = X_all @ beta_s + rng.standard_normal(n_tr + 40) * sigma
+        Xs.append(X_all[:n_tr]); ys.append(y_all[:n_tr]); gs.extend([s] * n_tr)
+        test_X.append(X_all[n_tr:]); test_y.append(y_all[n_tr:]); test_g.extend([s] * 40)
+    X_tr = np.vstack(Xs); y_tr = np.concatenate(ys); g_tr = np.array(gs)
+    X_te = np.vstack(test_X); y_te = np.concatenate(test_y); g_te = np.array(test_g)
+
+    hn = HierarchicalNormal().fit(X_tr, y_tr, groups=g_tr)
+    hn_pred = hn.predict_dist(
+        X_te, ids=np.arange(len(y_te)), timestamps=np.zeros(len(y_te)),
+        groups=g_te,
+    )
+    hn_rmse = float(np.sqrt(((hn_pred.mu - y_te) ** 2).mean()))
+
+    # Per-site Ridge.
+    rmse_ps = 0.0
+    for s in np.unique(g_tr):
+        mask_tr = g_tr == s; mask_te = g_te == s
+        m = Ridge(alpha=1.0).fit(X_tr[mask_tr], y_tr[mask_tr])
+        rmse_ps += ((m.predict(X_te[mask_te]) - y_te[mask_te]) ** 2).sum()
+    ps_rmse = float(np.sqrt(rmse_ps / len(y_te)))
+
+    assert hn_rmse < ps_rmse, (
+        f"HierarchicalNormal RMSE {hn_rmse:.3f} should beat "
+        f"per-site Ridge {ps_rmse:.3f} on imbalanced sites"
+    )
+
+
+def test_hierarchical_normal_requires_groups_at_fit():
+    from bracketlearn.trainers import HierarchicalNormal
+    X = np.random.default_rng(0).standard_normal((20, 2))
+    y = np.zeros(20)
+    with pytest.raises(ValueError, match="groups .* is required"):
+        HierarchicalNormal().fit(X, y)
+
+
+def test_hierarchical_normal_requires_multiple_sites():
+    from bracketlearn.trainers import HierarchicalNormal
+    X = np.random.default_rng(0).standard_normal((20, 2))
+    y = np.zeros(20)
+    with pytest.raises(ValueError, match="≥2 sites"):
+        HierarchicalNormal().fit(X, y, groups=np.zeros(20))
+
+
+# ---------------------------------------------------------------------------
 # TailSpecialist — positive integration (audit §6.T1).
 # ---------------------------------------------------------------------------
 
@@ -730,3 +870,180 @@ def test_empirical_distribution_respects_sample_weight():
     # Weighted median should sit above unweighted median.
     j_med = e_unw.taus.index(0.5)
     assert e_w.quantiles_[j_med] > e_unw.quantiles_[j_med]
+
+
+# ---------------------------------------------------------------------------
+# BracketClassifier — one classifier on (X, lo, hi) → P(y ∈ [lo, hi)).
+# ---------------------------------------------------------------------------
+
+
+def test_bracket_classifier_emits_bracketforecast_logistic():
+    """LogisticRegression as estimator — output should be a BracketForecast
+    with per-row probs summing to 1."""
+    from sklearn.linear_model import LogisticRegression
+
+    from bracketlearn.trainers import BracketClassifier
+
+    rng = np.random.default_rng(0)
+    N, K = 150, 3
+    X = rng.standard_normal((N, K))
+    y = X[:, 0] + 0.5 * rng.standard_normal(N)
+    ids = np.arange(N)
+    ts = np.arange(N, dtype=float)
+    edges = np.linspace(-3, 3, 7)   # 6 bins, shared across rows
+    brackets_by_id = {int(k): edges for k in ids}
+
+    bc = BracketClassifier(
+        estimator=LogisticRegression(max_iter=500),
+        brackets_by_id=brackets_by_id,
+    ).fit(X, y, ids=ids)
+    d = bc.predict_dist(X, ids=ids, timestamps=ts)
+    assert isinstance(d, BracketForecast)
+    assert d.probs.shape == (N, 6)
+    np.testing.assert_allclose(np.nansum(d.probs, axis=1), 1.0, atol=1e-9)
+
+
+def test_bracket_classifier_supports_ragged_brackets():
+    """Different rows can have different B (bin counts)."""
+    from sklearn.linear_model import LogisticRegression
+
+    from bracketlearn.trainers import BracketClassifier
+
+    rng = np.random.default_rng(0)
+    N, K = 120, 3
+    X = rng.standard_normal((N, K))
+    y = X[:, 0] + 0.5 * rng.standard_normal(N)
+    ids = np.arange(N)
+    ts = np.arange(N, dtype=float)
+    edges_a = np.linspace(-3, 3, 5)    # 4 bins
+    edges_b = np.linspace(-3, 3, 8)    # 7 bins
+    brackets_by_id = {int(k): (edges_a if k % 2 == 0 else edges_b) for k in ids}
+
+    bc = BracketClassifier(
+        estimator=LogisticRegression(max_iter=500),
+        brackets_by_id=brackets_by_id,
+    ).fit(X, y, ids=ids)
+    d = bc.predict_dist(X, ids=ids, timestamps=ts)
+    valid = (~np.isnan(d.probs)).sum(axis=1)
+    np.testing.assert_array_equal(valid[ids % 2 == 0], 4)
+    np.testing.assert_array_equal(valid[ids % 2 != 0], 7)
+    np.testing.assert_allclose(np.nansum(d.probs, axis=1), 1.0, atol=1e-9)
+
+
+def test_bracket_classifier_concentrates_mass_at_true_y():
+    """On simple linear data with a precise classifier, the mode of the
+    predicted bracket dist should be the bin containing y."""
+    _skip_if_missing("lightgbm")
+    import lightgbm as lgb
+
+    from bracketlearn.trainers import BracketClassifier
+
+    rng = np.random.default_rng(0)
+    N, K = 300, 3
+    X = rng.standard_normal((N, K))
+    y = X[:, 0] + 0.2 * rng.standard_normal(N)  # tight signal
+    ids = np.arange(N)
+    ts = np.arange(N, dtype=float)
+    edges = np.linspace(-4, 4, 9)               # 8 bins
+    brackets_by_id = {int(k): edges for k in ids}
+
+    bc = BracketClassifier(
+        estimator=lgb.LGBMClassifier(
+            n_estimators=80, learning_rate=0.05, num_leaves=15,
+            verbose=-1,
+        ),
+        brackets_by_id=brackets_by_id,
+    ).fit(X, y, ids=ids)
+    d = bc.predict_dist(X, ids=ids, timestamps=ts)
+    # Predicted mode bin per row.
+    pred_bin = np.nanargmax(d.probs, axis=1)
+    true_bin = np.searchsorted(edges, y, side="right") - 1
+    true_bin = np.clip(true_bin, 0, edges.size - 2)
+    # In-sample on tight signal: >=60% of rows should pick the right bin.
+    acc = float((pred_bin == true_bin).mean())
+    assert acc > 0.60, f"in-sample mode accuracy {acc:.2f} < 0.60"
+
+
+def test_bracket_classifier_rejects_regressor():
+    """Estimator without predict_proba (e.g. a regressor) raises at construction."""
+    from sklearn.linear_model import Ridge
+
+    from bracketlearn.trainers import BracketClassifier
+
+    edges = np.linspace(0, 10, 5)
+    with pytest.raises(ValueError, match="predict_proba"):
+        BracketClassifier(
+            estimator=Ridge(),
+            brackets_by_id={0: edges, 1: edges},
+        )
+
+
+def test_bracket_classifier_rejects_non_monotonic_edges():
+    from sklearn.linear_model import LogisticRegression
+
+    from bracketlearn.trainers import BracketClassifier
+
+    bad = np.array([0.0, 1.0, 0.5, 2.0])   # not strictly increasing
+    with pytest.raises(ValueError, match="strictly increasing"):
+        BracketClassifier(
+            estimator=LogisticRegression(),
+            brackets_by_id={0: bad},
+        )
+
+
+def test_bracket_classifier_missing_id_raises():
+    """Predict path raises if brackets_by_id doesn't cover a row's id."""
+    from sklearn.linear_model import LogisticRegression
+
+    from bracketlearn.trainers import BracketClassifier
+
+    rng = np.random.default_rng(0)
+    X = rng.standard_normal((20, 2))
+    y = X[:, 0] + 0.3 * rng.standard_normal(20)
+    ids = np.arange(20)
+    ts = np.arange(20, dtype=float)
+    edges = np.linspace(-3, 3, 5)
+    brackets_by_id = {int(k): edges for k in ids}
+    bc = BracketClassifier(
+        estimator=LogisticRegression(max_iter=500),
+        brackets_by_id=brackets_by_id,
+    ).fit(X, y, ids=ids)
+    # Predict on an id that wasn't registered.
+    bad_ids = np.array([999, 1000])
+    with pytest.raises(KeyError, match="missing"):
+        bc.predict_dist(X[:2], ids=bad_ids, timestamps=ts[:2])
+
+
+def test_bracket_classifier_raises_when_y_outside_all_brackets():
+    """If every augmented label is 0 the classifier can't fit a non-degenerate
+    boundary — loud rail."""
+    from sklearn.linear_model import LogisticRegression
+
+    from bracketlearn.trainers import BracketClassifier
+
+    rng = np.random.default_rng(0)
+    X = rng.standard_normal((30, 2))
+    y = np.full(30, 1000.0)   # all y outside the brackets
+    ids = np.arange(30)
+    edges = np.linspace(-3, 3, 5)
+    bc = BracketClassifier(
+        estimator=LogisticRegression(max_iter=500),
+        brackets_by_id={int(k): edges for k in ids},
+    )
+    with pytest.raises(RuntimeError, match="no row's y landed"):
+        bc.fit(X, y, ids=ids)
+
+
+def test_bracket_classifier_predict_before_fit_raises():
+    from sklearn.linear_model import LogisticRegression
+
+    from bracketlearn.trainers import BracketClassifier
+
+    edges = np.linspace(0, 10, 5)
+    bc = BracketClassifier(
+        estimator=LogisticRegression(),
+        brackets_by_id={0: edges},
+    )
+    with pytest.raises(RuntimeError, match="before fit"):
+        bc.predict_dist(np.zeros((1, 2)), ids=np.array([0]),
+                        timestamps=np.array([0.0]))

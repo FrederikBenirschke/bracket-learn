@@ -330,16 +330,30 @@ distribution's support raise (no silent uniform fabrication).
 Two fundamentally different trainer families:
 
 - **Distribution-first** (`EMOS`, `NGBoostNormal`, `MixtureNormals`,
-  `QuantileReg`, `QuantileForest`, `Stacking`, `OnlineAggregator`,
-  `RNNHourly`, `ridge`, `emos_calibrated`): never see brackets at
-  fit time. Fit on `(X, y)`, emit a continuous-ish distribution.
-  Call `.integrate(edges_per_row)` to price on a specific grid.
+  `QuantileReg`, `QuantileForest`, `StackedParametric` (alias
+  `Stacking`), `BMAStacking`, `BayesianRidge`, `HierarchicalNormal`,
+  `OnlineAggregator`, `RNNHourly`, `ridge`, `emos_calibrated`):
+  never see brackets at fit time. Fit on `(X, y)`, emit a
+  continuous-ish distribution. Call `.integrate(edges_per_row)` to
+  price on a specific grid.
 - **Bracket-aware** (`CumulativeBinary`, `TailSpecialist`,
-  `CDFBoostBracket`): train on bracket-derived indicators. Each
-  takes a `cutpoints_by_id` or `brackets_by_id` dict (id → 1-D edge
-  array) at construction so per-row grids flow through fit and
-  predict. Their `fit()` signatures require an explicit `ids=`
-  kwarg; inside `ForecastPipeline` this is forwarded automatically.
+  `CDFBoostBracket`, `BracketClassifier`): train on bracket-derived
+  indicators. Each takes a `cutpoints_by_id` or `brackets_by_id`
+  dict (id → 1-D edge array) at construction so per-row grids flow
+  through fit and predict. Their `fit()` signatures require an
+  explicit `ids=` kwarg; inside `ForecastPipeline` this is
+  forwarded automatically.
+
+  `BracketClassifier` is the "use any sklearn classifier" entry
+  point: it builds one augmented row per (sample, bracket) with
+  features `[X, lo, hi]` and target `1[y ∈ [lo, hi))`, then trains
+  whichever classifier you pass in (LogisticRegression,
+  GradientBoostingClassifier, LGBMClassifier, RandomForest, MLP).
+  Predict-time row-renormalises across each row's bin grid. Ragged
+  per-row bracket counts are supported. The trade-off vs
+  `CumulativeBinary`: classifier flexibility but no monotonicity
+  constraint, so on smooth problems CumulativeBinary's LGBM-with-
+  monotone-cutpoints variant tends to win narrowly.
 
 ## CV variants
 
@@ -361,6 +375,33 @@ QuantileReg/QuantileForest/CumulativeBinary/TailSpecialist, MixtureNormals,
 SklearnPoint when the inner estimator supports it). Online/sequence
 trainers without weight support (OnlineAggregator, RNNHourly) are detected
 by signature and pass through unweighted — no silent crash.
+
+## Cross-site partial pooling
+
+For multi-city / multi-entity workloads — Kalshi weather contracts
+across NYC / CHI / LAX, NHL spreads across teams, fixture pricing
+across players — pass a per-row site label via `groups=` and use
+`HierarchicalNormal`:
+
+```python
+from bracketlearn import ForecastPipeline, HierarchicalNormal
+
+p = ForecastPipeline(steps=[("hn", HierarchicalNormal())], cv="kfold", n_folds=5)
+res = p.fit_predict(X, y, ids=ids, timestamps=ts, groups=city_id)
+hn_pred = p.predict(X_new, ids=..., timestamps=..., groups=city_id_new)["hn"]
+```
+
+Each city gets its own coefficient vector β_s, all shrunk toward a
+common β₀ with shrinkage strength learned from data (empirical-Bayes
+on τ²). Cities with little history borrow strength from the others;
+cities with lots of history stay close to their own data. Predictive
+σ inflates automatically for cities not seen at fit (raises by
+default — set `allow_unseen_sites=True` to opt in).
+
+`groups=` routes through the pipeline by signature introspection:
+trainers without a `groups` kwarg silently ignore it, so mixing
+`HierarchicalNormal` with site-blind stages (EMOS, ridge, …) just
+works.
 
 ## Multi-target
 
@@ -406,9 +447,12 @@ full v0.3.0 entry including the breaking-change list.
 
 v0.2 baseline carries forward: protocols, three CV modes
 (expanding-window / rolling-window / kfold), sample-weight threading,
-multi-target wrapper, grid-search wrapper, 14 trainers, 6
-prediction-market adapters, full distribution and contract-level
-scoring. See `bracketlearn/examples/` for runnable demos.
+multi-target wrapper, grid-search wrapper, 18 trainers (incl. three
+Bayesian: `BayesianRidge`, `BMAStacking`, `HierarchicalNormal`, and
+the any-classifier `BracketClassifier`), 6 prediction-market
+adapters, full distribution and contract-level scoring, pipeline
+`groups=` routing for cross-site trainers. See
+`bracketlearn/examples/` for runnable demos.
 
 Not yet:
 - Empirical backing

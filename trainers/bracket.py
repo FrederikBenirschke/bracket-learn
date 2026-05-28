@@ -1,7 +1,8 @@
 """Bracket-backed DistForecasters and dist-pool combiners.
 
-CumulativeBinary, TailSpecialist, CDFBoostBracket (bracket-emitting trainers).
-LinearPoolDist (convex combination of upstream dists).
+CumulativeBinary, TailSpecialist, CDFBoostBracket, BracketClassifier
+(bracket-emitting trainers). LinearPoolDist (convex combination of upstream
+dists).
 """
 
 from __future__ import annotations
@@ -776,6 +777,222 @@ class CDFBoostBracket(BaseEstimator):
         prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
         return DistributionForecast.from_brackets(
             edges=per_row_edges, probs=probs,
+            ids=ids, timestamps=timestamps,
+            provenance=prov,
+        )
+
+
+# ---------------------------------------------------------------------------
+# BracketClassifier — one classifier on (X, lo, hi) → P(y ∈ [lo, hi)).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class BracketClassifier(BaseEstimator):
+    """Single binary classifier with bracket bounds as features.
+
+    For each (row i, bracket b) pair, build one augmented training
+    example with features ``[X_i, lo_b, hi_b]`` and target
+    ``1[y_i ∈ [lo_b, hi_b))`` (last bracket is closed on the right).
+    Any sklearn-style classifier with ``fit`` + ``predict_proba`` works
+    — Logistic, GradientBoosting, RandomForest, LightGBM, MLP, …
+
+    At predict time the classifier scores every bracket for every row;
+    row-wise probabilities are clipped to (ε, 1-ε) and renormalised to
+    sum to 1, producing a bracket-backed dist.
+
+    Why this and not CumulativeBinary or CDFBoostBracket
+    -----------------------------------------------------
+    - ``CumulativeBinary`` models P(y ≤ k) and differences the CDF.
+      Naturally monotone-constrainable → locks the estimator to LGBM.
+      Edge feature: a single cutpoint scalar.
+    - ``CDFBoostBracket`` trains B separate classifier heads on
+      upstream-CDF features. Requires uniform B across rows and an
+      upstream dist forecaster as a dep.
+    - ``BracketClassifier`` trains ONE classifier on bracket-conditional
+      bernoulli targets with the bracket bounds as features. Ragged B
+      across rows is fine. No upstream dep required. Any predict_proba
+      classifier works. Closest analogue: a sklearn classifier you'd
+      use to predict "did the Kalshi 68–69° bracket resolve YES".
+
+    The output is bracket-backed (per-row ladder from ``brackets_by_id``).
+    No tail policy: the per-row ladder is the support.
+    """
+
+    estimator: Any
+    brackets_by_id: dict[Any, np.ndarray]
+    name: str = "BracketClassifier"
+    depends_on: tuple[str, ...] = ()
+    clip_eps: float = 1e-6
+    model_: Any = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        if not hasattr(self.estimator, "fit"):
+            raise ValueError(
+                "BracketClassifier: estimator must have a .fit() method"
+            )
+        if not hasattr(self.estimator, "predict_proba"):
+            raise ValueError(
+                "BracketClassifier: estimator must have a .predict_proba() method; "
+                f"got {type(self.estimator).__name__}. Use a classifier such as "
+                "sklearn.linear_model.LogisticRegression, "
+                "sklearn.ensemble.GradientBoostingClassifier, "
+                "or lightgbm.LGBMClassifier."
+            )
+        if not isinstance(self.brackets_by_id, dict) or not self.brackets_by_id:
+            raise ValueError(
+                "BracketClassifier needs a non-empty brackets_by_id dict "
+                "(id → 1-D edge array)"
+            )
+        for k, e in self.brackets_by_id.items():
+            e_arr = np.asarray(e, dtype=float)
+            if e_arr.ndim != 1 or e_arr.size < 3:
+                raise ValueError(
+                    f"brackets_by_id[{k!r}]: ladder must have ≥2 bins "
+                    f"(≥3 edges); got shape {e_arr.shape}"
+                )
+            if np.any(np.diff(e_arr) <= 0):
+                raise ValueError(
+                    f"brackets_by_id[{k!r}]: edges must be strictly increasing"
+                )
+        if not (0.0 < self.clip_eps < 0.5):
+            raise ValueError(
+                f"clip_eps must be in (0, 0.5); got {self.clip_eps}"
+            )
+
+    def _augment(
+        self,
+        X: np.ndarray,
+        ids: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]:
+        """Build the per-bracket augmented design matrix.
+
+        Returns ``(X_aug, offsets, per_row_edges)`` where
+        ``offsets[i] : offsets[i+1]`` covers row i's B_i augmented
+        rows, and ``per_row_edges[i]`` is the row's edge array
+        (length B_i + 1).
+        """
+        N = X.shape[0]
+        per_row_edges: list[np.ndarray] = []
+        missing: list[Any] = []
+        for k in ids:
+            try:
+                per_row_edges.append(
+                    np.asarray(self.brackets_by_id[k], dtype=float),
+                )
+            except KeyError:
+                missing.append(k)
+        if missing:
+            raise KeyError(
+                f"BracketClassifier: brackets_by_id missing {len(missing)} "
+                f"id(s); first: {missing[:3]}"
+            )
+        B_per_row = np.array([e.size - 1 for e in per_row_edges], dtype=int)
+        offsets = np.concatenate([[0], np.cumsum(B_per_row)])
+        M = int(offsets[-1])
+        n_feat = X.shape[1]
+        X_aug = np.empty((M, n_feat + 2), dtype=float)
+        for i in range(N):
+            sl = slice(int(offsets[i]), int(offsets[i + 1]))
+            X_aug[sl, :n_feat] = X[i]
+            e_i = per_row_edges[i]
+            X_aug[sl, n_feat] = e_i[:-1]      # lo
+            X_aug[sl, n_feat + 1] = e_i[1:]   # hi
+        return X_aug, offsets, per_row_edges
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        ids: np.ndarray,
+        sample_weight: np.ndarray | None = None,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> Self:
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        ids = np.asarray(ids)
+        if X.shape[0] != y.shape[0] or X.shape[0] != ids.shape[0]:
+            raise ValueError(
+                f"shape mismatch: X N={X.shape[0]} y N={y.shape[0]} "
+                f"ids N={ids.shape[0]}"
+            )
+        X_aug, offsets, per_row_edges = self._augment(X, ids)
+        N = X.shape[0]
+        y_aug = np.zeros(X_aug.shape[0], dtype=int)
+        for i in range(N):
+            e_i = per_row_edges[i]
+            # Bin containing y_i (right-side searchsorted minus one).
+            # k ∈ {-1, …, B_i}; only 0 ≤ k < B_i fires a positive label.
+            k = int(np.searchsorted(e_i, y[i], side="right") - 1)
+            if 0 <= k < e_i.size - 1:
+                y_aug[int(offsets[i]) + k] = 1
+        # Loud rail: if no positives, the classifier can't fit a non-degenerate
+        # boundary and predict_proba may return single-column output.
+        if y_aug.sum() == 0:
+            raise RuntimeError(
+                "BracketClassifier: no row's y landed in any of its "
+                "configured brackets — every augmented target is 0. "
+                "Check brackets_by_id covers the y range."
+            )
+        from bracketlearn.trainers._common import _estimator_accepts_sample_weight
+
+        self.model_ = self.estimator
+        if sample_weight is not None and _estimator_accepts_sample_weight(self.model_):
+            sw = np.asarray(sample_weight, dtype=float)
+            sw_aug = np.empty(X_aug.shape[0], dtype=float)
+            for i in range(N):
+                sl = slice(int(offsets[i]), int(offsets[i + 1]))
+                sw_aug[sl] = sw[i]
+            self.model_.fit(X_aug, y_aug, sample_weight=sw_aug)
+        else:
+            self.model_.fit(X_aug, y_aug)
+        return self
+
+    def predict_dist(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+    ) -> DistributionForecast:
+        if self.model_ is None:
+            raise RuntimeError("BracketClassifier.predict_dist called before fit")
+        X = np.asarray(X, dtype=float)
+        ids = np.asarray(ids)
+        timestamps = np.asarray(timestamps)
+        N = X.shape[0]
+        X_aug, offsets, per_row_edges = self._augment(X, ids)
+        proba_aug = self.model_.predict_proba(X_aug)
+        if proba_aug.shape[1] != 2:
+            raise RuntimeError(
+                f"BracketClassifier: estimator.predict_proba returned "
+                f"{proba_aug.shape[1]} columns, expected 2 (binary). "
+                f"This usually means the training labels were single-class."
+            )
+        p_aug = np.clip(proba_aug[:, 1], self.clip_eps, 1.0 - self.clip_eps)
+        B_per_row = np.array(
+            [e.size - 1 for e in per_row_edges], dtype=int,
+        )
+        B_max = int(B_per_row.max())
+        edges_out = np.full((N, B_max + 1), np.nan, dtype=float)
+        probs_out = np.full((N, B_max), np.nan, dtype=float)
+        for i in range(N):
+            sl = slice(int(offsets[i]), int(offsets[i + 1]))
+            p_row = p_aug[sl]
+            s = float(p_row.sum())
+            if s <= 0:
+                raise RuntimeError(
+                    f"BracketClassifier row {i}: clipped probabilities "
+                    f"summed to {s}; should be unreachable given clip_eps > 0."
+                )
+            p_row = p_row / s
+            B_i = int(B_per_row[i])
+            probs_out[i, :B_i] = p_row
+            edges_out[i, : B_i + 1] = per_row_edges[i]
+        prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
+        return DistributionForecast.from_brackets(
+            edges=edges_out, probs=probs_out,
             ids=ids, timestamps=timestamps,
             provenance=prov,
         )

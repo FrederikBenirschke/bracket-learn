@@ -4,6 +4,101 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions
 follow semver: MAJOR.MINOR.PATCH. Pre-1.0 the public API can break in any
 minor release; patch releases are bug-fixes and additive tests.
 
+## [Unreleased]
+
+Three Bayesian trainers added — one with empirical wins on this repo's
+domain, one that ties the existing baseline, one that didn't justify
+its structural pitch but ships as an alternative. Pipeline grows a
+``groups`` kwarg so site-aware trainers compose with the existing CV
+machinery. New ``BracketClassifier`` unifies "predict bracket-resolves-
+YES with any sklearn classifier".
+
+### Added
+
+- ``bracketlearn.trainers.BracketClassifier`` — single binary
+  classifier on ``[X, lo, hi]`` features with target
+  ``1[y ∈ [lo, hi))``. Any sklearn-style classifier with
+  ``predict_proba`` works (Logistic, GradientBoosting, LGBM, RF, MLP).
+  Augments one training example per (row, bracket) pair; row-
+  renormalises predict-time probabilities across the row's bin grid
+  → BracketForecast. Supports ragged per-row bracket counts via
+  ``brackets_by_id`` (id → 1-D edge array). Loud rails: estimator
+  without ``predict_proba`` raises at construction; all-zero
+  augmented labels raise at fit; unregistered ids raise at predict;
+  non-monotonic edges raise at construction. Empirical: with a
+  tree-based classifier matches ``CumulativeBinary`` within ~10%
+  CRPS on a synthetic nonlinear benchmark, beats EMOS-discretised
+  and ``CDFBoostBracket(EMOS dep)``; with a linear classifier acts
+  as a Gaussian-ish floor. Sells flexibility — same trainer, any
+  classifier — rather than peak accuracy. See bench
+  ``/tmp/bracket_classifier_bench.py`` for numbers.
+- ``bracketlearn.trainers.BayesianRidge`` — conjugate
+  Normal-Inverse-Gamma Bayesian linear regression. Predictive per row
+  is Student-t with ``ν = 2·a_n``; predictive σ inflates via
+  ``(1 + xᵀ V_n x)`` so rows far from training data automatically get
+  wider intervals. Closed-form fit, no sampler dependency. Raises on
+  zero-variance columns, singular posterior precision, degenerate
+  ``b_n`` (data leak / over-tight prior). Standardisation on by
+  default; intercept fitted with a near-flat prior
+  (``prior_precision_intercept=1e-6``).
+- ``bracketlearn.trainers.BMAStacking`` — meta-learner alternative to
+  ``StackedParametric``. Dirichlet-prior weights on the
+  K-component mixture of upstream Normals (moment-matched from
+  any parametric backing). EM with Dirichlet pseudo-counts;
+  convergence on Δ log-likelihood. Output is a true
+  ``MixtureNormalForecast``, so per-row σ inflates when upstream μ̂'s
+  disagree. Empirical caveat: on this repo's regression scenarios
+  BMA ties ``StackedParametric(sigma_method='geometric_mean_upstream')``
+  and loses to ``StackedParametric`` when upstream disagreement is
+  structural bias correctable by an OLS negative coefficient — ships
+  as an option, not a replacement.
+- ``bracketlearn.trainers.HierarchicalNormal`` — cross-site
+  partial-pooling regression. Per-site coefficients ``β_s`` shrunk
+  toward a common ``β₀`` with variance components ``(σ², τ²)``
+  estimated by empirical-Bayes (Type-II marginal likelihood; Nelder-
+  Mead over log-σ², log-τ²; ``β₀`` profiled out by GLS). Per-site
+  posterior on ``β_s`` closed-form; predictive at row i in site s is
+  Normal with mean ``xᵀ E[β_s]`` and variance ``σ² + xᵀ Cov(β_s) x``.
+  Unseen sites raise by default (``allow_unseen_sites=False``); when
+  enabled, predictive uses ``β₀`` with ``V_β₀ + τ² I`` added to
+  reflect the missing per-site data. Empirical wins on imbalanced-N
+  scenarios — see commit benchmark for paired-bootstrap CRPS CIs.
+  Woodbury identity keeps per-site fit O(K³) regardless of n_s.
+- ``ForecastPipeline.fit_predict(...)`` and ``.predict(...)`` accept
+  ``groups: np.ndarray | None``, threaded through fold slicing and
+  the canonical-refit path to any stage whose ``fit`` / ``predict_dist``
+  signature declares it. Existing trainers (``EMOS``,
+  ``StackedParametric``, ``BayesianRidge``, …) ignore ``groups``
+  via the same signature-introspection routing that already handles
+  ``sample_weight`` / ``deps_oof`` / ``ids`` / ``timestamps``. No
+  behaviour change for callers that don't pass ``groups``.
+- Internal helper ``bracketlearn.pipeline._predict_with_extras`` —
+  generalises the deprecated ``_predict_with_deps`` to thread any
+  predict-time kwarg (``deps_oof``, ``groups``, future ones) through
+  signature introspection. ``_predict_with_deps`` kept as a
+  back-compat wrapper.
+
+### Tests
+
+- 7 ``BracketClassifier`` unit tests (BracketForecast shape under
+  LR estimator, ragged per-row brackets, in-sample mode accuracy
+  with LGBM on tight signal, rejects regressor estimator without
+  ``predict_proba``, rejects non-monotonic edges, raises on
+  missing-id predict, raises when no y lands in any bracket,
+  raises on predict-before-fit).
+- 6 ``BayesianRidge`` unit tests (parametric/student_t shape,
+  coefficient recovery, distance-based σ inflation, zero-variance /
+  collinearity / predict-before-fit raises).
+- 4 ``BMAStacking`` unit tests (round-trip + mixture-normal shape,
+  σ inflation under upstream disagreement, misaligned-ids guard,
+  invalid α prior raise).
+- 7 ``HierarchicalNormal`` unit tests (variance-component recovery,
+  Normal-predictive shape, unseen-site raise, σ inflation on unseen
+  site, beats per-site Ridge on imbalanced-N benchmark, requires
+  groups, requires ≥2 sites).
+- 1 ``ForecastPipeline`` integration test for ``groups`` routing
+  (fit_predict + predict + missing-groups raise).
+
 ## [0.3.0] — 2026-05-26
 
 `DistributionForecast` is now an `abc.ABC` base with five concrete

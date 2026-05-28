@@ -16,9 +16,12 @@ import numpy as np
 import pytest
 
 from bracketlearn.forecast import (
-    Backing,
+    BracketForecast,
     DistributionForecast,
-    ParametricFamily,
+    MixtureNormalForecast,
+    NormalForecast,
+    QuantileForecast,
+    StudentTForecast,
     TailPolicy,
     TailRule,
 )
@@ -36,8 +39,7 @@ class TestFromNormal:
             sigma=np.array([1.0, 1.0, 2.0]),
             ids=ids, timestamps=ts, provenance=prov,
         )
-        assert d.backing == Backing.PARAMETRIC
-        assert d.family == ParametricFamily.NORMAL
+        assert isinstance(d, NormalForecast)
         assert d.params["mu"].tolist() == [0.0, 1.0, 2.0]
 
     def test_rejects_nonpositive_sigma(self, prov, ids_ts):
@@ -85,8 +87,7 @@ class TestFromStudentT:
             df=np.array([5.0, 5.0, 8.0]),
             ids=ids, timestamps=ts, provenance=prov,
         )
-        assert d.backing == Backing.PARAMETRIC
-        assert d.family == ParametricFamily.STUDENT_T
+        assert isinstance(d, StudentTForecast)
         assert d.tail_support == "full"
 
     def test_scalar_df_broadcasts(self, prov, ids_ts):
@@ -154,7 +155,7 @@ class TestFromMixtureNormal:
             weights=w, mus=mus, sigmas=sigmas,
             ids=ids, timestamps=ts, provenance=prov,
         )
-        assert d.family == ParametricFamily.MIXTURE_NORMAL
+        assert isinstance(d, MixtureNormalForecast)
 
     def test_rejects_weights_not_summing_to_one(self, prov, ids_ts):
         ids, ts = ids_ts(1)
@@ -208,7 +209,7 @@ class TestFromQuantiles:
             tail_policy=TailPolicy.same(TailRule.clip()),
             ids=ids, timestamps=ts, provenance=prov,
         )
-        assert d.backing == Backing.QUANTILE
+        assert isinstance(d, QuantileForecast)
 
     def test_requires_tail_policy(self, prov, ids_ts):
         ids, ts = ids_ts(1)
@@ -260,7 +261,7 @@ class TestFromBrackets:
             edges=edges, probs=probs,
             ids=ids, timestamps=ts, provenance=prov,
         )
-        assert d.backing == Backing.BRACKET
+        assert isinstance(d, BracketForecast)
         np.testing.assert_allclose(d.probs.sum(axis=1), 1.0)
 
     def test_rejects_probs_not_summing_to_one(self, prov, ids_ts):

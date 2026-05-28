@@ -15,11 +15,12 @@ import numpy as np
 import pytest
 
 from bracketlearn.forecast import (
-    Backing,
+    BracketForecast,
     DistributionForecast,
-    ParametricFamily,
+    NormalForecast,
     PointForecast,
     ProvenanceMeta,
+    StudentTForecast,
     TailPolicy,
     TailRule,
 )
@@ -63,8 +64,7 @@ class TestGlobalResidual:
         new_mu = np.linspace(-5, 5, 50)
         new_point = _point(new_mu, prov)
         dist = gr.lift(new_point)
-        assert dist.backing == Backing.PARAMETRIC
-        assert dist.family == ParametricFamily.NORMAL
+        assert isinstance(dist, NormalForecast)
         assert np.all(dist.params["sigma"] == gr.sigma_)
         np.testing.assert_array_equal(dist.params["mu"], new_mu)
 
@@ -106,8 +106,7 @@ class TestStudentTResidual:
         st = StudentTResidual().fit(_point(mu_hat, prov), y)
         new_mu = np.linspace(-3, 3, 40)
         dist = st.lift(_point(new_mu, prov))
-        assert dist.backing == Backing.PARAMETRIC
-        assert dist.family == ParametricFamily.STUDENT_T
+        assert isinstance(dist, StudentTForecast)
         np.testing.assert_array_equal(dist.params["mu"], new_mu)
         assert np.all(dist.params["sigma"] == st.sigma_)
         assert np.all(dist.params["df"] == st.df_)
@@ -165,8 +164,7 @@ class TestGARCHResidual:
         g = GARCHResidual().fit(_point(mu_hat, prov), y)
         new_mu = np.linspace(-1, 1, 20)
         dist = g.lift(_point(new_mu, prov))
-        assert dist.backing == Backing.PARAMETRIC
-        assert dist.family == ParametricFamily.NORMAL
+        assert isinstance(dist, NormalForecast)
         # One-step semantics: every row gets the same σ.
         expected_sigma = float(np.sqrt(g.sigma2_next_))
         np.testing.assert_allclose(dist.params["sigma"], expected_sigma, rtol=1e-12)
@@ -187,7 +185,7 @@ class TestGARCHResidual:
         g = GARCHResidual(family="student_t").fit(_point(np.zeros(T), prov), r)
         assert g.df_ is not None and g.df_ > 2.1
         dist = g.lift(_point(np.zeros(5), prov))
-        assert dist.family == ParametricFamily.STUDENT_T
+        assert isinstance(dist, StudentTForecast)
 
     def test_lift_before_fit_raises(self, prov):
         with pytest.raises(RuntimeError, match="before fit"):
@@ -224,7 +222,7 @@ class TestIsotonic:
             provenance=prov,
         )
         cal = iso.transform(d_new)
-        assert cal.backing == Backing.BRACKET
+        assert isinstance(cal, BracketForecast)
         np.testing.assert_allclose(cal.probs.sum(axis=1), 1.0, atol=1e-9)
 
     def test_transform_before_fit_raises(self, prov):
