@@ -4,6 +4,69 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions
 follow semver: MAJOR.MINOR.PATCH. Pre-1.0 the public API can break in any
 minor release; patch releases are bug-fixes and additive tests.
 
+## [0.5.0] — 2026-05-27
+
+**Breaking**: ``BracketClassifier`` and ``BracketRegressor`` removed.
+Both classes conflated two concerns inside ``fit`` — the per-row to
+per-(row, bracket) reshape and the model fit — and hardcoded the target
+as a bracket-hit indicator. That made the regressor inflexible: any
+caller wanting a different per-(row, bracket) target (e.g. mispricing
+residual ``hit - market_p``) had to fork the class.
+
+The two concerns now live separately:
+
+- New ``bracketlearn.BracketExpander`` (in ``bracketlearn.transformers``)
+  owns the reshape. ``fit_transform(X, y, ids=...)`` returns
+  ``(X_expanded, y_expanded)`` where ``X_expanded`` is
+  ``(M, F+2)`` with ``[..., lo, hi]`` appended, and ``y_expanded`` is
+  the default bracket-hit target ``(M,)``. Pass ``y=None`` to skip
+  target construction. ``transform(X, ids=...)`` is the predict-side
+  counterpart (X-only). ``assemble_dist(predictions, ids=..., timestamps=...)``
+  packs raw per-(row, bracket) predictions into a row-renormalised
+  ``BracketForecast``.
+
+- Fitting is plain sklearn: callers pick any classifier / regressor and
+  call its ``fit(X_expanded, y_expanded)`` directly. The expander has
+  no opinion about which model fits the augmented design.
+
+Migration recipe::
+
+    # Old:
+    # bc = BracketClassifier(estimator=LGBMClassifier(...),
+    #                        brackets_by_id=bbi).fit(X, y, ids=ids)
+    # d = bc.predict_dist(X_pred, ids=pred_ids, timestamps=ts)
+
+    # New:
+    exp = BracketExpander(brackets_by_id=bbi)
+    X_exp, y_exp = exp.fit_transform(X, y, ids=ids)
+    clf = LGBMClassifier(...).fit(X_exp, y_exp)
+    X_pred_exp, _ = exp.transform(X_pred, ids=pred_ids)
+    scores = clf.predict_proba(X_pred_exp)[:, 1]
+    d = exp.assemble_dist(scores, ids=pred_ids, timestamps=ts)
+
+Callers wanting a custom target build it on top of the expansion::
+
+    X_exp, y_hit = exp.fit_transform(X, y, ids=ids)
+    market_p_exp = build_market_p_per_bracket(...)  # caller-side, (M,)
+    X_exp = np.column_stack([X_exp, market_p_exp])
+    y_target = y_hit - market_p_exp                  # mispricing residual
+    LGBMRegressor(...).fit(X_exp, y_target)
+
+The 16 ``BracketClassifier`` / ``BracketRegressor`` tests have been
+replaced by 9 ``BracketExpander`` tests covering the same surface
+(ragged brackets, default + custom targets, predict-time id mismatch,
+length-mismatch guards, end-to-end logistic-regression composition).
+
+### Removed
+- ``bracketlearn.trainers.BracketClassifier``
+- ``bracketlearn.trainers.BracketRegressor``
+- ``bracketlearn.trainers.bracket._assemble_bracket_forecast`` (subsumed
+  by ``BracketExpander.assemble_dist``)
+
+### Added
+- ``bracketlearn.transformers.BracketExpander``
+- ``bracketlearn.BracketExpander`` top-level re-export
+
 ## [0.4.0] — 2026-05-27
 
 Three Bayesian trainers added — one with empirical wins on this repo's

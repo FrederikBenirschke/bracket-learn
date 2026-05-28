@@ -25,7 +25,7 @@ Less commonly used symbols live in their submodules:
 
 from __future__ import annotations
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 from bracketlearn.adapters import (
     BinaryAbove,
@@ -72,8 +72,6 @@ from bracketlearn.trainers import (
     EMOS,
     BayesianRidge,
     BMAStacking,
-    BracketClassifier,
-    BracketRegressor,
     BracketStacking,
     CDFBoostBracket,
     CumulativeBinary,
@@ -91,6 +89,7 @@ from bracketlearn.trainers import (
     Stacking,
     TailSpecialist,
 )
+from bracketlearn.transformers import BracketExpander
 
 __all__ = [
     "__version__",
@@ -121,8 +120,6 @@ __all__ = [
     # trainers
     "BMAStacking",
     "BayesianRidge",
-    "BracketClassifier",
-    "BracketRegressor",
     "BracketStacking",
     "HierarchicalNormal",
     "CDFBoostBracket",
@@ -140,6 +137,8 @@ __all__ = [
     "StackedParametric",
     "Stacking",  # legacy alias for StackedParametric
     "TailSpecialist",
+    # transformers
+    "BracketExpander",
     # restriction
     "BracketMask",
     # lifters / calibrators

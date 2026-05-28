@@ -959,350 +959,158 @@ def test_empirical_distribution_respects_sample_weight():
 
 
 # ---------------------------------------------------------------------------
-# BracketClassifier — one classifier on (X, lo, hi) → P(y ∈ [lo, hi)).
+# BracketExpander — per-row <-> per-(row, bracket) reshape + dist assembly.
+#
+# Replaces the BracketClassifier / BracketRegressor unit tests deleted in
+# v0.5.0. The classes are gone — callers now compose BracketExpander with
+# any sklearn estimator. These tests exercise the expander directly plus
+# one end-to-end "expander + LogisticRegression" scenario to prove the
+# composition path.
 # ---------------------------------------------------------------------------
 
 
-def test_bracket_classifier_emits_bracketforecast_logistic():
-    """LogisticRegression as estimator — output should be a BracketForecast
-    with per-row probs summing to 1."""
+def test_bracket_expander_fit_transform_default_target_is_hit_indicator():
+    """fit_transform(X, y, ids) produces (X_exp, y_exp) where y_exp[k]==1
+    iff y[i] fell in bracket b of row i."""
+    from bracketlearn import BracketExpander
+
+    edges = np.array([0.0, 1.0, 2.0, 3.0])  # 3 bins
+    bbi = {0: edges, 1: edges}
+    X = np.array([[10.0], [20.0]])
+    y = np.array([0.5, 2.5])                # row 0 -> bin 0, row 1 -> bin 2
+    ids = np.array([0, 1])
+    exp = BracketExpander(brackets_by_id=bbi)
+    X_exp, y_exp = exp.fit_transform(X, y, ids=ids)
+    assert X_exp.shape == (6, 3)            # 2 rows * 3 bins, (1 feat + lo + hi)
+    assert y_exp.shape == (6,)
+    np.testing.assert_array_equal(y_exp, [1, 0, 0, 0, 0, 1])
+
+
+def test_bracket_expander_transform_y_none_returns_only_x():
+    """transform(X, ids) -> (X_exp, None) for predict-side."""
+    from bracketlearn import BracketExpander
+
+    edges = np.array([0.0, 1.0, 2.0])
+    exp = BracketExpander(brackets_by_id={0: edges})
+    X_exp, y_exp = exp.transform(np.array([[5.0]]), ids=np.array([0]))
+    assert X_exp.shape == (2, 3)
+    assert y_exp is None
+
+
+def test_bracket_expander_supports_ragged_brackets():
+    """Per-row B may differ; M = sum(B_i)."""
+    from bracketlearn import BracketExpander
+
+    bbi = {
+        0: np.array([0.0, 1.0, 2.0]),                  # 2 bins
+        1: np.array([0.0, 0.5, 1.0, 1.5, 2.0]),         # 4 bins
+    }
+    X = np.zeros((2, 1))
+    y = np.array([0.5, 1.25])
+    exp = BracketExpander(brackets_by_id=bbi)
+    X_exp, y_exp = exp.fit_transform(X, y, ids=np.array([0, 1]))
+    assert X_exp.shape == (6, 3)
+    np.testing.assert_array_equal(y_exp, [1, 0, 0, 0, 1, 0])
+
+
+def test_bracket_expander_assemble_dist_round_trips():
+    """assemble_dist(scores) clips + renormalises per row and packs into a
+    BracketForecast whose probs sum to 1 row-wise."""
+    from bracketlearn import BracketExpander
+    from bracketlearn.forecast import BracketForecast
+
+    edges = np.array([0.0, 1.0, 2.0, 3.0])
+    bbi = {0: edges, 1: edges}
+    exp = BracketExpander(brackets_by_id=bbi)
+    exp.transform(np.zeros((2, 1)), ids=np.array([0, 1]))
+    scores = np.array([0.3, 0.4, 0.3, 0.1, 0.5, 0.4])
+    dist = exp.assemble_dist(scores, ids=np.array([0, 1]),
+                             timestamps=np.array([0.0, 1.0]))
+    assert isinstance(dist, BracketForecast)
+    assert dist.probs.shape == (2, 3)
+    np.testing.assert_allclose(dist.probs.sum(axis=1), 1.0, atol=1e-12)
+
+
+def test_bracket_expander_assemble_dist_length_mismatch_raises():
+    """If predictions length != offsets_[-1] (transform/predict drift), raise."""
+    from bracketlearn import BracketExpander
+
+    edges = np.array([0.0, 1.0, 2.0])
+    exp = BracketExpander(brackets_by_id={0: edges})
+    exp.transform(np.zeros((1, 1)), ids=np.array([0]))
+    with pytest.raises(ValueError, match="predictions length"):
+        exp.assemble_dist(np.zeros(5), ids=np.array([0]),
+                          timestamps=np.array([0.0]))
+
+
+def test_bracket_expander_assemble_dist_before_transform_raises():
+    from bracketlearn import BracketExpander
+
+    edges = np.array([0.0, 1.0, 2.0])
+    exp = BracketExpander(brackets_by_id={0: edges})
+    with pytest.raises(RuntimeError, match="before transform"):
+        exp.assemble_dist(np.zeros(2), ids=np.array([0]),
+                          timestamps=np.array([0.0]))
+
+
+def test_bracket_expander_y_length_mismatch_raises():
+    """fit_transform with y shape != ids shape raises."""
+    from bracketlearn import BracketExpander
+
+    edges = np.array([0.0, 1.0, 2.0])
+    exp = BracketExpander(brackets_by_id={0: edges, 1: edges})
+    with pytest.raises(ValueError, match="y has length"):
+        exp.fit_transform(np.zeros((2, 1)), y=np.array([0.5]), ids=np.array([0, 1]))
+
+
+def test_bracket_expander_missing_id_raises():
+    """Predict-time id not in brackets_by_id raises (matches old
+    BracketClassifier behaviour)."""
+    from bracketlearn import BracketExpander
+
+    edges = np.array([0.0, 1.0, 2.0])
+    exp = BracketExpander(brackets_by_id={0: edges})
+    with pytest.raises(KeyError):
+        exp.transform(np.zeros((1, 1)), ids=np.array([99]))
+
+
+def test_bracket_expander_end_to_end_with_logistic_regression():
+    """Full bracket-hit-classifier pipeline composed by hand. Output should
+    be a BracketForecast with per-row probs summing to 1 and (on simple
+    linear data) the realised bin sees the largest mass on average."""
     from sklearn.linear_model import LogisticRegression
 
-    from bracketlearn.trainers import BracketClassifier
+    from bracketlearn import BracketExpander
+    from bracketlearn.forecast import BracketForecast
 
     rng = np.random.default_rng(0)
-    N, K = 150, 3
-    X = rng.standard_normal((N, K))
-    y = X[:, 0] + 0.5 * rng.standard_normal(N)
+    N, F = 200, 3
+    X = rng.standard_normal((N, F))
+    y = X[:, 0] + 0.3 * rng.standard_normal(N)
     ids = np.arange(N)
-    ts = np.arange(N, dtype=float)
-    edges = np.linspace(-3, 3, 7)   # 6 bins, shared across rows
-    brackets_by_id = {int(k): edges for k in ids}
+    edges = np.linspace(-3.0, 3.0, 7)        # 6 shared bins
+    bbi = {int(k): edges for k in ids}
 
-    bc = BracketClassifier(
-        estimator=LogisticRegression(max_iter=500),
-        brackets_by_id=brackets_by_id,
-    ).fit(X, y, ids=ids)
-    d = bc.predict_dist(X, ids=ids, timestamps=ts)
-    assert isinstance(d, BracketForecast)
-    assert d.probs.shape == (N, 6)
-    np.testing.assert_allclose(np.nansum(d.probs, axis=1), 1.0, atol=1e-9)
+    exp = BracketExpander(brackets_by_id=bbi)
+    X_exp, y_exp = exp.fit_transform(X, y, ids=ids)
+    clf = LogisticRegression(max_iter=500).fit(X_exp, y_exp)
 
-
-def test_bracket_classifier_supports_ragged_brackets():
-    """Different rows can have different B (bin counts)."""
-    from sklearn.linear_model import LogisticRegression
-
-    from bracketlearn.trainers import BracketClassifier
-
-    rng = np.random.default_rng(0)
-    N, K = 120, 3
-    X = rng.standard_normal((N, K))
-    y = X[:, 0] + 0.5 * rng.standard_normal(N)
-    ids = np.arange(N)
-    ts = np.arange(N, dtype=float)
-    edges_a = np.linspace(-3, 3, 5)    # 4 bins
-    edges_b = np.linspace(-3, 3, 8)    # 7 bins
-    brackets_by_id = {int(k): (edges_a if k % 2 == 0 else edges_b) for k in ids}
-
-    bc = BracketClassifier(
-        estimator=LogisticRegression(max_iter=500),
-        brackets_by_id=brackets_by_id,
-    ).fit(X, y, ids=ids)
-    d = bc.predict_dist(X, ids=ids, timestamps=ts)
-    valid = (~np.isnan(d.probs)).sum(axis=1)
-    np.testing.assert_array_equal(valid[ids % 2 == 0], 4)
-    np.testing.assert_array_equal(valid[ids % 2 != 0], 7)
-    np.testing.assert_allclose(np.nansum(d.probs, axis=1), 1.0, atol=1e-9)
-
-
-def test_bracket_classifier_concentrates_mass_at_true_y():
-    """On simple linear data with a precise classifier, the mode of the
-    predicted bracket dist should be the bin containing y."""
-    _skip_if_missing("lightgbm")
-    import lightgbm as lgb
-
-    from bracketlearn.trainers import BracketClassifier
-
-    rng = np.random.default_rng(0)
-    N, K = 300, 3
-    X = rng.standard_normal((N, K))
-    y = X[:, 0] + 0.2 * rng.standard_normal(N)  # tight signal
-    ids = np.arange(N)
-    ts = np.arange(N, dtype=float)
-    edges = np.linspace(-4, 4, 9)               # 8 bins
-    brackets_by_id = {int(k): edges for k in ids}
-
-    bc = BracketClassifier(
-        estimator=lgb.LGBMClassifier(
-            n_estimators=80, learning_rate=0.05, num_leaves=15,
-            verbose=-1,
-        ),
-        brackets_by_id=brackets_by_id,
-    ).fit(X, y, ids=ids)
-    d = bc.predict_dist(X, ids=ids, timestamps=ts)
-    # Predicted mode bin per row.
-    pred_bin = np.nanargmax(d.probs, axis=1)
-    true_bin = np.searchsorted(edges, y, side="right") - 1
-    true_bin = np.clip(true_bin, 0, edges.size - 2)
-    # In-sample on tight signal: >=60% of rows should pick the right bin.
-    acc = float((pred_bin == true_bin).mean())
-    assert acc > 0.60, f"in-sample mode accuracy {acc:.2f} < 0.60"
-
-
-def test_bracket_classifier_rejects_regressor():
-    """Estimator without predict_proba (e.g. a regressor) raises at construction."""
-    from sklearn.linear_model import Ridge
-
-    from bracketlearn.trainers import BracketClassifier
-
-    edges = np.linspace(0, 10, 5)
-    with pytest.raises(ValueError, match="predict_proba"):
-        BracketClassifier(
-            estimator=Ridge(),
-            brackets_by_id={0: edges, 1: edges},
-        )
-
-
-def test_bracket_classifier_rejects_non_monotonic_edges():
-    from sklearn.linear_model import LogisticRegression
-
-    from bracketlearn.trainers import BracketClassifier
-
-    bad = np.array([0.0, 1.0, 0.5, 2.0])   # not strictly increasing
-    with pytest.raises(ValueError, match="strictly increasing"):
-        BracketClassifier(
-            estimator=LogisticRegression(),
-            brackets_by_id={0: bad},
-        )
-
-
-def test_bracket_classifier_missing_id_raises():
-    """Predict path raises if brackets_by_id doesn't cover a row's id."""
-    from sklearn.linear_model import LogisticRegression
-
-    from bracketlearn.trainers import BracketClassifier
-
-    rng = np.random.default_rng(0)
-    X = rng.standard_normal((20, 2))
-    y = X[:, 0] + 0.3 * rng.standard_normal(20)
-    ids = np.arange(20)
-    ts = np.arange(20, dtype=float)
-    edges = np.linspace(-3, 3, 5)
-    brackets_by_id = {int(k): edges for k in ids}
-    bc = BracketClassifier(
-        estimator=LogisticRegression(max_iter=500),
-        brackets_by_id=brackets_by_id,
-    ).fit(X, y, ids=ids)
-    # Predict on an id that wasn't registered.
-    bad_ids = np.array([999, 1000])
-    with pytest.raises(KeyError, match="missing"):
-        bc.predict_dist(X[:2], ids=bad_ids, timestamps=ts[:2])
-
-
-def test_bracket_classifier_raises_when_y_outside_all_brackets():
-    """If every augmented label is 0 the classifier can't fit a non-degenerate
-    boundary — loud rail."""
-    from sklearn.linear_model import LogisticRegression
-
-    from bracketlearn.trainers import BracketClassifier
-
-    rng = np.random.default_rng(0)
-    X = rng.standard_normal((30, 2))
-    y = np.full(30, 1000.0)   # all y outside the brackets
-    ids = np.arange(30)
-    edges = np.linspace(-3, 3, 5)
-    bc = BracketClassifier(
-        estimator=LogisticRegression(max_iter=500),
-        brackets_by_id={int(k): edges for k in ids},
+    X_pred_exp, _ = exp.transform(X, ids=ids)
+    scores = clf.predict_proba(X_pred_exp)[:, 1]
+    dist = exp.assemble_dist(
+        scores, ids=ids, timestamps=np.arange(N, dtype=float),
     )
-    with pytest.raises(RuntimeError, match="no row's y landed"):
-        bc.fit(X, y, ids=ids)
+    assert isinstance(dist, BracketForecast)
+    assert dist.probs.shape == (N, 6)
+    np.testing.assert_allclose(dist.probs.sum(axis=1), 1.0, atol=1e-9)
+    # On well-fit linear data, the bin containing y should outscore a
+    # uniform baseline (which would be 1/6 ≈ 0.167). Spot-check rows where
+    # the realised bin is interior (drops ±∞ tails).
+    realised_bin = np.searchsorted(edges, y, side="right") - 1
+    interior = (realised_bin >= 0) & (realised_bin < 6)
+    mass_at_truth = dist.probs[np.arange(N)[interior], realised_bin[interior]]
+    assert float(mass_at_truth.mean()) > 1.0 / 6.0
 
-
-def test_bracket_classifier_predict_before_fit_raises():
-    from sklearn.linear_model import LogisticRegression
-
-    from bracketlearn.trainers import BracketClassifier
-
-    edges = np.linspace(0, 10, 5)
-    bc = BracketClassifier(
-        estimator=LogisticRegression(),
-        brackets_by_id={0: edges},
-    )
-    with pytest.raises(RuntimeError, match="before fit"):
-        bc.predict_dist(np.zeros((1, 2)), ids=np.array([0]),
-                        timestamps=np.array([0.0]))
-
-
-# ---------------------------------------------------------------------------
-# BracketRegressor — one regressor on (X, lo, hi) → ŷ ≈ P(y ∈ [lo, hi)).
-# ---------------------------------------------------------------------------
-
-
-def test_bracket_regressor_emits_bracketforecast_ridge():
-    """Ridge regressor → BracketForecast with row-sums == 1."""
-    from sklearn.linear_model import Ridge
-
-    from bracketlearn.trainers import BracketRegressor
-
-    rng = np.random.default_rng(0)
-    N, K = 150, 3
-    X = rng.standard_normal((N, K))
-    y = X[:, 0] + 0.5 * rng.standard_normal(N)
-    ids = np.arange(N)
-    ts = np.arange(N, dtype=float)
-    edges = np.linspace(-3, 3, 7)
-    brackets_by_id = {int(k): edges for k in ids}
-
-    br = BracketRegressor(
-        estimator=Ridge(alpha=1.0),
-        brackets_by_id=brackets_by_id,
-    ).fit(X, y, ids=ids)
-    d = br.predict_dist(X, ids=ids, timestamps=ts)
-    assert isinstance(d, BracketForecast)
-    assert d.probs.shape == (N, 6)
-    np.testing.assert_allclose(np.nansum(d.probs, axis=1), 1.0, atol=1e-9)
-
-
-def test_bracket_regressor_supports_ragged_brackets():
-    from sklearn.linear_model import Ridge
-
-    from bracketlearn.trainers import BracketRegressor
-
-    rng = np.random.default_rng(0)
-    N, K = 120, 3
-    X = rng.standard_normal((N, K))
-    y = X[:, 0] + 0.5 * rng.standard_normal(N)
-    ids = np.arange(N)
-    ts = np.arange(N, dtype=float)
-    edges_a = np.linspace(-3, 3, 5)
-    edges_b = np.linspace(-3, 3, 8)
-    brackets_by_id = {int(k): (edges_a if k % 2 == 0 else edges_b) for k in ids}
-
-    br = BracketRegressor(
-        estimator=Ridge(alpha=1.0),
-        brackets_by_id=brackets_by_id,
-    ).fit(X, y, ids=ids)
-    d = br.predict_dist(X, ids=ids, timestamps=ts)
-    valid = (~np.isnan(d.probs)).sum(axis=1)
-    np.testing.assert_array_equal(valid[ids % 2 == 0], 4)
-    np.testing.assert_array_equal(valid[ids % 2 != 0], 7)
-    np.testing.assert_allclose(np.nansum(d.probs, axis=1), 1.0, atol=1e-9)
-
-
-def test_bracket_regressor_concentrates_mass_at_true_y():
-    """Tree regressor on tight signal → predicted mode bin ≈ true bin."""
-    _skip_if_missing("lightgbm")
-    import lightgbm as lgb
-
-    from bracketlearn.trainers import BracketRegressor
-
-    rng = np.random.default_rng(0)
-    N, K = 300, 3
-    X = rng.standard_normal((N, K))
-    y = X[:, 0] + 0.2 * rng.standard_normal(N)
-    ids = np.arange(N)
-    ts = np.arange(N, dtype=float)
-    edges = np.linspace(-4, 4, 9)
-    brackets_by_id = {int(k): edges for k in ids}
-
-    br = BracketRegressor(
-        estimator=lgb.LGBMRegressor(
-            n_estimators=80, learning_rate=0.05, num_leaves=15,
-            verbose=-1,
-        ),
-        brackets_by_id=brackets_by_id,
-    ).fit(X, y, ids=ids)
-    d = br.predict_dist(X, ids=ids, timestamps=ts)
-    pred_bin = np.nanargmax(d.probs, axis=1)
-    true_bin = np.searchsorted(edges, y, side="right") - 1
-    true_bin = np.clip(true_bin, 0, edges.size - 2)
-    acc = float((pred_bin == true_bin).mean())
-    assert acc > 0.60, f"in-sample mode accuracy {acc:.2f} < 0.60"
-
-
-def test_bracket_regressor_rejects_object_without_predict():
-    """Estimator without .predict (e.g. plain object) raises at construction."""
-    from bracketlearn.trainers import BracketRegressor
-
-    class _NoPredict:
-        def fit(self, X, y, sample_weight=None):
-            return self
-
-    edges = np.linspace(0, 10, 5)
-    with pytest.raises(ValueError, match=r"\.predict\(\) method"):
-        BracketRegressor(
-            estimator=_NoPredict(),
-            brackets_by_id={0: edges, 1: edges},
-        )
-
-
-def test_bracket_regressor_rejects_non_monotonic_edges():
-    from sklearn.linear_model import Ridge
-
-    from bracketlearn.trainers import BracketRegressor
-
-    bad = np.array([0.0, 1.0, 0.5, 2.0])
-    with pytest.raises(ValueError, match="strictly increasing"):
-        BracketRegressor(
-            estimator=Ridge(),
-            brackets_by_id={0: bad},
-        )
-
-
-def test_bracket_regressor_missing_id_raises():
-    from sklearn.linear_model import Ridge
-
-    from bracketlearn.trainers import BracketRegressor
-
-    rng = np.random.default_rng(0)
-    X = rng.standard_normal((20, 2))
-    y = X[:, 0] + 0.3 * rng.standard_normal(20)
-    ids = np.arange(20)
-    ts = np.arange(20, dtype=float)
-    edges = np.linspace(-3, 3, 5)
-    brackets_by_id = {int(k): edges for k in ids}
-    br = BracketRegressor(
-        estimator=Ridge(alpha=1.0),
-        brackets_by_id=brackets_by_id,
-    ).fit(X, y, ids=ids)
-    bad_ids = np.array([999, 1000])
-    with pytest.raises(KeyError, match="missing"):
-        br.predict_dist(X[:2], ids=bad_ids, timestamps=ts[:2])
-
-
-def test_bracket_regressor_raises_when_y_outside_all_brackets():
-    from sklearn.linear_model import Ridge
-
-    from bracketlearn.trainers import BracketRegressor
-
-    rng = np.random.default_rng(0)
-    X = rng.standard_normal((30, 2))
-    y = np.full(30, 1000.0)
-    ids = np.arange(30)
-    edges = np.linspace(-3, 3, 5)
-    br = BracketRegressor(
-        estimator=Ridge(alpha=1.0),
-        brackets_by_id={int(k): edges for k in ids},
-    )
-    with pytest.raises(RuntimeError, match="no row's y landed"):
-        br.fit(X, y, ids=ids)
-
-
-def test_bracket_regressor_predict_before_fit_raises():
-    from sklearn.linear_model import Ridge
-
-    from bracketlearn.trainers import BracketRegressor
-
-    edges = np.linspace(0, 10, 5)
-    br = BracketRegressor(
-        estimator=Ridge(),
-        brackets_by_id={0: edges},
-    )
-    with pytest.raises(RuntimeError, match="before fit"):
-        br.predict_dist(np.zeros((1, 2)), ids=np.array([0]),
-                        timestamps=np.array([0.0]))
 
 
 # ---------------------------------------------------------------------------
