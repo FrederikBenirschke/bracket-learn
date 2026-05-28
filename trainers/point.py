@@ -107,6 +107,19 @@ class OnlineAggregator(BaseEstimator):
     to inference — pure online behavior during fit, snapshot-and-apply at
     predict.
 
+    Grouped mode (per-group AdaHedge): pass ``groups`` to ``fit`` and
+    ``predict`` (e.g. a per-row station_id array) to run a *separate*
+    AdaHedge instance per group, each accumulating its own loss vector
+    and snapshotting its own final weight vector. Useful when different
+    groups have different optimal experts (e.g. weather forecast
+    vendors where ECMWF dominates Phoenix while ICON wins Boston) —
+    a single global AdaHedge averages across the groups and loses that
+    specialisation.
+
+    Predict-time rows whose group key was not seen at fit time raise
+    (Rule #0.5; silent fallback to global weights would mask coverage
+    gaps).
+
     Output: PointForecaster — pair with GlobalResidual (or other Lifter)
     for distribution coverage. Composition is explicit, not baked in.
     """
@@ -116,6 +129,10 @@ class OnlineAggregator(BaseEstimator):
     depends_on: tuple[str, ...] = ()
     final_w_: np.ndarray | None = field(default=None, init=False)
     K_: int | None = field(default=None, init=False)
+    # Populated when ``groups`` is provided at fit; ``group_key → final_w``.
+    final_w_by_group_: dict[Any, np.ndarray] | None = field(
+        default=None, init=False,
+    )
 
     def fit(
         self,
@@ -124,19 +141,97 @@ class OnlineAggregator(BaseEstimator):
         *,
         sample_weight: np.ndarray | None = None,
         deps_oof: dict[str, Any] | None = None,
+        groups: np.ndarray | None = None,
     ) -> Self:
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
         if X.ndim != 2:
             raise ValueError(f"OnlineAggregator expects 2-D X (rows × experts); got {X.shape}")
-        T, K = X.shape
+        if groups is not None:
+            return self._fit_grouped(X, y, np.asarray(groups))
+        return self._fit_global(X, y)
+
+    def _fit_global(self, X: np.ndarray, y: np.ndarray) -> Self:
+        K = X.shape[1]
+        w_final, seen = self._run_adahedge_once(X, y, K)
+        if seen.sum() == 0:
+            raise RuntimeError(
+                f"OnlineAggregator: no rows had ≥{self.min_experts} awake experts"
+            )
+        w_final[seen == 0] = 0.0
+        s = w_final.sum()
+        if s <= 0:
+            raise RuntimeError("OnlineAggregator: final weight vector sums to 0")
+        self.final_w_ = w_final / s
+        self.K_ = K
+        self.final_w_by_group_ = None  # explicit: clears any prior grouped fit
+        return self
+
+    def _fit_grouped(
+        self, X: np.ndarray, y: np.ndarray, groups: np.ndarray,
+    ) -> Self:
+        if groups.shape[0] != X.shape[0]:
+            raise ValueError(
+                f"OnlineAggregator: groups has {groups.shape[0]} entries, "
+                f"X has {X.shape[0]} rows"
+            )
+        K = X.shape[1]
+        # np.unique with object-dtype groups returns sorted unique values;
+        # iterate in insertion order to match the snowflake's
+        # per-station discovery order (matters only for log readability).
+        seen_groups: list[Any] = []
+        seen_set: set[Any] = set()
+        for g in groups.tolist():
+            if g not in seen_set:
+                seen_set.add(g)
+                seen_groups.append(g)
+        out: dict[Any, np.ndarray] = {}
+        n_skipped_groups = 0
+        for g in seen_groups:
+            mask = groups == g
+            X_g = X[mask]
+            y_g = y[mask]
+            try:
+                w_final, seen = self._run_adahedge_once(X_g, y_g, K)
+            except RuntimeError:
+                # Group with no awake rows — skip loud rather than fail
+                # the whole fit (per-station data sparsity is normal).
+                n_skipped_groups += 1
+                continue
+            if seen.sum() == 0:
+                n_skipped_groups += 1
+                continue
+            w_final[seen == 0] = 0.0
+            s = w_final.sum()
+            if s <= 0:
+                n_skipped_groups += 1
+                continue
+            out[g] = w_final / s
+        if not out:
+            raise RuntimeError(
+                f"OnlineAggregator: no group yielded a usable weight vector "
+                f"({n_skipped_groups} groups skipped — all had < "
+                f"{self.min_experts} awake experts in their training rows)"
+            )
+        self.final_w_by_group_ = out
+        self.final_w_ = None
+        self.K_ = K
+        return self
+
+    def _run_adahedge_once(
+        self, X: np.ndarray, y: np.ndarray, K: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Single AdaHedge pass over (X, y); returns (final_w_raw, seen_counts).
+
+        Caller decides what to do when ``seen.sum() == 0`` (global mode
+        raises; grouped mode skips the group).
+        """
+        T = X.shape[0]
         L = np.zeros(K)
         delta = 0.0
         eta = float("inf")
         log_K = float(np.log(max(K, 2)))
-        last_w_per_expert = np.zeros(K)
         seen_per_expert = np.zeros(K, dtype=int)
-
         for t in range(T):
             f_t = X[t]
             y_t = y[t]
@@ -147,7 +242,6 @@ class OnlineAggregator(BaseEstimator):
             awake_idx = np.where(awake)[0]
             L_awake = L[awake_idx]
             w_awake = self._softmin(eta, L_awake)
-            last_w_per_expert[awake_idx] = w_awake
             seen_per_expert[awake_idx] += 1
             f_awake = f_t[awake_idx]
             ell_awake = (f_awake - y_t) ** 2
@@ -157,23 +251,8 @@ class OnlineAggregator(BaseEstimator):
             if delta > 0:
                 eta = log_K / delta
             L[awake_idx] += ell_awake
-
-        if seen_per_expert.sum() == 0:
-            raise RuntimeError(
-                f"OnlineAggregator: no rows had ≥{self.min_experts} awake experts"
-            )
-        # Final weights: per AdaHedge semantics, take the *current* posterior
-        # over all experts (those never awake get 0). Renormalise.
         w_final = self._softmin(eta, L)
-        # Zero out experts never seen — guards against giving cold-start
-        # vendors any weight at predict time.
-        w_final[seen_per_expert == 0] = 0.0
-        s = w_final.sum()
-        if s <= 0:
-            raise RuntimeError("OnlineAggregator: final weight vector sums to 0")
-        self.final_w_ = w_final / s
-        self.K_ = K
-        return self
+        return w_final, seen_per_expert
 
     def predict(
         self,
@@ -181,18 +260,84 @@ class OnlineAggregator(BaseEstimator):
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
+        groups: np.ndarray | None = None,
     ) -> PointForecast:
+        X = np.asarray(X, dtype=float)
+        if self.final_w_by_group_ is not None:
+            if groups is None:
+                raise ValueError(
+                    "OnlineAggregator was fit with per-group AdaHedge — "
+                    "predict requires groups too (one group-key per row)"
+                )
+            return self._predict_grouped(
+                X, ids=ids, timestamps=timestamps, groups=np.asarray(groups),
+            )
         if self.final_w_ is None:
             raise RuntimeError("OnlineAggregator.predict called before fit")
-        X = np.asarray(X, dtype=float)
         if X.shape[1] != self.K_:
             raise ValueError(
                 f"OnlineAggregator: predict X has K={X.shape[1]}, train had K={self.K_}"
             )
         N = X.shape[0]
+        mu = self._apply_weights(X, self.final_w_, N)
+        prov = ProvenanceMeta.placeholder(self.name)
+        return PointForecast(
+            mu=mu, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
+            provenance=prov,
+        )
+
+    def _predict_grouped(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+        groups: np.ndarray,
+    ) -> PointForecast:
+        if X.shape[1] != self.K_:
+            raise ValueError(
+                f"OnlineAggregator: predict X has K={X.shape[1]}, train had K={self.K_}"
+            )
+        N = X.shape[0]
+        if groups.shape[0] != N:
+            raise ValueError(
+                f"OnlineAggregator: groups has {groups.shape[0]} entries, "
+                f"predict X has {N} rows"
+            )
+        # Validate every group key was seen at fit. Rule #0.5: missing
+        # group is a coverage hole, not a silent fall-back to global.
+        unseen = [g for g in set(groups.tolist())
+                  if g not in self.final_w_by_group_]
+        if unseen:
+            preview = ", ".join(repr(g) for g in unseen[:5])
+            raise RuntimeError(
+                f"OnlineAggregator.predict: {len(unseen)} group(s) absent "
+                f"from fit-time weights: {preview}"
+                f"{' ...' if len(unseen) > 5 else ''}"
+            )
+        mu = np.full(N, np.nan)
+        # Vectorise per group to amortise the apply cost; groups are
+        # typically tens (stations), so this is fast.
+        for g, w in self.final_w_by_group_.items():
+            mask = groups == g
+            if not mask.any():
+                continue
+            mu[mask] = self._apply_weights(X[mask], w, int(mask.sum()))
+        # _apply_weights already raises if any row has < min_experts awake;
+        # since we mask through every group, no leftover NaN is possible
+        # unless a group's rows all failed — _apply_weights would have raised.
+        prov = ProvenanceMeta.placeholder(self.name)
+        return PointForecast(
+            mu=mu, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
+            provenance=prov,
+        )
+
+    def _apply_weights(
+        self, X: np.ndarray, w: np.ndarray, N: int,
+    ) -> np.ndarray:
+        """Apply a snapshot weight vector to ``X``; renorm to awake subset."""
         awake = ~np.isnan(X)                      # (N, K) bool
-        # Weight matrix: final_w_ broadcast against awake mask.
-        w_mat = self.final_w_[None, :] * awake    # (N, K) — zeroes on asleep
+        w_mat = w[None, :] * awake                # (N, K) — zeroes on asleep
         x_mat = np.where(awake, X, 0.0)
         num = (w_mat * x_mat).sum(axis=1)         # (N,)
         denom = w_mat.sum(axis=1)                 # (N,)
@@ -200,17 +345,12 @@ class OnlineAggregator(BaseEstimator):
         ok = (awake_counts >= self.min_experts) & (denom > 0)
         mu = np.full(N, np.nan)
         mu[ok] = num[ok] / denom[ok]
-        # Leftover NaNs are a real coverage hole — raise.
         if np.isnan(mu).any():
             n_miss = int(np.isnan(mu).sum())
             raise RuntimeError(
                 f"OnlineAggregator.predict: {n_miss}/{N} rows had < {self.min_experts} awake experts"
             )
-        prov = ProvenanceMeta.placeholder(self.name)
-        return PointForecast(
-            mu=mu, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
-            provenance=prov,
-        )
+        return mu
 
     @staticmethod
     def _softmin(eta: float, losses: np.ndarray) -> np.ndarray:

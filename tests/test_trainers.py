@@ -172,6 +172,92 @@ def test_online_aggregator_raises_when_no_awake_rows():
         OnlineAggregator(min_experts=2).fit(X, y)
 
 
+def test_online_aggregator_grouped_specialises_per_group():
+    """Per-group AdaHedge: different best expert per group → different weights."""
+    rng = np.random.default_rng(0)
+    N_per = 200
+    K = 3
+    # Group A: expert 0 is best (low noise). Group B: expert 2 is best.
+    y_a = rng.normal(0, 1, N_per)
+    y_b = rng.normal(0, 1, N_per)
+    X_a = np.column_stack([
+        y_a + rng.normal(0, 0.1, N_per),
+        y_a + rng.normal(0, 2.0, N_per),
+        y_a + rng.normal(0, 2.0, N_per),
+    ])
+    X_b = np.column_stack([
+        y_b + rng.normal(0, 2.0, N_per),
+        y_b + rng.normal(0, 2.0, N_per),
+        y_b + rng.normal(0, 0.1, N_per),
+    ])
+    X = np.vstack([X_a, X_b])
+    y = np.concatenate([y_a, y_b])
+    groups = np.array(["A"] * N_per + ["B"] * N_per)
+    agg = OnlineAggregator(min_experts=2).fit(X, y, groups=groups)
+    assert agg.final_w_by_group_ is not None
+    assert set(agg.final_w_by_group_) == {"A", "B"}
+    w_a = agg.final_w_by_group_["A"]
+    w_b = agg.final_w_by_group_["B"]
+    # Each group should concentrate weight on its own best expert.
+    assert w_a[0] > w_a[2], f"Group A expected expert 0 > expert 2, got {w_a}"
+    assert w_b[2] > w_b[0], f"Group B expected expert 2 > expert 0, got {w_b}"
+
+
+def test_online_aggregator_grouped_predict_round_trips():
+    rng = np.random.default_rng(1)
+    N, K = 60, 3
+    y = rng.normal(0, 1, N)
+    X = y[:, None] + rng.normal(0, 0.5, (N, K))
+    groups = np.array(["A" if i % 2 == 0 else "B" for i in range(N)])
+    agg = OnlineAggregator(min_experts=2).fit(X, y, groups=groups)
+    pf = agg.predict(
+        X, ids=np.arange(N), timestamps=np.arange(N, dtype=float),
+        groups=groups,
+    )
+    assert pf.mu.shape == (N,)
+    assert not np.isnan(pf.mu).any()
+
+
+def test_online_aggregator_grouped_predict_rejects_unseen_group():
+    rng = np.random.default_rng(2)
+    N, K = 40, 3
+    y = rng.normal(0, 1, N)
+    X = y[:, None] + rng.normal(0, 0.5, (N, K))
+    groups_train = np.array(["A"] * N)
+    agg = OnlineAggregator(min_experts=2).fit(X, y, groups=groups_train)
+    groups_predict = np.array(["B"] * N)
+    with pytest.raises(RuntimeError, match="absent from fit-time"):
+        agg.predict(
+            X, ids=np.arange(N), timestamps=np.arange(N, dtype=float),
+            groups=groups_predict,
+        )
+
+
+def test_online_aggregator_grouped_predict_requires_groups_when_grouped_fit():
+    rng = np.random.default_rng(3)
+    N, K = 40, 3
+    y = rng.normal(0, 1, N)
+    X = y[:, None] + rng.normal(0, 0.5, (N, K))
+    groups_train = np.array(["A"] * (N // 2) + ["B"] * (N - N // 2))
+    agg = OnlineAggregator(min_experts=2).fit(X, y, groups=groups_train)
+    with pytest.raises(ValueError, match="per-group AdaHedge"):
+        agg.predict(X, ids=np.arange(N), timestamps=np.arange(N, dtype=float))
+
+
+def test_online_aggregator_global_fit_still_works():
+    """Default fit (no groups) preserves original single-pool behavior."""
+    rng = np.random.default_rng(4)
+    N, K = 80, 4
+    y = rng.normal(0, 1, N)
+    X = y[:, None] + rng.normal(0, 0.5, (N, K))
+    agg = OnlineAggregator(min_experts=2).fit(X, y)
+    assert agg.final_w_ is not None
+    assert agg.final_w_by_group_ is None
+    np.testing.assert_allclose(agg.final_w_.sum(), 1.0)
+    pf = agg.predict(X, ids=np.arange(N), timestamps=np.arange(N, dtype=float))
+    assert pf.mu.shape == (N,)
+
+
 def test_rnn_hourly_predicts_residual():
     _skip_if_missing("torch")
     from bracketlearn.trainers import RNNHourly
