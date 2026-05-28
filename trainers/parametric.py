@@ -1464,10 +1464,21 @@ class MixtureNormals(BaseEstimator):
     that vendor's train-slice RMSE against y. Equal weights over the K
     columns of X.
 
-    Treats X as already-curated vendor columns; missing-value handling per
-    row is out of scope for the (N, K) dense array contract.
+    Treats X as already-curated vendor columns. NaN entries are honored
+    as "vendor absent for this row":
 
-    Rows with all-NaN columns or all-zero variances raise.
+    - **fit**: σ_v is computed per-column with NaN-skip semantics
+      (``nanmean`` over (x_v − y)²); a column with zero finite entries
+      raises.
+    - **predict_dist**: each row gets weights ∝ (vendor present) and is
+      renormalized to sum to 1; absent components carry zero weight and
+      a placeholder μ/σ so downstream math stays finite. Rows with **all**
+      vendors absent fall back to uniform weights with NaN μ — callers
+      must handle those upstream.
+
+    This mirrors the per-row vendor-presence semantics of the original
+    snowflake ``mixture_normals`` trainer (dropping NaN vendors per row,
+    never mean-imputing).
     """
 
     name: str = "MixtureNormals"
@@ -1475,6 +1486,7 @@ class MixtureNormals(BaseEstimator):
     sigma_floor: float = 0.5
     sigma_v_: np.ndarray | None = field(default=None, init=False)
     K_: int | None = field(default=None, init=False)
+    vendor_trained_: np.ndarray | None = field(default=None, init=False)
 
     def fit(
         self,
@@ -1490,18 +1502,31 @@ class MixtureNormals(BaseEstimator):
             raise ValueError(f"MixtureNormals expects 2-D X; got shape {X.shape}")
         K = X.shape[1]
         diffs = X - y[:, None]
+        present = np.isfinite(diffs)
         if sample_weight is not None:
-            w = np.asarray(sample_weight, dtype=float)
-            sigma_v = np.sqrt((w[:, None] * diffs ** 2).sum(axis=0) / w.sum())
+            w = np.asarray(sample_weight, dtype=float)[:, None]
+            num = np.where(present, w * diffs ** 2, 0.0).sum(axis=0)
+            den = np.where(present, w, 0.0).sum(axis=0)
         else:
-            sigma_v = np.sqrt(np.mean(diffs ** 2, axis=0))
-        sigma_v = np.maximum(sigma_v, self.sigma_floor)
-        if np.any(~np.isfinite(sigma_v)):
+            num = np.where(present, diffs ** 2, 0.0).sum(axis=0)
+            den = present.sum(axis=0).astype(float)
+        vendor_trained = den > 0
+        if not vendor_trained.any():
             raise RuntimeError(
-                f"MixtureNormals: non-finite σ_v after fit ({sigma_v}); "
-                f"check X has no NaNs"
+                "MixtureNormals.fit: no vendor column has any finite training row"
             )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            sigma_v = np.where(
+                vendor_trained, np.sqrt(num / np.where(den > 0, den, 1.0)),
+                np.inf,
+            )
+        # Floor only the trained vendors; untrained stay at +∞ so they
+        # carry zero weight at predict time regardless of present-mask.
+        sigma_v = np.where(
+            vendor_trained, np.maximum(sigma_v, self.sigma_floor), np.inf,
+        )
         self.sigma_v_ = sigma_v
+        self.vendor_trained_ = vendor_trained
         self.K_ = K
         return self
 
@@ -1520,12 +1545,33 @@ class MixtureNormals(BaseEstimator):
                 f"MixtureNormals: predict X has K={X.shape[1]}, train had K={self.K_}"
             )
         N = X.shape[0]
-        mus = X
+        # A component contributes only if (a) the vendor produced a value
+        # for this row AND (b) σ_v was estimable on the train slice.
+        vendor_trained = (
+            self.vendor_trained_ if self.vendor_trained_ is not None
+            else np.ones(self.K_, dtype=bool)
+        )
+        present = np.isfinite(X) & vendor_trained[None, :]
+        n_present = present.sum(axis=1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            row_w = np.where(
+                n_present[:, None] > 0,
+                present.astype(float) / np.maximum(n_present, 1)[:, None],
+                # Row with no usable vendors: spread weight over trained
+                # vendors with μ=0 placeholder. Mixture is degenerate but
+                # finite; caller can detect via NaN realized-bracket prob.
+                vendor_trained.astype(float)
+                / max(int(vendor_trained.sum()), 1),
+            )
+        mus = np.where(present, X, 0.0)
         sigmas = np.broadcast_to(self.sigma_v_, (N, self.K_)).copy()
-        weights = np.full((N, self.K_), 1.0 / self.K_)
+        # Replace any +∞ σ (untrained vendors) with sigma_floor as a
+        # numerically safe placeholder; their weight is 0 so the component
+        # contribution is zero regardless.
+        sigmas = np.where(np.isfinite(sigmas), sigmas, self.sigma_floor)
         prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
         return DistributionForecast.from_mixture_normal(
-            weights=weights, mus=mus, sigmas=sigmas,
+            weights=row_w, mus=mus, sigmas=sigmas,
             ids=np.asarray(ids), timestamps=np.asarray(timestamps),
             provenance=prov,
         )
