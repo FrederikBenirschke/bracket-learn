@@ -35,7 +35,7 @@ from bracketlearn.adapters import (
     Twin,
 )
 from bracketlearn.base import BaseEstimator, clone
-from bracketlearn.baselines import EmpiricalDistribution, Persistence
+from bracketlearn.baselines import EmpiricalDistribution, Persistence, PersistenceDist
 from bracketlearn.forecast import (
     BracketForecast,
     ContractForecast,
@@ -54,6 +54,7 @@ from bracketlearn.lift import (
     GARCHResidual,
     GlobalResidual,
     Isotonic,
+    PITCalibrate,
     StudentTResidual,
 )
 from bracketlearn.multitarget import (
@@ -117,6 +118,7 @@ __all__ = [
     # baselines
     "EmpiricalDistribution",
     "Persistence",
+    "PersistenceDist",
     # trainers
     "BMAStacking",
     "BayesianRidge",
@@ -146,6 +148,7 @@ __all__ = [
     "GARCHResidual",
     "GlobalResidual",
     "Isotonic",
+    "PITCalibrate",
     "StudentTResidual",
     # composites
     "CalibratedForecaster",

@@ -200,6 +200,16 @@ class EMOS(BaseEstimator):
                 )
             self.c_, self.d_ = c_fallback, 0.0
             self.sigma_fit_was_constant_ = True
+            import warnings
+            warnings.warn(
+                f"EMOS(fit_method='ols'): linear-in-variance fit gave "
+                f"non-positive variance (c={c_unc:.3g}, d={d_unc:.3g}); "
+                f"fell back to constant σ²={c_fallback:.3g}. ens_var is "
+                f"not informative about residual scale on this training "
+                f"set — consider EMOS(fit_method='crps_nelder_mead') "
+                f"(exp-link variance) or check ensemble spread-skill.",
+                UserWarning, stacklevel=3,
+            )
         else:
             self.c_, self.d_ = c_unc, d_unc
             self.sigma_fit_was_constant_ = False
@@ -259,7 +269,15 @@ class EMOS(BaseEstimator):
                     f"wider spread range or use a constant-σ fallback."
                 )
         sigma = np.sqrt(var)
+        # Tag provenance when the OLS variance fit collapsed to a constant
+        # σ at fit time, so downstream consumers can distinguish a true
+        # regime-conditional σ̂(x) from a single-scalar fallback.
         prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
+        if getattr(self, "sigma_fit_was_constant_", False):
+            prov = ProvenanceMeta(
+                **{**prov.__dict__,
+                   "extras": {**prov.extras, "emos_sigma_fit": "constant_fallback"}},
+            )
         return DistributionForecast.from_normal(
             mu, sigma, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
             provenance=prov,

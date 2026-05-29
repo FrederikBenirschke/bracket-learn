@@ -168,3 +168,88 @@ class Persistence(BaseEstimator):
             mu=mu, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
             provenance=prov,
         )
+
+
+@dataclass
+class PersistenceDist(BaseEstimator):
+    """Distributional persistence: ``y_t ~ N(y_{t-lag}, σ̂²)``.
+
+    Same μ rule as ``Persistence`` — tiles the last ``lag`` training y's
+    across the inference horizon. σ̂ is the std of in-sample
+    persistence residuals ``y_t − y_{t-lag}`` over the training window,
+    so it captures the empirical scale of single-lag innovations.
+
+    Use when you need a distributional baseline (CRPS, bracket-prob
+    eval) and the series is autocorrelated. For i.i.d. data, σ̂ collapses
+    to ``std(y)`` and this becomes a constant-Normal climatology — use
+    ``EmpiricalDistribution`` instead, which doesn't pretend symmetry.
+
+    Lag=24 on hourly data gives "yesterday's diurnal + Gaussian noise"
+    — a strong baseline for load/temperature forecasting.
+    """
+
+    lag: int = 1
+    name: str = "PersistenceDist"
+    depends_on: tuple[str, ...] = ()
+    tail_y_: np.ndarray | None = field(default=None, init=False)
+    sigma_: float | None = field(default=None, init=False)
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        sample_weight: np.ndarray | None = None,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> Self:
+        if self.lag < 1:
+            raise ValueError(f"lag must be >= 1; got {self.lag}")
+        y = np.asarray(y, dtype=float)
+        if y.shape[0] < self.lag + 2:
+            raise ValueError(
+                f"PersistenceDist: need at least lag+2={self.lag + 2} "
+                f"training rows to estimate residual σ; got {y.shape[0]}"
+            )
+        resid = y[self.lag:] - y[:-self.lag]
+        if sample_weight is None:
+            sigma = float(np.std(resid, ddof=1))
+        else:
+            w = np.asarray(sample_weight, dtype=float)[self.lag:]
+            if w.sum() <= 0:
+                raise ValueError(
+                    "PersistenceDist.fit: post-lag sample_weight sums to 0"
+                )
+            mean = float((w * resid).sum() / w.sum())
+            var = float((w * (resid - mean) ** 2).sum() / w.sum())
+            sigma = float(np.sqrt(var))
+        if sigma <= 0:
+            raise ValueError(
+                "PersistenceDist.fit: residual std is non-positive — "
+                "y_t == y_{t-lag} on every training row. The series has "
+                "no lag-step innovation; persistence is a deterministic "
+                "function and σ is undefined. Refusing to substitute a "
+                "floor (Rule #0.5)."
+            )
+        self.tail_y_ = y[-self.lag:].copy()
+        self.sigma_ = sigma
+        return self
+
+    def predict_dist(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+    ) -> DistributionForecast:
+        if self.tail_y_ is None or self.sigma_ is None:
+            raise RuntimeError("PersistenceDist.predict_dist called before fit")
+        X = np.asarray(X)
+        N = X.shape[0]
+        mu = self.tail_y_[np.arange(N) % self.lag]
+        sigma = np.full(N, self.sigma_, dtype=float)
+        prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
+        return DistributionForecast.from_normal(
+            mu, sigma,
+            ids=np.asarray(ids), timestamps=np.asarray(timestamps),
+            provenance=prov,
+        )

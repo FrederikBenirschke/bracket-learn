@@ -17,7 +17,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from bracketlearn.baselines import EmpiricalDistribution, Persistence
+from bracketlearn.baselines import EmpiricalDistribution, Persistence, PersistenceDist
 from bracketlearn.lift import GlobalResidual
 from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster
 from bracketlearn.trainers import QuantileReg
@@ -140,3 +140,95 @@ class TestPersistence:
         result = p.fit_predict(X, y, ids=ids, timestamps=ts)
         s = result.score(y, metrics=["crps"])
         assert np.isfinite(s["persist"]["crps"])
+
+
+class TestPersistenceDist:
+    def test_zero_lag_rejected(self):
+        with pytest.raises(ValueError, match="lag"):
+            PersistenceDist(lag=0).fit(np.zeros((10, 1)), np.zeros(10))
+
+    def test_too_few_rows_raises(self):
+        # need at least lag+2 = 3 rows for lag=1
+        with pytest.raises(ValueError, match="rows"):
+            PersistenceDist(lag=1).fit(np.zeros((2, 1)), np.array([1., 2.]))
+
+    def test_unfit_predict_raises(self):
+        with pytest.raises(RuntimeError, match="before fit"):
+            PersistenceDist().predict_dist(
+                np.zeros((3, 1)), ids=np.arange(3),
+                timestamps=np.arange(3, dtype=float),
+            )
+
+    def test_constant_y_rejected(self):
+        """If y is constant, lag-residuals are all zero → σ=0 → raise (Rule #0.5)."""
+        with pytest.raises(ValueError, match="non-positive|σ|sigma"):
+            PersistenceDist(lag=1).fit(np.zeros((20, 1)), np.full(20, 5.0))
+
+    def test_sigma_estimates_lag_residual_std(self):
+        """For a random walk y_t = y_{t-1} + ε, σ̂ should recover Var(ε)^½."""
+        rng = np.random.default_rng(0)
+        innov = rng.normal(0, 2.0, 5000)
+        y = np.cumsum(innov)
+        p = PersistenceDist(lag=1).fit(np.zeros((5000, 1)), y)
+        # σ should be close to true innovation std 2.0.
+        assert abs(p.sigma_ - 2.0) < 0.1
+
+    def test_mu_tiles_tail_y(self):
+        """μ rule matches Persistence — last lag y's tiled across inference."""
+        y = np.array([10., 11., 12., 13., 14., 99.])
+        p = PersistenceDist(lag=1).fit(np.zeros((6, 1)), y)
+        dist = p.predict_dist(
+            np.zeros((5, 1)), ids=np.arange(5),
+            timestamps=np.arange(5, dtype=float),
+        )
+        np.testing.assert_array_equal(dist.params["mu"], np.full(5, 99.0))
+        assert np.all(dist.params["sigma"] == p.sigma_)
+
+    def test_lag_k_cycles(self):
+        """lag=k tiles tail-y as in Persistence."""
+        # Use random y so lag-3 residuals are non-degenerate (a perfect arange
+        # gives constant lag-residual=3 → σ=0 → Rule #0.5 raise).
+        rng = np.random.default_rng(0)
+        y = rng.normal(0, 1, 20)
+        p = PersistenceDist(lag=3).fit(np.zeros((20, 1)), y)
+        dist = p.predict_dist(
+            np.zeros((7, 1)), ids=np.arange(7),
+            timestamps=np.arange(7, dtype=float),
+        )
+        tail = y[-3:]
+        np.testing.assert_array_equal(
+            dist.params["mu"],
+            np.array([tail[0], tail[1], tail[2], tail[0], tail[1], tail[2], tail[0]]),
+        )
+
+    def test_weighted_sigma_concentrates(self):
+        """Heavy weights on a low-noise slice should shrink σ̂."""
+        rng = np.random.default_rng(0)
+        # First half: σ_innov=0.1; second half: σ_innov=2.0
+        innov = np.concatenate([
+            rng.normal(0, 0.1, 500),
+            rng.normal(0, 2.0, 500),
+        ])
+        y = np.cumsum(innov)
+        # Weight the low-noise slice heavily.
+        w = np.concatenate([np.full(500, 100.0), np.full(500, 1.0)])
+        p_un = PersistenceDist(lag=1).fit(np.zeros((1000, 1)), y)
+        p_w = PersistenceDist(lag=1).fit(np.zeros((1000, 1)), y, sample_weight=w)
+        assert p_w.sigma_ < p_un.sigma_
+
+    def test_in_pipeline_yields_finite_crps(self):
+        """End-to-end pipeline run on autocorrelated y."""
+        rng = np.random.default_rng(0)
+        n = 300
+        innov = rng.normal(0, 1.0, n)
+        y = np.cumsum(innov)
+        X = np.zeros((n, 1))
+        ids = np.arange(n)
+        ts = np.arange(n, dtype=float)
+        p = ForecastPipeline(
+            steps=[("pdist", PersistenceDist(lag=1))],
+            cv="expanding-window", n_folds=3, refit_on_full=False,
+        )
+        result = p.fit_predict(X, y, ids=ids, timestamps=ts)
+        s = result.score(y, metrics=["crps"])
+        assert np.isfinite(s["pdist"]["crps"])

@@ -499,3 +499,134 @@ class ConformalCalibrate(BaseEstimator):
             ids=dist.ids, timestamps=dist.timestamps,
             provenance=new_prov,
         )
+
+
+# ---------------------------------------------------------------------------
+# PITCalibrate — isotonic CDF recalibration on PIT values.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PITCalibrate(BaseEstimator):
+    """Isotonic recalibration of a predictive CDF via PIT (Diebold 1998,
+    Gneiting & Ranjan 2013).
+
+    Under a perfectly calibrated forecaster, the PIT values
+    ``u_i = F̂_i(y_i)`` are Uniform(0, 1). Systematic over- or
+    under-confidence shows up as a non-uniform empirical PIT distribution
+    (U-shape = over-confident, hump = under-confident).
+
+    Fit
+        On a held-out calibration set, compute PIT values ``u_i``. Fit
+        an isotonic map ``g: [0, 1] → [0, 1]`` from the empirical CDF
+        of ``u``: ``g(u) = (rank(u) − 0.5) / N``. ``g`` is monotone by
+        construction; anchored at ``g(0) = 0`` and ``g(1) = 1``.
+
+    Transform
+        For an output τ grid (``taus_out``), invert the predictive CDF
+        at the *pre-image* level ``g⁻¹(τ)``: ``q̂_cal(τ) = F̂⁻¹(g⁻¹(τ))``.
+        Equivalently, the warped predictive CDF is ``g ∘ F̂``. If the
+        upstream is calibrated, ``g`` is the identity and quantiles are
+        unchanged.
+
+    Operates on any DistributionForecast subclass that exposes ``cdf_at``
+    and ``ppf`` (currently all of them). Output is quantile-backed at the
+    requested ``taus_out`` grid.
+
+    Compared with :class:`Isotonic` (per-bracket-cell calibration) and
+    :class:`ConformalCalibrate` (per-τ coverage offsets): PITCalibrate is
+    grid-agnostic, preserves monotonicity of the predictive CDF
+    end-to-end, and corrects shape (e.g. fat-tail / over-dispersion) not
+    just location.
+
+    Requires a calibration set large enough to estimate the empirical
+    PIT — raises if ``N < 30``.
+    """
+
+    taus_out: tuple[float, ...] = (
+        0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95,
+    )
+    iso_: Any = field(default=None, init=False)
+    fitted_: bool = field(default=False, init=False)
+    n_calib_: int | None = field(default=None, init=False)
+
+    def fit(
+        self,
+        dist_oof: DistributionForecast,
+        y: np.ndarray,
+    ) -> Self:
+        from sklearn.isotonic import IsotonicRegression
+
+        y = np.asarray(y, dtype=float)
+        N = y.shape[0]
+        if N < 30:
+            raise ValueError(
+                f"PITCalibrate.fit: need ≥30 calibration rows to estimate "
+                f"the PIT distribution; got {N}. Below this, the isotonic "
+                f"map is dominated by noise."
+            )
+        u = np.asarray(dist_oof.cdf_at(y), dtype=float)
+        if np.any(~np.isfinite(u)):
+            n_bad = int((~np.isfinite(u)).sum())
+            raise ValueError(
+                f"PITCalibrate.fit: upstream CDF returned non-finite PIT on "
+                f"{n_bad}/{N} rows. Check upstream distribution support vs y."
+            )
+        u = np.clip(u, 0.0, 1.0)
+        # Anchored isotonic fit: empirical CDF of u, with explicit (0, 0)
+        # and (1, 1) anchors so the map covers the full unit square.
+        ranks = np.argsort(np.argsort(u))
+        ecdf = (ranks + 0.5) / N
+        x_fit = np.concatenate([[0.0], u, [1.0]])
+        y_fit = np.concatenate([[0.0], ecdf, [1.0]])
+        self.iso_ = IsotonicRegression(
+            out_of_bounds="clip", y_min=0.0, y_max=1.0, increasing=True,
+        )
+        self.iso_.fit(x_fit, y_fit)
+        self.n_calib_ = N
+        self.fitted_ = True
+        return self
+
+    def transform(
+        self,
+        dist: DistributionForecast,
+    ) -> DistributionForecast:
+        from bracketlearn.forecast import (
+            DistributionForecast,
+            ProvenanceMeta,
+            TailPolicy,
+            TailRule,
+        )
+
+        if not self.fitted_:
+            raise RuntimeError("PITCalibrate.transform called before fit")
+        taus_out = np.asarray(self.taus_out, dtype=float)
+        # Invert g on a dense grid, then evaluate upstream ppf at g⁻¹(τ_k).
+        # Dense τ grid for g⁻¹: 1001 points so the linear interpolation is
+        # tight at the tails.
+        grid = np.linspace(0.0, 1.0, 1001)
+        g_grid = self.iso_.predict(grid)
+        # g may be flat on intervals; np.interp uses leftmost x for ties,
+        # giving us the conventional lower-quantile choice.
+        g_inv_taus = np.interp(taus_out, g_grid, grid)
+        # Per-row ppf at the warped τ grid.
+        qvals = np.asarray(dist.ppf(g_inv_taus), dtype=float)
+        if qvals.ndim == 1:
+            qvals = qvals.reshape(-1, 1) if taus_out.size == 1 else qvals[None, :]
+        if qvals.shape != (dist.ids.shape[0], taus_out.size):
+            raise ValueError(
+                f"PITCalibrate.transform: upstream ppf returned shape "
+                f"{qvals.shape}, expected ({dist.ids.shape[0]}, {taus_out.size})"
+            )
+        qvals = np.maximum.accumulate(qvals, axis=1)
+        new_prov = ProvenanceMeta(
+            **{**dist.provenance.__dict__,
+               "conversion_chain": dist.provenance.conversion_chain + ("PITCalibrate",),
+               "created_at": datetime.now()},
+        )
+        return DistributionForecast.from_quantiles(
+            taus=taus_out, qvals=qvals,
+            tail_policy=TailPolicy.same(TailRule.clip()),
+            ids=dist.ids, timestamps=dist.timestamps,
+            provenance=new_prov,
+        )

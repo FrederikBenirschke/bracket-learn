@@ -29,6 +29,7 @@ from bracketlearn.lift import (
     GARCHResidual,
     GlobalResidual,
     Isotonic,
+    PITCalibrate,
     StudentTResidual,
 )
 
@@ -278,3 +279,86 @@ class TestConformalCalibrate:
         )
         with pytest.raises(ValueError, match="[Qq]uantile"):
             cc.transform(d_normal)
+
+
+# ---------------------------------------------------------------------------
+# PITCalibrate
+# ---------------------------------------------------------------------------
+
+
+class TestPITCalibrate:
+    def _normal_dist(self, mu, sigma, prov):
+        n = mu.shape[0]
+        return DistributionForecast.from_normal(
+            mu=mu, sigma=sigma,
+            ids=np.arange(n), timestamps=np.arange(n, dtype=float),
+            provenance=prov,
+        )
+
+    def test_too_few_calib_rows_raises(self, prov):
+        d = self._normal_dist(np.zeros(10), np.ones(10), prov)
+        with pytest.raises(ValueError, match="≥30|30"):
+            PITCalibrate().fit(d, np.zeros(10))
+
+    def test_transform_before_fit_raises(self, prov):
+        d = self._normal_dist(np.zeros(50), np.ones(50), prov)
+        with pytest.raises(RuntimeError, match="before fit"):
+            PITCalibrate().transform(d)
+
+    def test_calibrated_forecaster_yields_uniform_pit(self, prov, rng):
+        """When upstream is over-confident (σ too small), PIT u-shape is
+        extreme. After calibration the PIT of the transformed dist on a
+        fresh sample should be much closer to uniform."""
+        n = 1500
+        # True y ~ N(0, 1). Upstream forecasts N(0, 0.5) → over-confident.
+        y_calib = rng.normal(0, 1, n)
+        d_calib = self._normal_dist(np.zeros(n), np.full(n, 0.5), prov)
+        cal = PITCalibrate(taus_out=tuple(np.linspace(0.01, 0.99, 99))).fit(
+            d_calib, y_calib,
+        )
+
+        # Fresh test sample drawn from the same true distribution.
+        n_test = 1500
+        y_test = rng.normal(0, 1, n_test)
+        d_test = self._normal_dist(
+            np.zeros(n_test), np.full(n_test, 0.5), prov,
+        )
+        d_cal = cal.transform(d_test)
+        # Reconstruct PIT of calibrated dist by interp on its quantile grid.
+        qvals = d_cal.qvals  # (n_test, 99)
+        taus = d_cal.taus
+        pit_cal = np.array([
+            np.interp(y_test[i], qvals[i], taus, left=0.0, right=1.0)
+            for i in range(n_test)
+        ])
+        # Uncalibrated PIT for comparison.
+        from scipy.stats import norm
+        pit_raw = norm.cdf(y_test, loc=0.0, scale=0.5)
+        # Mean-abs-deviation of empirical PIT CDF from uniform CDF.
+        def mad_uniform(u):
+            sorted_u = np.sort(u)
+            ecdf = (np.arange(1, sorted_u.size + 1)) / sorted_u.size
+            return float(np.mean(np.abs(ecdf - sorted_u)))
+        # Calibrated must be much closer to uniform than raw.
+        assert mad_uniform(pit_cal) < 0.5 * mad_uniform(pit_raw)
+
+    def test_calibrated_upstream_is_near_identity(self, prov, rng):
+        """When upstream is already calibrated, the isotonic map ≈ identity
+        and quantiles should be close to the unchanged upstream ppf."""
+        n = 1000
+        y = rng.normal(0, 1, n)
+        d = self._normal_dist(np.zeros(n), np.ones(n), prov)
+        cal = PITCalibrate(taus_out=(0.1, 0.5, 0.9)).fit(d, y)
+        out = cal.transform(d)
+        from scipy.stats import norm
+        expected = norm.ppf([0.1, 0.5, 0.9])
+        # Allow generous tolerance — empirical CDF noise on N=1000.
+        for row in out.qvals[:5]:
+            np.testing.assert_allclose(row, expected, atol=0.25)
+
+    def test_conversion_chain_records_step(self, prov, rng):
+        n = 100
+        y = rng.normal(0, 1, n)
+        d = self._normal_dist(np.zeros(n), np.ones(n), prov)
+        out = PITCalibrate().fit(d, y).transform(d)
+        assert "PITCalibrate" in out.provenance.conversion_chain

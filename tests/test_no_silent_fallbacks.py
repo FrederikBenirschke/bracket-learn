@@ -231,6 +231,70 @@ def test_emos_falls_back_to_constant_sigma_when_mom_gives_negative_coef():
     )
 
 
+def test_emos_constant_sigma_fallback_emits_warning():
+    """When the OLS variance fit collapses to a constant, the user must be
+    told — Rule #0.5 says silent fallbacks rot debugging hours later."""
+    import warnings
+    from bracketlearn.trainers import EMOS
+
+    rng = np.random.default_rng(0)
+    n, k = 200, 4
+    X = rng.normal(0, 1, (n, k))
+    ens_var = X.var(axis=1, ddof=0)
+    noise = rng.normal(0, 1.0 / np.maximum(ens_var, 0.1), n)
+    y = X.mean(axis=1) + noise
+
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        e = EMOS().fit(X, y)
+
+    assert e.sigma_fit_was_constant_ is True
+    msgs = [str(w.message) for w in captured if issubclass(w.category, UserWarning)]
+    assert any("constant σ" in m or "constant" in m for m in msgs), (
+        f"expected UserWarning about constant-σ fallback; got {msgs!r}"
+    )
+
+
+def test_emos_constant_sigma_fallback_tagged_in_provenance():
+    """Downstream consumers should be able to read provenance to detect a
+    constant-σ EMOS fit without inspecting trainer-internal state."""
+    import warnings
+    from bracketlearn.trainers import EMOS
+
+    rng = np.random.default_rng(0)
+    n, k = 200, 4
+    X = rng.normal(0, 1, (n, k))
+    ens_var = X.var(axis=1, ddof=0)
+    noise = rng.normal(0, 1.0 / np.maximum(ens_var, 0.1), n)
+    y = X.mean(axis=1) + noise
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        e = EMOS().fit(X, y)
+    d = e.predict_dist(X, ids=np.arange(n), timestamps=np.arange(n, dtype=float))
+    assert d.provenance.extras.get("emos_sigma_fit") == "constant_fallback"
+
+
+def test_emos_normal_fit_does_not_tag_provenance():
+    """The provenance tag must not appear on a healthy linear-in-variance fit.
+
+    Bypass the inference problem by hand-setting healthy coefficients then
+    calling predict_dist — the tag should not be added.
+    """
+    from bracketlearn.trainers import EMOS
+
+    rng = np.random.default_rng(0)
+    n, k = 100, 4
+    X = rng.normal(0, 1, (n, k))
+    y = X.mean(axis=1) + rng.normal(0, 0.5, n)
+    e = EMOS().fit(X, y)
+    # Force the healthy-fit branch regardless of what the OLS fit decided.
+    e.c_, e.d_ = 0.1, 0.2
+    e.sigma_fit_was_constant_ = False
+    d = e.predict_dist(X, ids=np.arange(n), timestamps=np.arange(n, dtype=float))
+    assert "emos_sigma_fit" not in d.provenance.extras
+
+
 def test_emos_predict_raises_on_negative_variance_extrapolation():
     """If the user trains on one spread range then predicts on a wider
     one, the linear-in-variance fit can extrapolate to var<=0. Used to
