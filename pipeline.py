@@ -968,3 +968,120 @@ def _set_provenance(dist: DistributionForecast, prov: ProvenanceMeta) -> Distrib
     """
     import dataclasses
     return dataclasses.replace(dist, provenance=prov)
+
+
+# ---------------------------------------------------------------------------
+# Pipeline — flat, sequential chain of stages (= sklearn `Pipeline`).
+#
+# A *stage* is one of: Transformer, PointForecaster, Lifter, Calibrator,
+# DistForecaster. The chain is wired left→right by stage kind into a single
+# DistForecaster; a leading Transformer standardizes X (+ target at fit) and
+# its `inverse_dist` maps the forecaster's distribution back to the original
+# scale at the tail — so downstream bracket integration is unchanged.
+#
+# Track 1 supports the shape the weather fleet needs: [Transformer*,
+# DistForecaster]. Point→Lifter and Calibrator stages need out-of-fold
+# predictions threaded by the `WalkForward` driver and are deferred to
+# Track 2 (raised loud here, not silently ignored).
+# ---------------------------------------------------------------------------
+
+
+def _stage_kind(stage) -> str:
+    # Duck-typed (robust to data-attribute protocols): a Transformer carries
+    # transform_target + inverse_dist; a DistForecaster carries predict_dist;
+    # a PointForecaster carries predict (and no predict_dist); a Lifter lift;
+    # a Calibrator transforms a dist (transform, no predict[_dist]).
+    if hasattr(stage, "transform_target") and hasattr(stage, "inverse_dist"):
+        return "transformer"
+    if hasattr(stage, "predict_dist"):
+        return "dist"
+    if hasattr(stage, "lift"):
+        return "lifter"
+    if hasattr(stage, "predict"):
+        return "point"
+    if hasattr(stage, "transform"):
+        return "calibrator"
+    raise TypeError(
+        f"Pipeline: stage {type(stage).__name__!r} matches no known stage "
+        f"protocol (Transformer / PointForecaster / Lifter / Calibrator / "
+        f"DistForecaster)"
+    )
+
+
+class Pipeline:
+    """Sequential chain of stages, exposed as a `DistForecaster`.
+
+    ``Pipeline([GroupByZScore(...), EMOS()])`` — normalize, fit the dist
+    forecaster in z-space, map its forecast back to °F. ``Pipeline([EMOS()])``
+    is just ``EMOS`` (identity chain). Construct with an optional ``name`` for
+    leaderboard addressing (auto-derived from the stages otherwise).
+
+    Track-1 scope: ``[Transformer*, DistForecaster]``. Point/Lifter/Calibrator
+    stages raise (they need the `WalkForward` out-of-fold machinery — Track 2).
+    """
+
+    def __init__(self, stages, *, name=None):
+        stages = list(stages)
+        if not stages:
+            raise ValueError("Pipeline needs at least one stage")
+        self.stages = stages
+        self._transformers: list = []
+        self._model = None
+        for st in stages:
+            kind = _stage_kind(st)
+            if kind == "transformer":
+                if self._model is not None:
+                    raise ValueError(
+                        "Pipeline: a Transformer stage must come before the "
+                        "forecaster (got one after it)"
+                    )
+                self._transformers.append(st)
+            elif kind == "dist":
+                if self._model is not None:
+                    raise ValueError(
+                        "Pipeline supports exactly one forecaster stage in "
+                        "Track 1; got a second dist-producing stage"
+                    )
+                self._model = st
+            else:  # point / lifter / calibrator
+                raise NotImplementedError(
+                    f"Pipeline (Track 1) supports [Transformer*, DistForecaster]; "
+                    f"a {kind!r} stage ({type(st).__name__}) needs out-of-fold "
+                    f"predictions from the WalkForward driver (Track 2)."
+                )
+        if self._model is None:
+            raise ValueError("Pipeline needs a forecaster (DistForecaster) stage")
+        self.name = name or "->".join(
+            getattr(s, "name", type(s).__name__) for s in stages
+        )
+        self.depends_on = tuple(getattr(self._model, "depends_on", ()))
+
+    def fit(self, X, y, *, ids, timestamps=None, center=None,
+            sample_weight=None, deps_oof=None, **kwargs):
+        Xz = np.asarray(X, dtype=float)
+        yz = np.asarray(y, dtype=float)
+        for t in self._transformers:
+            t.fit(Xz, yz, ids=ids, center=center)
+            Xz = t.transform(Xz, ids=ids, center=center)
+            yz = t.transform_target(yz)
+        fit_kwargs = dict(kwargs)
+        if sample_weight is not None:
+            fit_kwargs["sample_weight"] = sample_weight
+        if deps_oof is not None:
+            fit_kwargs["deps_oof"] = deps_oof
+        self._model.fit(Xz, yz, **fit_kwargs)
+        return self
+
+    def predict_dist(self, X, *, ids, timestamps, center=None, deps_oof=None):
+        Xz = np.asarray(X, dtype=float)
+        for t in self._transformers:
+            Xz = t.transform(Xz, ids=ids, center=center)   # stamps test (c, s)
+        pkwargs = {}
+        if deps_oof is not None:
+            pkwargs["deps_oof"] = deps_oof
+        dist = self._model.predict_dist(
+            Xz, ids=ids, timestamps=timestamps, **pkwargs
+        )
+        for t in reversed(self._transformers):
+            dist = t.inverse_dist(dist)                     # z-space → original
+        return dist

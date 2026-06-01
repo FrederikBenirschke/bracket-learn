@@ -1,7 +1,9 @@
 """Protocol definitions (§4).
 
-Two leaf forecaster protocols (PointForecaster, DistForecaster) plus two
-transformer protocols (Lifter, Calibrator). Four named concepts.
+Two leaf forecaster protocols (PointForecaster, DistForecaster), two
+forecast→forecast transformer protocols (Lifter, Calibrator), and one
+input/target Transformer (standardizer composed as a Pipeline's leading
+stage). Five named concepts.
 
 The WalkForward driver lives in composite.py — it's a pipeline-level
 wrapper, not a protocol.
@@ -149,6 +151,67 @@ class Calibrator(Protocol):
         ...
 
     def transform(
+        self,
+        dist: DistributionForecast,
+    ) -> DistributionForecast:
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Transformer (§4.8) — feature/target standardizer that a Pipeline runs as
+# its first stage(s). Distinct from Lifter/Calibrator (which transform a
+# *forecast*): a Transformer transforms the model's *inputs* (X), the
+# *target* (y) at fit, and inverts the resulting *distribution* back to the
+# original scale at predict. sklearn-`TransformerMixin`-compatible: a plain
+# X-only transformer is the degenerate case (identity target + inverse_dist).
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class Transformer(Protocol):
+    """Input/target standardizer composed as the leading stage of a Pipeline.
+
+    The per-row map may be data-driven and keyed on ``ids`` (group) and an
+    optional per-row ``center`` array (e.g. seasonal climatology), which the
+    Pipeline threads through. Contract:
+
+    - ``fit(X, y, *, ids, center=None, **kw)`` learns the per-group scale (and
+      any state) from the training rows; returns self.
+    - ``transform(X, *, ids, center=None)`` maps features to standardized
+      space and **stamps** the per-row ``(center, scale)`` it used, so that
+      ``transform_target`` / ``inverse_dist`` need no re-derivation. Called
+      once per fit batch and once per predict batch (the stamp reflects the
+      most recent call — mirror the Lifter/Calibrator stateful pattern).
+    - ``transform_target(y)`` maps the target by the stamped ``(center, scale)``.
+    - ``inverse_dist(dist)`` maps a forecast back to the original scale via
+      ``DistributionForecast.affine(shift=center, scale=scale)`` using the
+      stamp from the most recent ``transform``.
+    """
+
+    def fit(
+        self,
+        X: Any,
+        y: np.ndarray,
+        *,
+        ids: np.ndarray,
+        center: np.ndarray | None = None,
+        **kwargs: Any,
+    ) -> Self:
+        ...
+
+    def transform(
+        self,
+        X: Any,
+        *,
+        ids: np.ndarray,
+        center: np.ndarray | None = None,
+    ) -> np.ndarray:
+        ...
+
+    def transform_target(self, y: np.ndarray) -> np.ndarray:
+        ...
+
+    def inverse_dist(
         self,
         dist: DistributionForecast,
     ) -> DistributionForecast:

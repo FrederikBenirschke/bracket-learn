@@ -60,6 +60,14 @@ class QuantileForecast(DistributionForecast):
             taus=taus, qvals=qvals, tail_policy=tail_policy,
         )
 
+    def affine(self, shift, scale) -> QuantileForecast:
+        c, s = self._affine_csc(shift, scale)
+        return QuantileForecast.from_arrays(
+            taus=self.taus, qvals=self.qvals * s[:, None] + c[:, None],
+            tail_policy=self.tail_policy,
+            ids=self.ids, timestamps=self.timestamps, provenance=self.provenance,
+        )
+
     @property
     def params(self) -> dict[str, np.ndarray]:
         return {"taus": self.taus, "qvals": self.qvals}

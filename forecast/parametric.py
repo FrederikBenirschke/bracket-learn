@@ -128,6 +128,13 @@ class NormalForecast(_ParametricMixin, DistributionForecast):
     def _per_row_params(self) -> dict[str, np.ndarray]:
         return {"loc": self.mu, "scale": self.sigma}
 
+    def affine(self, shift, scale) -> NormalForecast:
+        c, s = self._affine_csc(shift, scale)
+        return NormalForecast.from_arrays(
+            mu=self.mu * s + c, sigma=self.sigma * s,
+            ids=self.ids, timestamps=self.timestamps, provenance=self.provenance,
+        )
+
     @property
     def params(self) -> dict[str, np.ndarray]:
         return {"mu": self.mu, "sigma": self.sigma}
@@ -225,6 +232,13 @@ class StudentTForecast(_ParametricMixin, DistributionForecast):
 
     def _per_row_params(self) -> dict[str, np.ndarray]:
         return {"df": self.df, "loc": self.mu, "scale": self.sigma}
+
+    def affine(self, shift, scale) -> StudentTForecast:
+        c, s = self._affine_csc(shift, scale)
+        return StudentTForecast.from_arrays(
+            mu=self.mu * s + c, sigma=self.sigma * s, df=self.df,
+            ids=self.ids, timestamps=self.timestamps, provenance=self.provenance,
+        )
 
     @property
     def params(self) -> dict[str, np.ndarray]:
@@ -328,6 +342,15 @@ class MixtureNormalForecast(DistributionForecast):
         return cls(
             ids=ids, timestamps=timestamps, provenance=provenance,
             weights=weights, mus=mus, sigmas=sigmas,
+        )
+
+    def affine(self, shift, scale) -> MixtureNormalForecast:
+        c, s = self._affine_csc(shift, scale)
+        return MixtureNormalForecast.from_arrays(
+            weights=self.weights,
+            mus=self.mus * s[:, None] + c[:, None],
+            sigmas=self.sigmas * s[:, None],
+            ids=self.ids, timestamps=self.timestamps, provenance=self.provenance,
         )
 
     @property

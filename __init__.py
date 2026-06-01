@@ -65,6 +65,7 @@ from bracketlearn.pipeline import (
     CalibratedForecaster,
     ForecastPipeline,
     LiftedForecaster,
+    Pipeline,
     PipelineResult,
 )
 from bracketlearn.restrict import BracketMask
@@ -90,6 +91,7 @@ from bracketlearn.trainers import (
     Stacking,
     TailSpecialist,
 )
+from bracketlearn.transform import GroupByZScore, IdentityTransformer
 from bracketlearn.transformers import BracketExpander
 
 __all__ = [
@@ -141,6 +143,8 @@ __all__ = [
     "TailSpecialist",
     # transformers
     "BracketExpander",
+    "GroupByZScore",
+    "IdentityTransformer",
     # restriction
     "BracketMask",
     # lifters / calibrators
@@ -155,6 +159,7 @@ __all__ = [
     "LiftedForecaster",
     # pipeline
     "ForecastPipeline",
+    "Pipeline",
     "PipelineResult",
     "GridSearch",
     "MultiOutputForecastPipeline",

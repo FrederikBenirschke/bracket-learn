@@ -115,6 +115,16 @@ class BracketForecast(DistributionForecast):
             edges=edges, probs=probs,
         )
 
+    def affine(self, shift, scale) -> BracketForecast:
+        # edges are NaN-padded (ragged); NaN·s + c == NaN, so padding is
+        # preserved. probs (mass) are unchanged. scale>0 keeps each row's
+        # finite edge prefix monotone increasing.
+        c, s = self._affine_csc(shift, scale)
+        return BracketForecast.from_arrays(
+            edges=self.edges * s[:, None] + c[:, None], probs=self.probs,
+            ids=self.ids, timestamps=self.timestamps, provenance=self.provenance,
+        )
+
     @property
     def params(self) -> dict[str, np.ndarray]:
         return {"edges": self.edges, "probs": self.probs}

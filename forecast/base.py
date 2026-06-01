@@ -152,6 +152,46 @@ class DistributionForecast(abc.ABC):
             provenance=self.provenance,
         )
 
+    # ---------- per-row affine reparametrization ----------
+
+    def _affine_csc(
+        self, shift, scale,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Validate + broadcast (shift, scale) to per-row (N,) arrays.
+
+        ``scale`` must be finite and strictly positive (it is a σ-multiplier
+        from an inverse z-score — a non-positive scale would flip the
+        distribution / violate σ>0; raise loud per Rule #0.5).
+        """
+        N = self.ids.shape[0]
+        c = np.asarray(shift, dtype=float)
+        s = np.asarray(scale, dtype=float)
+        c = np.broadcast_to(c, (N,)).astype(float) if c.ndim == 0 else c
+        s = np.broadcast_to(s, (N,)).astype(float) if s.ndim == 0 else s
+        if c.shape != (N,) or s.shape != (N,):
+            raise ValueError(
+                f"affine shift/scale must be scalar or length-N={N}; "
+                f"got shift={c.shape} scale={s.shape}"
+            )
+        if not np.all(np.isfinite(s)) or np.any(s <= 0):
+            raise ValueError("affine scale must be finite and strictly positive")
+        if not np.all(np.isfinite(c)):
+            raise ValueError("affine shift must be finite")
+        return c, s
+
+    def affine(self, shift, scale) -> DistributionForecast:
+        """Return a new forecast under the per-row affine map ``v ↦ v·scale + shift``.
+
+        ``shift``/``scale`` are per-row (length N, aligned to ``self.ids``) or
+        scalars. Location fields map ``v → v·scale + shift``; positive-scale
+        fields (σ) map ``σ → σ·scale``; mass/shape fields (``probs``,
+        ``weights``, ``taus``, ``df``) are unchanged. Used by
+        ``Transformer.inverse_dist`` to map a z-space forecast back to °F.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__}.affine is not implemented"
+        )
+
     # ---------- v0.2 construction shims (route to subclass) ----------
 
     @classmethod
