@@ -52,6 +52,39 @@ def test_transform_levels_spreads_passthrough():
     np.testing.assert_allclose(Xz[:, 2], 1.0)
 
 
+def test_level_cols_empty_is_target_only():
+    # level_cols=() → every feature column passes through unchanged, but the
+    # target + forecast are still z-scored (the target-only mode used by the
+    # vendor-X bracket trainers whose feature roles aren't known by index).
+    ids = np.array([0, 0, 0, 0, 0])
+    center = np.full(5, 10.0)
+    y = center + np.array([1.0, -1.0, 2.0, -2.0, 0.0])
+    gz = GroupByZScore(level_cols=()).fit(
+        np.zeros((5, 3)), y, ids=ids, center=center,
+    )
+    s = gz.scale_by_[0]
+    X = np.column_stack([np.full(5, 14.0), np.full(5, 3.0), np.full(5, 1.0)])
+    Xz = gz.transform(X, ids=ids, center=center)
+    np.testing.assert_allclose(Xz, X)               # all features untouched
+    # target still standardized
+    np.testing.assert_allclose(gz.transform_target(y), (y - center) / s)
+
+
+def test_level_cols_explicit_subset():
+    # Only the named index is a level; other non-spread cols pass through.
+    ids = np.array([0, 0, 0, 0, 0])
+    center = np.full(5, 10.0)
+    y = center + np.array([1.0, -1.0, 2.0, -2.0, 0.0])
+    gz = GroupByZScore(level_cols=(0,)).fit(
+        np.zeros((5, 2)), y, ids=ids, center=center,
+    )
+    s = gz.scale_by_[0]
+    X = np.column_stack([np.full(5, 14.0), np.full(5, 7.0)])
+    Xz = gz.transform(X, ids=ids, center=center)
+    np.testing.assert_allclose(Xz[:, 0], (14.0 - 10.0) / s)   # explicit level
+    np.testing.assert_allclose(Xz[:, 1], 7.0)                 # implicit passthrough
+
+
 def test_target_and_dist_roundtrip_to_original_scale():
     ids = np.array([0, 0, 0, 0, 0, 1, 1, 1, 1, 1])
     center = np.array([10.0] * 5 + [60.0] * 5)

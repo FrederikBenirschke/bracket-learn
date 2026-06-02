@@ -56,11 +56,23 @@ class GroupByZScore:
     passthrough_cols
         Column indices left untouched (e.g. binary missing-indicator flags
         that must not be centered by a temperature climatology).
+    level_cols
+        Explicit *level* column indices: ``v → (v − center) / scale``. When
+        ``None`` (default) every column that is neither a spread nor an
+        explicit passthrough is treated as a level. When given, ONLY these
+        indices are levels and all other (non-spread) columns pass through —
+        so ``level_cols=()`` normalizes nothing on the feature side and the
+        transform reduces to **target-only** standardization (``transform``
+        passes X through, but ``transform_target`` / ``inverse_dist`` still
+        z-score the target and map the forecast back). Target-only is the
+        right mode when X carries heterogeneous columns (mixed vendor temps
+        + non-temperature features) whose roles aren't known by index — the
+        location confound lives in the *target*, and a tree/boosting model's
+        feature splits are scale-invariant anyway.
     min_group
         Minimum per-group observations to trust a learned per-group scale;
         smaller groups use the global scale.
 
-    All other columns are *levels*: mapped ``v → (v − center) / scale``.
     ``center`` is the per-row anchor passed to ``fit``/``transform`` (default
     0 when absent); ``scale`` is learned per group from ``std(y − center)``.
     """
@@ -70,10 +82,12 @@ class GroupByZScore:
         *,
         spread_cols: tuple[int, ...] = (),
         passthrough_cols: tuple[int, ...] = (),
+        level_cols: tuple[int, ...] | None = None,
         min_group: int = _MIN_GROUP_OBS,
     ):
         self.spread_cols = tuple(spread_cols)
         self.passthrough_cols = tuple(passthrough_cols)
+        self.level_cols = None if level_cols is None else tuple(level_cols)
         self.min_group = min_group
         # learned
         self.scale_by_: dict | None = None
@@ -122,14 +136,19 @@ class GroupByZScore:
         self._center, self._scale = c, s            # stamp for target/inverse
         spread = set(self.spread_cols)
         passth = set(self.passthrough_cols)
+        level = None if self.level_cols is None else set(self.level_cols)
         out = np.empty_like(X)
         for j in range(f):
-            if j in passth:
-                out[:, j] = X[:, j]
-            elif j in spread:
+            if j in spread:
                 out[:, j] = X[:, j] / s
-            else:                                    # level
+            elif j in passth:
+                out[:, j] = X[:, j]
+            elif level is None:                      # default: level = complement
                 out[:, j] = (X[:, j] - c) / s
+            elif j in level:                         # explicit level
+                out[:, j] = (X[:, j] - c) / s
+            else:                                    # explicit levels given, j not one → passthrough
+                out[:, j] = X[:, j]
         return out
 
     def transform_target(self, y):
