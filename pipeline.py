@@ -1011,77 +1011,174 @@ def _stage_kind(stage) -> str:
 class Pipeline:
     """Sequential chain of stages, exposed as a `DistForecaster`.
 
-    ``Pipeline([GroupByZScore(...), EMOS()])`` — normalize, fit the dist
-    forecaster in z-space, map its forecast back to °F. ``Pipeline([EMOS()])``
-    is just ``EMOS`` (identity chain). Construct with an optional ``name`` for
-    leaderboard addressing (auto-derived from the stages otherwise).
+    A *stage* is one of: `Transformer`, `PointForecaster`, `Lifter`,
+    `Calibrator`, `DistForecaster`. The chain is wired left→right into a single
+    distribution forecaster; the valid shapes are::
 
-    Track-1 scope: ``[Transformer*, DistForecaster]``. Point/Lifter/Calibrator
-    stages raise (they need the `WalkForward` out-of-fold machinery — Track 2).
+        [Transformer*, DistForecaster, Calibrator?]
+        [Transformer*, PointForecaster, Lifter, Calibrator?]
+
+    Examples::
+
+        Pipeline([GroupByZScore(...), EMOS()])                 # normalize → dist
+        Pipeline([EMOS()])                                     # ≡ bare EMOS
+        Pipeline([SklearnPoint(Ridge()), GlobalResidual()])    # point → lift → dist
+        Pipeline([EMOS(), Isotonic()])                         # dist → calibrate
+
+    This **absorbs** the old `LiftedForecaster` / `CalibratedForecaster`
+    wrapper classes: a Point→Lifter pair is fit with an internal out-of-fold
+    half-split (the point fits on the first part, predicts the rest, the lifter
+    fits on those OOF predictions, the point refits on full); a trailing
+    Calibrator fits on a held-out tail of the (transformed) training data. The
+    chain is self-contained — given ``(X, y, ids, timestamps)`` it fits itself,
+    including the inner splits its stages need, so `WalkForward` only owns the
+    *outer* CV.
+
+    ``name`` is an optional leaderboard label (auto-derived otherwise).
     """
 
-    def __init__(self, stages, *, name=None):
+    def __init__(self, stages, *, name=None,
+                 calibration_fraction=0.2, lifter_oof_fraction=0.5):
         stages = list(stages)
         if not stages:
             raise ValueError("Pipeline needs at least one stage")
         self.stages = stages
+        self.calibration_fraction = calibration_fraction
+        self.lifter_oof_fraction = lifter_oof_fraction
         self._transformers: list = []
-        self._model = None
+        self._point = None        # PointForecaster
+        self._lifter = None       # Lifter (requires a preceding point)
+        self._model = None        # DistForecaster
+        self._calibrator = None   # Calibrator (requires a preceding core)
+        seen_core = False
         for st in stages:
             kind = _stage_kind(st)
             if kind == "transformer":
-                if self._model is not None:
+                if seen_core:
                     raise ValueError(
-                        "Pipeline: a Transformer stage must come before the "
-                        "forecaster (got one after it)"
+                        "Pipeline: Transformer stages must precede the forecaster"
                     )
                 self._transformers.append(st)
-            elif kind == "dist":
-                if self._model is not None:
+            elif kind == "point":
+                if seen_core:
                     raise ValueError(
-                        "Pipeline supports exactly one forecaster stage in "
-                        "Track 1; got a second dist-producing stage"
+                        "Pipeline: only one core forecaster; got a PointForecaster "
+                        "after the core"
                     )
+                self._point = st
+                seen_core = True
+            elif kind == "lifter":
+                if self._point is None:
+                    raise ValueError("Pipeline: a Lifter must follow a PointForecaster")
+                if self._lifter is not None:
+                    raise ValueError("Pipeline: at most one Lifter")
+                self._lifter = st
+            elif kind == "dist":
+                if seen_core:
+                    raise ValueError("Pipeline: only one core forecaster stage")
                 self._model = st
-            else:  # point / lifter / calibrator
-                raise NotImplementedError(
-                    f"Pipeline (Track 1) supports [Transformer*, DistForecaster]; "
-                    f"a {kind!r} stage ({type(st).__name__}) needs out-of-fold "
-                    f"predictions from the WalkForward driver (Track 2)."
-                )
-        if self._model is None:
-            raise ValueError("Pipeline needs a forecaster (DistForecaster) stage")
+                seen_core = True
+            elif kind == "calibrator":
+                if not seen_core:
+                    raise ValueError("Pipeline: a Calibrator must follow the forecaster")
+                if self._calibrator is not None:
+                    raise ValueError("Pipeline: at most one Calibrator")
+                self._calibrator = st
+            else:  # pragma: no cover — _stage_kind already raised
+                raise TypeError(f"Pipeline: unsupported stage kind {kind!r}")
+        if self._point is not None and self._lifter is None:
+            raise ValueError(
+                "Pipeline: a PointForecaster needs a following Lifter to become "
+                "a distribution"
+            )
+        if self._model is None and self._point is None:
+            raise ValueError("Pipeline needs a forecaster stage")
         self.name = name or "->".join(
             getattr(s, "name", type(s).__name__) for s in stages
         )
-        self.depends_on = tuple(getattr(self._model, "depends_on", ()))
+        core = self._model if self._model is not None else self._point
+        self.depends_on = tuple(getattr(core, "depends_on", ()))
+
+    # ---- fit ----
 
     def fit(self, X, y, *, ids, timestamps=None, center=None,
-            sample_weight=None, deps_oof=None, **kwargs):
+            sample_weight=None, deps_oof=None, upstream=None, **kwargs):
         Xz = np.asarray(X, dtype=float)
         yz = np.asarray(y, dtype=float)
+        n = yz.shape[0]
+        ids_arr = np.asarray(ids)
+        ts = np.zeros(n) if timestamps is None else np.asarray(timestamps)
         for t in self._transformers:
-            t.fit(Xz, yz, ids=ids, center=center)
-            Xz = t.transform(Xz, ids=ids, center=center)
+            t.fit(Xz, yz, ids=ids_arr, center=center)
+            Xz = t.transform(Xz, ids=ids_arr, center=center)
             yz = t.transform_target(yz)
-        fit_kwargs = dict(kwargs)
-        if sample_weight is not None:
-            fit_kwargs["sample_weight"] = sample_weight
-        if deps_oof is not None:
-            fit_kwargs["deps_oof"] = deps_oof
-        self._model.fit(Xz, yz, **fit_kwargs)
+
+        if self._point is not None:
+            # Point→Lifter with an internal OOF half-split (was LiftedForecaster).
+            half = max(1, int(n * self.lifter_oof_fraction))
+            if half >= n:
+                half = max(1, n - 1)
+            sw_first = sample_weight[:half] if sample_weight is not None else None
+            _fit_with_optional_weight(self._point, Xz[:half], yz[:half], sw_first)
+            base_oof = self._point.predict(
+                Xz[half:], ids=ids_arr[half:], timestamps=ts[half:],
+            )
+            if self._lifter.requires_X:
+                self._lifter.fit(base_oof, yz[half:], X=Xz[half:])
+            else:
+                self._lifter.fit(base_oof, yz[half:])
+            _fit_with_optional_weight(self._point, Xz, yz, sample_weight)
+        else:
+            extras: dict[str, Any] = {"ids": ids_arr, "timestamps": ts}
+            if deps_oof is not None:
+                extras["deps_oof"] = deps_oof
+            if upstream is not None:
+                extras["upstream"] = upstream
+            extras.update(kwargs)
+            _fit_with_optional_weight(self._model, Xz, yz, sample_weight, **extras)
+
+        if self._calibrator is not None:
+            if deps_oof is not None or upstream is not None:
+                raise NotImplementedError(
+                    "Pipeline: a Calibrator combined with a deps-consuming "
+                    "forecaster is not supported (would require slicing upstream "
+                    "OOF onto the calibration tail)"
+                )
+            c = max(2, int(n * self.calibration_fraction))
+            if n - c >= 2:
+                cal_dist = self._core_predict_dist(
+                    Xz[-c:], ids_arr[-c:], ts[-c:],
+                )
+                self._calibrator.fit(cal_dist, yz[-c:])
+            else:
+                self._calibrator = None   # too few rows to calibrate
         return self
 
-    def predict_dist(self, X, *, ids, timestamps, center=None, deps_oof=None):
-        Xz = np.asarray(X, dtype=float)
-        for t in self._transformers:
-            Xz = t.transform(Xz, ids=ids, center=center)   # stamps test (c, s)
-        pkwargs = {}
+    # ---- predict ----
+
+    def _core_predict_dist(self, Xz, ids, ts, deps_oof=None, upstream=None):
+        """The core forecaster's dist in the model's working (z) space —
+        before calibration and before the transformers' inverse."""
+        if self._point is not None:
+            pt = self._point.predict(Xz, ids=ids, timestamps=ts)
+            return self._lifter.lift(pt)
+        extras: dict[str, Any] = {}
         if deps_oof is not None:
-            pkwargs["deps_oof"] = deps_oof
-        dist = self._model.predict_dist(
-            Xz, ids=ids, timestamps=timestamps, **pkwargs
-        )
+            extras["deps_oof"] = deps_oof
+        if upstream is not None:
+            extras["upstream"] = upstream
+        return _predict_with_extras(self._model, Xz, ids, ts, **extras)
+
+    def predict_dist(self, X, *, ids, timestamps, center=None,
+                     deps_oof=None, upstream=None):
+        Xz = np.asarray(X, dtype=float)
+        ids_arr = np.asarray(ids)
+        ts = np.asarray(timestamps)
+        for t in self._transformers:
+            Xz = t.transform(Xz, ids=ids_arr, center=center)   # stamps test (c, s)
+        dist = self._core_predict_dist(Xz, ids_arr, ts, deps_oof, upstream)
+        if self._calibrator is not None and getattr(self._calibrator, "fitted_", True):
+            dist = self._calibrator.transform(dist)
         for t in reversed(self._transformers):
             dist = t.inverse_dist(dist)                     # z-space → original
         return dist

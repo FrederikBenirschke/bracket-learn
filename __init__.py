@@ -61,6 +61,7 @@ from bracketlearn.multitarget import (
     MultiOutputForecastPipeline,
     MultiOutputPipelineResult,
 )
+from bracketlearn.compose import Stacker, WalkForward
 from bracketlearn.pipeline import (
     CalibratedForecaster,
     ForecastPipeline,
@@ -161,6 +162,8 @@ __all__ = [
     "ForecastPipeline",
     "Pipeline",
     "PipelineResult",
+    "Stacker",
+    "WalkForward",
     "GridSearch",
     "MultiOutputForecastPipeline",
     "MultiOutputPipelineResult",

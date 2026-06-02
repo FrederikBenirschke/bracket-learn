@@ -87,8 +87,10 @@ def test_pipeline_rejects_unsupported_and_misordered_stages():
     with pytest.raises(ValueError, match="at least one stage"):
         Pipeline([])
     with pytest.raises(ValueError, match="forecaster"):
-        Pipeline([GroupByZScore()])                       # no dist forecaster
-    with pytest.raises(NotImplementedError, match="WalkForward"):
-        Pipeline([_PointStub(), EMOS()])                  # point stage → Track 2
-    with pytest.raises(ValueError, match="before the forecaster"):
+        Pipeline([GroupByZScore()])                       # no forecaster
+    with pytest.raises(ValueError, match="following Lifter"):
+        Pipeline([_PointStub()])                          # point with no lifter
+    with pytest.raises(ValueError, match="one core forecaster"):
+        Pipeline([EMOS(), EMOS()])                        # two cores
+    with pytest.raises(ValueError, match="must precede the forecaster"):
         Pipeline([EMOS(), GroupByZScore()])               # transformer after model

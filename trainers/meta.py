@@ -14,6 +14,7 @@ from bracketlearn.forecast import (
     PointForecast,
 )
 from bracketlearn.forecast._meta import ProvenanceMeta
+from bracketlearn.trainers._compose_util import resolve_upstream, upstream_label
 
 # ---------------------------------------------------------------------------
 # DistAsFeatures — generic bridge: upstream dists → feature matrix → any trainer.
@@ -49,8 +50,8 @@ class DistAsFeatures(BaseEstimator):
     quantile, bracket.
     """
 
-    deps: tuple[str, ...]
-    downstream: Any
+    deps: tuple[str, ...] = ()
+    downstream: Any = None
     feature_taus: tuple[float, ...] = _DIST_FEATURE_TAUS
     tail_cutpoints: tuple[float, ...] = ()
     include_mean: bool = True
@@ -59,16 +60,17 @@ class DistAsFeatures(BaseEstimator):
     _n_features_: int | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
-        if not self.deps:
-            raise ValueError("DistAsFeatures requires at least one upstream dep")
+        if self.downstream is None:
+            raise ValueError("DistAsFeatures requires a downstream forecaster")
+        # ``deps`` is optional: empty under the positional ``upstream=`` contract
+        # (Stacker), non-empty for legacy name-keyed callers.
         self.depends_on = tuple(self.deps)
 
-    def _featurize(self, deps_oof: dict[str, Any]) -> np.ndarray:
+    def _featurize(self, ups: list[Any]) -> np.ndarray:
         taus = np.asarray(self.feature_taus, dtype=float)
         cuts = np.asarray(self.tail_cutpoints, dtype=float)
         cols: list[np.ndarray] = []
-        for name in self.depends_on:
-            d = deps_oof[name]
+        for d in ups:
             cols.append(d.ppf(taus))                  # (N, len(taus))
             if self.include_mean:
                 cols.append(d.mean()[:, None])
@@ -85,13 +87,12 @@ class DistAsFeatures(BaseEstimator):
         *,
         sample_weight: np.ndarray | None = None,
         deps_oof: dict[str, Any] | None = None,
+        upstream: list[Any] | None = None,
     ) -> Self:
-        if not deps_oof or set(self.depends_on) - set(deps_oof):
-            raise ValueError(
-                f"DistAsFeatures.fit needs deps_oof for {self.depends_on}; "
-                f"got {list(deps_oof or [])}"
-            )
-        Z = self._featurize(deps_oof)
+        ups = resolve_upstream(
+            self.depends_on, deps_oof, upstream, where="DistAsFeatures.fit",
+        )
+        Z = self._featurize(ups)
         # Forward sample_weight only if downstream accepts it; matches the
         # SklearnPoint convention.
         try:
@@ -108,8 +109,9 @@ class DistAsFeatures(BaseEstimator):
         ids: np.ndarray,
         timestamps: np.ndarray,
         deps_oof: dict[str, Any] | None = None,
+        upstream: list[Any] | None = None,
     ) -> PointForecast:
-        Z = self._predict_features(deps_oof)
+        Z = self._predict_features(deps_oof, upstream)
         return self.downstream.predict(Z, ids=ids, timestamps=timestamps)
 
     def predict_dist(
@@ -119,17 +121,18 @@ class DistAsFeatures(BaseEstimator):
         ids: np.ndarray,
         timestamps: np.ndarray,
         deps_oof: dict[str, Any] | None = None,
+        upstream: list[Any] | None = None,
     ) -> DistributionForecast:
-        Z = self._predict_features(deps_oof)
+        Z = self._predict_features(deps_oof, upstream)
         return self.downstream.predict_dist(Z, ids=ids, timestamps=timestamps)
 
-    def _predict_features(self, deps_oof: dict[str, Any] | None) -> np.ndarray:
-        if not deps_oof or set(self.depends_on) - set(deps_oof):
-            raise ValueError(
-                f"DistAsFeatures.predict needs deps_oof for {self.depends_on}; "
-                f"got {list(deps_oof or [])}"
-            )
-        Z = self._featurize(deps_oof)
+    def _predict_features(
+        self, deps_oof: dict[str, Any] | None, upstream: list[Any] | None,
+    ) -> np.ndarray:
+        ups = resolve_upstream(
+            self.depends_on, deps_oof, upstream, where="DistAsFeatures.predict",
+        )
+        Z = self._featurize(ups)
         if Z.shape[1] != self._n_features_:
             raise RuntimeError(
                 f"DistAsFeatures: train had {self._n_features_} features; "
@@ -185,40 +188,41 @@ class BracketStacking(BaseEstimator):
     requires all deps share edges, any one is canonical.
     """
 
-    deps: tuple[str, ...]
-    estimator: Any
+    deps: tuple[str, ...] = ()
+    estimator: Any = None
     name: str = "BracketStacking"
     K_: int | None = field(default=None, init=False)
     edges_template_: np.ndarray | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
-        if not self.deps:
-            raise ValueError("BracketStacking requires at least one upstream dep")
+        if self.estimator is None:
+            raise ValueError("BracketStacking requires an estimator")
+        # ``deps`` optional: empty under the positional ``upstream=`` contract.
         self.depends_on = tuple(self.deps)
 
     def _assemble(
-        self, deps_oof: dict[str, Any], N: int,
+        self, ups: list[Any], N: int,
     ) -> tuple[np.ndarray, int, np.ndarray]:
-        """Concatenate per-row prob vectors across all deps.
+        """Concatenate per-row prob vectors across all upstreams.
 
-        Returns ``(Z, K, edges_ref)``: ``Z`` is ``(N, K * len(deps))``
+        Returns ``(Z, K, edges_ref)``: ``Z`` is ``(N, K * len(ups))``
         feature matrix; ``edges_ref`` is the (N, K+1) edge array from
-        the first dep (all deps must agree on edges).
+        the first upstream (all must agree on edges).
         """
         cols: list[np.ndarray] = []
         K: int | None = None
         edges_ref: np.ndarray | None = None
-        for name in self.depends_on:
-            d = deps_oof[name]
+        for i, d in enumerate(ups):
+            label = upstream_label(self.depends_on, i)
             if not isinstance(d, BracketForecast):
                 raise NotImplementedError(
                     f"BracketStacking expects bracket-backed upstream; "
-                    f"{name!r} is {type(d).__name__}"
+                    f"{label} is {type(d).__name__}"
                 )
             probs = np.asarray(d.probs, dtype=float)
             if probs.shape[0] != N:
                 raise ValueError(
-                    f"BracketStacking: dep {name!r} has N={probs.shape[0]} rows, "
+                    f"BracketStacking: upstream {label} has N={probs.shape[0]} rows, "
                     f"expected N={N}"
                 )
             if K is None:
@@ -226,8 +230,8 @@ class BracketStacking(BaseEstimator):
                 edges_ref = np.asarray(d.edges, dtype=float)
             elif int(probs.shape[1]) != K:
                 raise ValueError(
-                    f"BracketStacking: dep {name!r} has K={probs.shape[1]} bins, "
-                    f"expected K={K} (all deps must share bracket count)"
+                    f"BracketStacking: upstream {label} has K={probs.shape[1]} bins, "
+                    f"expected K={K} (all upstreams must share bracket count)"
                 )
             cols.append(probs)
         assert K is not None and edges_ref is not None
@@ -235,19 +239,18 @@ class BracketStacking(BaseEstimator):
 
     def _validate_ids(
         self,
-        deps_oof: dict[str, Any],
+        ups: list[Any],
         caller_ids: np.ndarray | None,
     ) -> None:
         """Match BMAStacking's ids-alignment contract."""
         upstream_ids = None
-        for name in self.depends_on:
-            d = deps_oof[name]
+        for i, d in enumerate(ups):
             if upstream_ids is None:
                 upstream_ids = d.ids
             elif not np.array_equal(upstream_ids, d.ids):
                 raise ValueError(
-                    f"BracketStacking: deps_oof[{name!r}].ids does not match "
-                    "the first upstream's ids — rows would be misaligned"
+                    f"BracketStacking: upstream {upstream_label(self.depends_on, i)}.ids "
+                    "does not match the first upstream's ids — rows would be misaligned"
                 )
         if (
             caller_ids is not None
@@ -267,6 +270,7 @@ class BracketStacking(BaseEstimator):
         ids: np.ndarray | None = None,
         sample_weight: np.ndarray | None = None,
         deps_oof: dict[str, Any] | None = None,
+        upstream: list[Any] | None = None,
         labels: np.ndarray | None = None,
     ) -> Self:
         """Fit the multiclass head.
@@ -279,15 +283,13 @@ class BracketStacking(BaseEstimator):
         ``realized_bin(y)`` provides the labels and rows with
         non-finite y are dropped.
         """
-        if not deps_oof or set(self.depends_on) - set(deps_oof):
-            raise ValueError(
-                f"BracketStacking.fit needs deps_oof for {self.depends_on}; "
-                f"got {list(deps_oof or [])}"
-            )
+        ups = resolve_upstream(
+            self.depends_on, deps_oof, upstream, where="BracketStacking.fit",
+        )
         y = np.asarray(y, dtype=float)
         N = y.shape[0]
-        self._validate_ids(deps_oof, ids)
-        Z, K, edges_ref = self._assemble(deps_oof, N)
+        self._validate_ids(ups, ids)
+        Z, K, edges_ref = self._assemble(ups, N)
         if labels is not None:
             labels_arr = np.asarray(labels, dtype=int)
             if labels_arr.shape != (N,):
@@ -301,7 +303,7 @@ class BracketStacking(BaseEstimator):
                 )
             valid = np.ones(N, dtype=bool)
         else:
-            labels_arr = deps_oof[self.depends_on[0]].realized_bin(y).astype(int)
+            labels_arr = ups[0].realized_bin(y).astype(int)
             # realized_bin already clips to [0, K-1] — no negative labels possible.
             # Filter out rows with non-finite y (would have produced 0-clip silently).
             valid = np.isfinite(y)
@@ -337,17 +339,17 @@ class BracketStacking(BaseEstimator):
         ids: np.ndarray,
         timestamps: np.ndarray,
         deps_oof: dict[str, Any] | None = None,
+        upstream: list[Any] | None = None,
     ) -> BracketForecast:
         if self.K_ is None:
             raise RuntimeError("BracketStacking.predict_dist called before fit")
-        if not deps_oof or set(self.depends_on) - set(deps_oof):
-            raise ValueError(
-                f"BracketStacking.predict_dist needs deps_oof for "
-                f"{self.depends_on}; got {list(deps_oof or [])}"
-            )
+        ups = resolve_upstream(
+            self.depends_on, deps_oof, upstream,
+            where="BracketStacking.predict_dist",
+        )
         N = len(ids)
-        self._validate_ids(deps_oof, np.asarray(ids))
-        Z, K, edges_ref = self._assemble(deps_oof, N)
+        self._validate_ids(ups, np.asarray(ids))
+        Z, K, edges_ref = self._assemble(ups, N)
         if K != self.K_:
             raise ValueError(
                 f"BracketStacking: predict K={K} != train K={self.K_}"

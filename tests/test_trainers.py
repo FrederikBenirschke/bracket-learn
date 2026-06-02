@@ -1269,10 +1269,15 @@ def test_bracket_stacking_predict_before_fit_raises():
         )
 
 
-def test_bracket_stacking_requires_at_least_one_dep():
+def test_bracket_stacking_requires_upstream_at_fit():
+    # Empty deps is legal at construction now (the positional ``upstream=``
+    # contract supplies forecasts at fit). The "no upstream" guard moved to
+    # fit-time: calling fit with neither upstream nor deps_oof raises.
+    import numpy as np
     from sklearn.dummy import DummyClassifier
 
     from bracketlearn.trainers import BracketStacking
 
-    with pytest.raises(ValueError, match="at least one"):
-        BracketStacking(deps=(), estimator=DummyClassifier())
+    est = BracketStacking(deps=(), estimator=DummyClassifier())  # OK: no raise
+    with pytest.raises(ValueError, match="upstream"):
+        est.fit(np.zeros((4, 1)), np.zeros(4), ids=np.arange(4))

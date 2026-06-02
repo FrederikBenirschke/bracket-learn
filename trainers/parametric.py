@@ -26,6 +26,7 @@ from bracketlearn.forecast import (
 from bracketlearn.trainers._common import (
     _weighted_lstsq2,
 )
+from bracketlearn.trainers._compose_util import resolve_upstream, upstream_label
 
 # Tuple of subclasses that count as "parametric upstream" for the stacking
 # trainers. Used in isinstance dispatch; replaces the v0.5.x Backing enum
@@ -360,12 +361,15 @@ class StackedParametric(BaseEstimator):
           ``scale = σ̂ · sqrt((ν − 2) / ν)`` so the forecast variance
           equals σ̂² regardless of ν.
 
-    Pipeline injects ``deps_oof: dict[name → DistributionForecast]`` at
-    fit time; this StackedParametric reads ``.params['mu']`` (and ``['sigma']``
-    when ``sigma_method='geometric_mean_upstream'``) from each.
+    Upstream forecasts arrive **positionally** via ``upstream=[dist, ...]``
+    (the clean ``Stacker`` contract) — this reads ``.params['mu']`` (and
+    ``['sigma']`` when ``sigma_method='geometric_mean_upstream'``) from each,
+    in order. Legacy callers may instead pass name-keyed
+    ``deps_oof={name: dist}`` with ``deps=(names...)`` declared; both resolve
+    to the same ordered list via ``resolve_upstream``.
     """
 
-    deps: tuple[str, ...]
+    deps: tuple[str, ...] = ()
     name: str = "StackedParametric"
     weight_constraint: Literal["unconstrained", "convex"] = "unconstrained"
     sigma_method: Literal["constant", "geometric_mean_upstream"] = "constant"
@@ -408,11 +412,11 @@ class StackedParametric(BaseEstimator):
         ids: np.ndarray | None = None,
         sample_weight: np.ndarray | None = None,
         deps_oof: dict[str, Any] | None = None,
+        upstream: list[Any] | None = None,
     ) -> Self:
-        if not deps_oof or set(self.depends_on) - set(deps_oof):
-            raise ValueError(
-                f"StackedParametric.fit needs deps_oof for {self.depends_on}; got {list(deps_oof or [])}"
-            )
+        ups = resolve_upstream(
+            self.depends_on, deps_oof, upstream, where="StackedParametric.fit",
+        )
         y = np.asarray(y, dtype=float)
         # Stack upstream μ predictions row-aligned. We REQUIRE that each
         # upstream dist's .ids matches our (X, y) row order (no silent
@@ -421,23 +425,23 @@ class StackedParametric(BaseEstimator):
         # their own ids vectors (else the meta-learner builds rows from
         # mis-zipped predictions).
         upstream_ids = None
-        for name in self.depends_on:
-            d = deps_oof[name]
+        for i, d in enumerate(ups):
+            label = upstream_label(self.depends_on, i)
             if not isinstance(d, _PARAMETRIC_BACKINGS):
                 raise NotImplementedError(
                     f"StackedParametric expects parametric upstream; "
-                    f"{name} is {type(d).__name__}"
+                    f"{label} is {type(d).__name__}"
                 )
             if d.params["mu"].shape[0] != y.shape[0]:
                 raise ValueError(
-                    f"StackedParametric.fit: deps_oof[{name!r}] has N={d.params['mu'].shape[0]} "
+                    f"StackedParametric.fit: upstream {label} has N={d.params['mu'].shape[0]} "
                     f"but y has N={y.shape[0]}"
                 )
             if upstream_ids is None:
                 upstream_ids = d.ids
             elif not np.array_equal(upstream_ids, d.ids):
                 raise ValueError(
-                    f"StackedParametric.fit: deps_oof[{name!r}].ids does not match the "
+                    f"StackedParametric.fit: upstream {label}.ids does not match the "
                     f"first upstream's ids — meta-learner rows would be misaligned"
                 )
         if (
@@ -446,10 +450,10 @@ class StackedParametric(BaseEstimator):
             and not np.array_equal(np.asarray(ids), upstream_ids)
         ):
             raise ValueError(
-                "StackedParametric.fit: caller's ids do not match deps_oof ids — "
+                "StackedParametric.fit: caller's ids do not match upstream ids — "
                 "rows would be misaligned"
             )
-        cols = [deps_oof[name].params["mu"] for name in self.depends_on]
+        cols = [d.params["mu"] for d in ups]
         Z = np.column_stack(cols)  # (N, K)
         if self.weight_constraint == "unconstrained":
             self._fit_mu_unconstrained(Z, y, sample_weight)
@@ -475,7 +479,7 @@ class StackedParametric(BaseEstimator):
             self.sigma_ = resid_std
         else:
             self._fit_sigma_geometric_upstream(
-                resid, y_scale, sample_weight, deps_oof,
+                resid, y_scale, sample_weight, ups,
             )
         return self
 
@@ -540,9 +544,9 @@ class StackedParametric(BaseEstimator):
         resid: np.ndarray,
         y_scale: float,
         sample_weight: np.ndarray | None,
-        deps_oof: dict[str, Any],
+        ups: list[Any],
     ) -> None:
-        cols_sigma = self._collect_upstream_sigma(deps_oof, where="fit")
+        cols_sigma = self._collect_upstream_sigma(ups, where="fit")
         Z_log = np.column_stack([np.log(c) for c in cols_sigma])
         # Floor on resid² protects exact-zero rows from −∞ targets while
         # staying well below typical residual variance.
@@ -559,17 +563,17 @@ class StackedParametric(BaseEstimator):
 
     def _collect_upstream_sigma(
         self,
-        deps_oof: dict[str, Any],
+        ups: list[Any],
         *,
         where: str,
     ) -> list[np.ndarray]:
         cols: list[np.ndarray] = []
-        for name in self.depends_on:
-            d = deps_oof[name]
+        for i, d in enumerate(ups):
+            label = upstream_label(self.depends_on, i)
             if "sigma" not in d.params:
                 raise ValueError(
                     f"StackedParametric({where}, sigma_method='geometric_mean_upstream'): "
-                    f"upstream {name!r} has no σ in params "
+                    f"upstream {label} has no σ in params "
                     f"(type={type(d).__name__}); either pick "
                     f"sigma_method='constant' or feed parametric upstreams"
                 )
@@ -577,7 +581,7 @@ class StackedParametric(BaseEstimator):
             if np.any(s <= 0):
                 n_bad = int(np.sum(s <= 0))
                 raise ValueError(
-                    f"StackedParametric({where}): upstream {name!r} has {n_bad} "
+                    f"StackedParametric({where}): upstream {label} has {n_bad} "
                     f"non-positive σ values; cannot take log for "
                     f"geometric_mean_upstream"
                 )
@@ -591,28 +595,31 @@ class StackedParametric(BaseEstimator):
         ids: np.ndarray,
         timestamps: np.ndarray,
         deps_oof: dict[str, Any] | None = None,
+        upstream: list[Any] | None = None,
     ) -> DistributionForecast:
-        # At predict time, the pipeline must have re-run the upstream stages
-        # on the current X; it passes their dist via deps_oof again.
-        if not deps_oof:
-            raise ValueError("StackedParametric.predict_dist needs deps_oof")
+        # At predict time, the driver must have re-run the upstream stages
+        # on the current X; it passes their dist positionally (or by name).
+        ups = resolve_upstream(
+            self.depends_on, deps_oof, upstream,
+            where="StackedParametric.predict_dist",
+        )
         # Row-alignment check: each upstream's ids must match the caller's ids
         # exactly (no silent misalignment).
         ids_arr = np.asarray(ids)
-        for name in self.depends_on:
-            d = deps_oof[name]
+        for i, d in enumerate(ups):
             if not np.array_equal(d.ids, ids_arr):
                 raise ValueError(
-                    f"StackedParametric.predict_dist: deps_oof[{name!r}].ids does not "
+                    f"StackedParametric.predict_dist: upstream "
+                    f"{upstream_label(self.depends_on, i)}.ids does not "
                     f"match caller ids — rows would be misaligned"
                 )
-        cols = [deps_oof[name].params["mu"] for name in self.depends_on]
+        cols = [d.params["mu"] for d in ups]
         Z = np.column_stack(cols)
         mu = self.intercept_ + Z @ self.weights_
         if self.sigma_method == "constant":
             sigma_std = np.full_like(mu, self.sigma_)
         else:
-            cols_sigma = self._collect_upstream_sigma(deps_oof, where="predict_dist")
+            cols_sigma = self._collect_upstream_sigma(ups, where="predict_dist")
             Z_log = np.column_stack([np.log(c) for c in cols_sigma])
             sigma_std = np.exp(self.sigma_alpha_ + Z_log @ self.sigma_log_weights_)
         ids_arr = np.asarray(ids)
@@ -689,7 +696,7 @@ class BMAStacking(BaseEstimator):
       unconstrained OLS coefficients).
     """
 
-    deps: tuple[str, ...]
+    deps: tuple[str, ...] = ()
     alpha_prior: float = 1.0
     max_iter: int = 500
     tol: float = 1e-6
@@ -713,18 +720,18 @@ class BMAStacking(BaseEstimator):
         if not isinstance(dist, _PARAMETRIC_BACKINGS):
             raise NotImplementedError(
                 f"BMAStacking expects parametric upstream; "
-                f"{name!r} is {type(dist).__name__}"
+                f"{name} is {type(dist).__name__}"
             )
         mu = np.asarray(dist.mean(), dtype=float)
         var = np.asarray(dist.variance(), dtype=float)
         if mu.shape != (N,) or var.shape != (N,):
             raise ValueError(
-                f"BMAStacking: upstream {name!r} returned mean/variance with "
+                f"BMAStacking: upstream {name} returned mean/variance with "
                 f"shape {mu.shape}/{var.shape}, expected ({N},)"
             )
         if np.any(var <= 0):
             raise ValueError(
-                f"BMAStacking: upstream {name!r} has non-positive variance "
+                f"BMAStacking: upstream {name} has non-positive variance "
                 "on some rows — likelihood would be undefined."
             )
         return mu, np.sqrt(var)
@@ -737,25 +744,23 @@ class BMAStacking(BaseEstimator):
         ids: np.ndarray | None = None,
         sample_weight: np.ndarray | None = None,
         deps_oof: dict[str, Any] | None = None,
+        upstream: list[Any] | None = None,
     ) -> Self:
-        if not deps_oof or set(self.depends_on) - set(deps_oof):
-            raise ValueError(
-                f"BMAStacking.fit needs deps_oof for {self.depends_on}; "
-                f"got {list(deps_oof or [])}"
-            )
+        ups = resolve_upstream(
+            self.depends_on, deps_oof, upstream, where="BMAStacking.fit",
+        )
         y = np.asarray(y, dtype=float)
         N = y.shape[0]
         # Row-alignment guard. Same contract as Stacking — upstream ids
         # must agree with each other and with the caller's ids (if given).
         upstream_ids = None
-        for name in self.depends_on:
-            d = deps_oof[name]
+        for i, d in enumerate(ups):
             if upstream_ids is None:
                 upstream_ids = d.ids
             elif not np.array_equal(upstream_ids, d.ids):
                 raise ValueError(
-                    f"BMAStacking.fit: deps_oof[{name!r}].ids does not match "
-                    "the first upstream's ids — mixture rows would be misaligned"
+                    f"BMAStacking.fit: upstream {upstream_label(self.depends_on, i)}.ids "
+                    "does not match the first upstream's ids — mixture rows would be misaligned"
                 )
         if (
             ids is not None
@@ -763,15 +768,17 @@ class BMAStacking(BaseEstimator):
             and not np.array_equal(np.asarray(ids), upstream_ids)
         ):
             raise ValueError(
-                "BMAStacking.fit: caller's ids do not match deps_oof ids — "
+                "BMAStacking.fit: caller's ids do not match upstream ids — "
                 "rows would be misaligned"
             )
         # Collect per-row moments.
-        K = len(self.depends_on)
+        K = len(ups)
         mu = np.empty((N, K))
         sigma = np.empty((N, K))
-        for j, name in enumerate(self.depends_on):
-            mu[:, j], sigma[:, j] = self._upstream_moments(deps_oof[name], N, name)
+        for j, d in enumerate(ups):
+            mu[:, j], sigma[:, j] = self._upstream_moments(
+                d, N, upstream_label(self.depends_on, j),
+            )
         # Likelihood matrix L_ik = N(y_i; μ_{k,i}, σ_{k,i}).
         z = (y[:, None] - mu) / sigma
         log_L = -0.5 * z ** 2 - np.log(sigma) - 0.5 * math.log(2.0 * math.pi)
@@ -834,24 +841,30 @@ class BMAStacking(BaseEstimator):
         ids: np.ndarray,
         timestamps: np.ndarray,
         deps_oof: dict[str, Any] | None = None,
+        upstream: list[Any] | None = None,
     ) -> DistributionForecast:
         if self.weights_ is None:
             raise RuntimeError("BMAStacking.predict_dist called before fit")
-        if not deps_oof:
-            raise ValueError("BMAStacking.predict_dist needs deps_oof")
+        ups = resolve_upstream(
+            self.depends_on, deps_oof, upstream,
+            where="BMAStacking.predict_dist",
+        )
         ids_arr = np.asarray(ids)
         N = ids_arr.shape[0]
-        for name in self.depends_on:
-            if not np.array_equal(deps_oof[name].ids, ids_arr):
+        for i, d in enumerate(ups):
+            if not np.array_equal(d.ids, ids_arr):
                 raise ValueError(
-                    f"BMAStacking.predict_dist: deps_oof[{name!r}].ids does "
+                    f"BMAStacking.predict_dist: upstream "
+                    f"{upstream_label(self.depends_on, i)}.ids does "
                     "not match caller ids — mixture rows would be misaligned"
                 )
-        K = len(self.depends_on)
+        K = len(ups)
         mu = np.empty((N, K))
         sigma = np.empty((N, K))
-        for j, name in enumerate(self.depends_on):
-            mu[:, j], sigma[:, j] = self._upstream_moments(deps_oof[name], N, name)
+        for j, d in enumerate(ups):
+            mu[:, j], sigma[:, j] = self._upstream_moments(
+                d, N, upstream_label(self.depends_on, j),
+            )
         weights = np.broadcast_to(self.weights_, (N, K)).copy()
         prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
         return DistributionForecast.from_mixture_normal(
