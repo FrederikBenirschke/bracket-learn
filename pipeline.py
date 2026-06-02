@@ -31,15 +31,13 @@ v0.1 vertical slice:
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 import numpy as np
 
-from bracketlearn.base import BaseEstimator, clone
+from bracketlearn.base import BaseEstimator
 from bracketlearn.forecast import (
     DistributionForecast,
     PointForecast,
@@ -384,198 +382,20 @@ class ForecastPipeline:
         sample_weight: np.ndarray | None = None,
         groups: np.ndarray | None = None,
     ) -> PipelineResult:
-        X = np.asarray(X)
-        y = np.asarray(y, dtype=float)
-        ids = np.asarray(ids)
-        timestamps = np.asarray(timestamps)
-        if sample_weight is not None:
-            sample_weight = np.asarray(sample_weight, dtype=float)
-            if sample_weight.shape[0] != y.shape[0]:
-                raise ValueError(
-                    f"sample_weight length {sample_weight.shape[0]} != y length {y.shape[0]}"
-                )
-        if groups is not None:
-            groups = np.asarray(groups)
-            if groups.shape[0] != y.shape[0]:
-                raise ValueError(
-                    f"groups length {groups.shape[0]} != y length {y.shape[0]}"
-                )
-        N = y.shape[0]
+        """DEPRECATED surface — delegates to ``WalkForward`` over the object
+        graph built from ``steps``. Kept so existing callers stay green; prefer
+        ``WalkForward(...).fit_predict(Pipeline/Stacker, ...)`` directly."""
+        from bracketlearn.compose import WalkForward
 
-        feature_hash = _hash_array(X)
-        fit_window = (_to_dt(timestamps.min()), _to_dt(timestamps.max()))
-        code_sha = "dev"
-
-        # Time-series CV sorts by timestamp; k-fold does not (rows are i.i.d.).
-        if self.cv == "kfold":
-            order = np.arange(N)
-        else:
-            order = np.argsort(timestamps, kind="stable")
-        Xo = X[order]
-        yo = y[order]
-        ids_o = ids[order]
-        ts_o = timestamps[order]
-        sw_o = sample_weight[order] if sample_weight is not None else None
-        g_o = groups[order] if groups is not None else None
-
-        folds = self._make_folds(N)
-
-        # Per stage, accumulate (orig_row_index, fold_dist) pairs across folds.
-        per_stage_folds: dict[str, list[tuple[np.ndarray, DistributionForecast]]] = {
-            s.name: [] for s in self._stages
-        }
-
-        for fold_idx, (train_idx, test_idx) in enumerate(folds):
-            fold_train_dist: dict[str, DistributionForecast] = {}
-            fold_test_dist: dict[str, DistributionForecast] = {}
-
-            for stage in self._stages:
-                deps_for_fit = {d: fold_train_dist[d] for d in stage.depends_on}
-                deps_for_pred = {d: fold_test_dist[d] for d in stage.depends_on}
-                prov = ProvenanceMeta(
-                    forecaster_name=stage.name,
-                    forecaster_version="0.1",
-                    fit_window=fit_window,
-                    fold_idx=fold_idx,
-                    calibration_set_hash=None,
-                    random_seed=None,
-                    code_sha=code_sha,
-                    feature_matrix_hash=feature_hash,
-                    created_at=datetime.now(),
-                )
-                # Clone-per-fold: never mutate the user's instance, and
-                # guarantee no fitted-state bleed between folds.
-                fold_forecaster = clone(stage.forecaster)
-                dist_train, dist_test = self._fit_stage_on_fold(
-                    fold_forecaster, Xo, yo, ids_o, ts_o, train_idx, test_idx,
-                    deps_for_fit=deps_for_fit, deps_for_pred=deps_for_pred,
-                    prov=prov, sample_weight=sw_o, groups=g_o,
-                )
-                fold_train_dist[stage.name] = dist_train
-                fold_test_dist[stage.name] = dist_test
-                # ids_o is sorted; map back to original row index via `order`.
-                orig_rows = order[test_idx]
-                per_stage_folds[stage.name].append((orig_rows, dist_test))
-
-        out: dict[str, DistributionForecast] = {}
-        for stage in self._stages:
-            prov = ProvenanceMeta(
-                forecaster_name=stage.name,
-                forecaster_version="0.1",
-                fit_window=fit_window,
-                fold_idx=None,
-                calibration_set_hash=None,
-                random_seed=None,
-                code_sha=code_sha,
-                feature_matrix_hash=feature_hash,
-                created_at=datetime.now(),
-                sigma_source="native",
-            )
-            out[stage.name] = _stitch_folds(
-                per_stage_folds[stage.name],
-                timestamps=timestamps,
-                provenance=prov,
-            )
-
-        # Refit each stage on the full training data → canonical models for
-        # .predict() on truly unseen rows. Stored on self for later use.
-        # This is sklearn's standard pattern: CV produces OOF metrics, the
-        # final-model fit produces the artefact that scores new data.
-        if self.refit_on_full:
-            self._fit_canonical_models(Xo, yo, ids_o, ts_o, sw_o, groups=g_o)
-
-        return PipelineResult(forecasts=out)
-
-    def _fit_canonical_models(
-        self,
-        X: np.ndarray, y: np.ndarray, ids: np.ndarray, ts: np.ndarray,
-        sample_weight: np.ndarray | None = None,
-        *,
-        groups: np.ndarray | None = None,
-    ) -> None:
-        """Fit each stage on the *full* training data, storing the result on
-        ``self._fitted_stages`` for later use by ``predict()``.
-
-        Calibrators are fit on a held-out tail of the full training data,
-        matching the per-fold calibration logic. Downstream stages with
-        ``depends_on`` receive the upstream stage's in-sample dist on the
-        full training data.
-        """
-
-        self._fitted_stages = {}
-        self._fitted_calibrators = {}
-        canonical_dists: dict[str, DistributionForecast] = {}
-        N = X.shape[0]
-        train_idx = np.arange(N)
-
-        for stage in self._stages:
-            deps = {d: canonical_dists[d] for d in stage.depends_on}
-            f = clone(stage.forecaster)
-            calibrator: Calibrator | None = None
-            inner = f
-            if isinstance(f, CalibratedForecaster):
-                calibrator = f.calibrator
-                inner = f.forecaster
-
-            # Fit calibrator on a tail of full train (mirrors fold logic).
-            if calibrator is not None:
-                calib_n = max(2, int(N * self.calibration_fraction))
-                tr_minus = train_idx[:-calib_n]
-                calib_idx = train_idx[-calib_n:]
-                if len(tr_minus) >= 2:
-                    _, cal_dist = self._fit_inner(
-                        inner, X, y, ids, ts, tr_minus, calib_idx, deps, deps,
-                        sample_weight=sample_weight, groups=groups,
-                    )
-                    calibrator.fit(cal_dist, y[calib_idx])
-                else:
-                    calibrator = None
-
-            # Refit inner on the full train and record its in-sample dist for
-            # downstream deps. Self-predict on the same N rows so the deps
-            # row-alignment invariant (deps_oof[name].params['mu'].shape[0] == N)
-            # holds for whatever downstream StackedParametric expects.
-            dist_train_full = self._refit_and_predict_full(
-                inner, X, y, ids, ts, deps, sample_weight=sample_weight,
-                groups=groups,
-            )
-            if calibrator is not None:
-                dist_train_full = calibrator.transform(dist_train_full)
-                self._fitted_calibrators[stage.name] = calibrator
-            self._fitted_stages[stage.name] = inner
-            canonical_dists[stage.name] = dist_train_full
-
-    def _refit_and_predict_full(
-        self,
-        f: Any,
-        X: np.ndarray, y: np.ndarray, ids: np.ndarray, ts: np.ndarray,
-        deps: dict[str, DistributionForecast],
-        sample_weight: np.ndarray | None = None,
-        *,
-        groups: np.ndarray | None = None,
-    ) -> DistributionForecast:
-        """Refit ``f`` on full (X, y); return its in-sample predict_dist."""
-
-        if isinstance(f, LiftedForecaster):
-            half = X.shape[0] // 2
-            sw_half = sample_weight[:half] if sample_weight is not None else None
-            sw_full = sample_weight
-            _fit_with_optional_weight(f.base, X[:half], y[:half], sw_half)
-            base_pt_oof = f.base.predict(X[half:], ids=ids[half:], timestamps=ts[half:])
-            _fit_with_optional_weight(f.base, X, y, sw_full)
-            if f.lifter.requires_X:
-                f.lifter.fit(base_pt_oof, y[half:], X=X[half:])
-            else:
-                f.lifter.fit(base_pt_oof, y[half:])
-            return f.predict_dist(X, ids=ids, timestamps=ts)
-        extras: dict[str, Any] = {"ids": ids, "timestamps": ts}
-        if deps:
-            extras["deps_oof"] = deps
-        if groups is not None:
-            extras["groups"] = groups
-        _fit_with_optional_weight(f, X, y, sample_weight, **extras)
-        return _predict_with_extras(
-            f, X, ids, ts, deps_oof=deps if deps else None, groups=groups,
+        roots = self._build_graph()
+        self._wf = WalkForward(
+            cv=self.cv, n_folds=self.n_folds, embargo=self.embargo,
+            refit_on_full=self.refit_on_full, shuffle=self.shuffle,
+            random_state=self.random_state, rolling_window=self.rolling_window,
+        )
+        return self._wf.fit_predict(
+            roots, X, y, ids=ids, timestamps=timestamps,
+            sample_weight=sample_weight, groups=groups,
         )
 
     def predict(
@@ -586,265 +406,57 @@ class ForecastPipeline:
         timestamps: np.ndarray,
         groups: np.ndarray | None = None,
     ) -> dict[str, DistributionForecast]:
-        """Predict on unseen X using the canonical (full-train) models.
-
-        Returns ``{stage_name: DistributionForecast}``. Requires
-        ``refit_on_full=True`` at construction (the default) and a prior
-        ``fit_predict()`` call. ``groups`` is forwarded to any stage whose
-        ``predict_dist`` declares it (e.g. ``HierarchicalNormal``).
-        """
-
-        if not self._fitted_stages:
+        """Predict on unseen rows via the canonical (full-train) models.
+        Requires ``refit_on_full=True`` (default) and a prior ``fit_predict``."""
+        if getattr(self, "_wf", None) is None:
             raise RuntimeError(
                 "predict() requires a prior fit_predict() with refit_on_full=True"
             )
-        X = np.asarray(X)
-        ids = np.asarray(ids)
-        timestamps = np.asarray(timestamps)
-        if groups is not None:
-            groups = np.asarray(groups)
-        out: dict[str, DistributionForecast] = {}
+        return self._wf.predict(X, ids=ids, timestamps=timestamps, groups=groups)
+
+    # ---- object-graph translation: named steps -> Pipeline / Stacker ----
+
+    def _build_graph(self) -> list:
+        """Translate ``self._stages`` (named, depends_on strings) into the
+        object graph WalkForward runs. Object identity is preserved so a stage
+        referenced as a dep is the SAME object as its standalone output (and is
+        therefore computed once)."""
+        from bracketlearn.compose import Stacker
+
+        node_by_name: dict[str, Any] = {}
+        roots: list = []
         for stage in self._stages:
-            f = self._fitted_stages[stage.name]
-            deps = {d: out[d] for d in stage.depends_on}
-            if isinstance(f, LiftedForecaster):
-                dist = f.predict_dist(X, ids=ids, timestamps=timestamps)
+            if stage.depends_on:
+                ups = [node_by_name[d] for d in stage.depends_on]
+                node = Stacker(ups, stage.forecaster, name=stage.name)
             else:
-                dist = _predict_with_extras(
-                    f, X, ids, timestamps,
-                    deps_oof=deps if deps else None,
-                    groups=groups,
-                )
-            cal = self._fitted_calibrators.get(stage.name)
-            if cal is not None:
-                dist = cal.transform(dist)
-            out[stage.name] = dist
-        return out
+                node = self._wrap_stage(stage.name, stage.forecaster)
+            node_by_name[stage.name] = node
+            roots.append(node)
+        return roots
 
-    # ---------------------------------------------------------- fold helpers
-
-    def _make_folds(self, N: int) -> list[tuple[np.ndarray, np.ndarray]]:
-        if self.cv == "expanding-window":
-            return self._expanding_folds(N)
-        if self.cv == "rolling-window":
-            return self._rolling_folds(N)
-        if self.cv == "kfold":
-            return self._kfold_folds(N)
-        raise ValueError(f"unknown cv={self.cv!r}")
-
-    def _expanding_folds(self, N: int) -> list[tuple[np.ndarray, np.ndarray]]:
-        chunk_size = N // (self.n_folds + 1)
-        if chunk_size < 2:
-            raise ValueError(f"N={N} too small for n_folds={self.n_folds}")
-        folds = []
-        for k in range(self.n_folds):
-            train_end = (k + 1) * chunk_size
-            test_start = train_end + self.embargo
-            # Final fold absorbs N % (n_folds + 1) trailing rows so the
-            # OOF prediction set covers every row of the input. Dropping
-            # the tail biases summary metrics toward whichever regime
-            # the early chunks happen to land in.
-            is_last = (k == self.n_folds - 1)
-            test_end = N if is_last else min(N, test_start + chunk_size)
-            if test_start >= N:
-                break
-            train_idx = np.arange(0, train_end)
-            test_idx = np.arange(test_start, test_end)
-            folds.append((train_idx, test_idx))
-        return folds
-
-    def _rolling_folds(self, N: int) -> list[tuple[np.ndarray, np.ndarray]]:
-        """Rolling-window CV: train slice has fixed width ``rolling_window``,
-        slides forward by chunk_size each fold. Older rows roll out.
-        """
-        w = int(self.rolling_window)
-        chunk_size = max(2, (N - w) // self.n_folds) if w < N else 0
-        if chunk_size < 2:
-            raise ValueError(
-                f"N={N} too small for rolling_window={w} + n_folds={self.n_folds}"
-            )
-        folds = []
-        for k in range(self.n_folds):
-            train_start = k * chunk_size
-            train_end = train_start + w
-            test_start = train_end + self.embargo
-            test_end = min(N, test_start + chunk_size)
-            if test_start >= N or train_end > N:
-                break
-            train_idx = np.arange(train_start, train_end)
-            test_idx = np.arange(test_start, test_end)
-            folds.append((train_idx, test_idx))
-        if not folds:
-            raise ValueError(
-                f"rolling-window CV produced 0 folds (N={N}, w={w}, n_folds={self.n_folds})"
-            )
-        return folds
-
-    def _kfold_folds(self, N: int) -> list[tuple[np.ndarray, np.ndarray]]:
-        """Plain k-fold CV: rows split into n_folds disjoint test sets, each
-        trained on the complement. Use only when rows are exchangeable —
-        not for time-series data (use 'expanding-window' or 'rolling-window').
-        """
-        if self.n_folds < 2:
-            raise ValueError(f"kfold needs n_folds >= 2; got {self.n_folds}")
-        if self.n_folds > N:
-            raise ValueError(f"N={N} < n_folds={self.n_folds}")
-        idx = np.arange(N)
-        if self.shuffle:
-            rng = np.random.default_rng(self.random_state)
-            idx = rng.permutation(idx)
-        chunks = np.array_split(idx, self.n_folds)
-        folds = []
-        for k in range(self.n_folds):
-            test_idx = np.sort(chunks[k])
-            train_idx = np.sort(np.concatenate([chunks[j] for j in range(self.n_folds) if j != k]))
-            folds.append((train_idx, test_idx))
-        return folds
-
-    # ---------------------------------------------------------- stage fit
-
-    def _fit_stage_on_fold(
-        self,
-        f: Any,
-        X: np.ndarray, y: np.ndarray, ids: np.ndarray, ts: np.ndarray,
-        train_idx: np.ndarray, test_idx: np.ndarray,
-        *,
-        deps_for_fit: dict[str, DistributionForecast],
-        deps_for_pred: dict[str, DistributionForecast],
-        prov: ProvenanceMeta,
-        sample_weight: np.ndarray | None = None,
-        groups: np.ndarray | None = None,
-    ) -> tuple[DistributionForecast, DistributionForecast]:
-        """Fit ``f`` on train_idx; return (dist_on_train, dist_on_test).
-
-        ``f`` should already be a clone — the pipeline never mutates the
-        user-supplied forecaster instance.
-        """
-
-        # Unwrap CalibratedForecaster: fit calibrator on a tail of train_idx.
-        calibrator: Calibrator | None = None
+    def _wrap_stage(self, name: str, f: Any):
+        """A non-meta stage -> a Pipeline. Unwrap the legacy LiftedForecaster /
+        CalibratedForecaster wrappers into plain Pipeline stages."""
+        calibrator = None
         inner = f
         if isinstance(f, CalibratedForecaster):
             calibrator = f.calibrator
             inner = f.forecaster
-
-        # Fit + predict the inner forecaster, with the train-tail calibration
-        # split if needed.
-        if calibrator is not None:
-            calib_n = max(2, int(len(train_idx) * self.calibration_fraction))
-            tr_minus = train_idx[:-calib_n]
-            calib_idx = train_idx[-calib_n:]
-            if len(tr_minus) < 2:
-                # Too few rows to split — skip calibration this fold.
-                calibrator = None
-
-        if calibrator is None:
-            dist_train, dist_test = self._fit_inner(
-                inner, X, y, ids, ts, train_idx, test_idx,
-                deps_for_fit, deps_for_pred,
-                sample_weight=sample_weight, groups=groups,
-            )
+        if isinstance(inner, LiftedForecaster):
+            stages = [inner.base, inner.lifter]
         else:
-            # 1) fit on train minus calibration tail
-            cal_train_dist, cal_dist = self._fit_inner(
-                inner, X, y, ids, ts, tr_minus, calib_idx,
-                deps_for_fit, deps_for_pred,    # deps approximation OK in v0.1
-                sample_weight=sample_weight, groups=groups,
-            )
-            calibrator.fit(cal_dist, y[calib_idx])
-            # 2) refit on full train for canonical predictions
-            dist_train, dist_test = self._fit_inner(
-                inner, X, y, ids, ts, train_idx, test_idx,
-                deps_for_fit, deps_for_pred,
-                sample_weight=sample_weight, groups=groups,
-            )
-            dist_train = calibrator.transform(dist_train)
-            dist_test = calibrator.transform(dist_test)
-
-        dist_train = _set_provenance(dist_train, prov)
-        dist_test = _set_provenance(dist_test, prov)
-        return dist_train, dist_test
-
-    def _fit_inner(
-        self,
-        f: Any,
-        X: np.ndarray, y: np.ndarray, ids: np.ndarray, ts: np.ndarray,
-        train_idx: np.ndarray, test_idx: np.ndarray,
-        deps_for_fit: dict[str, DistributionForecast],
-        deps_for_pred: dict[str, DistributionForecast],
-        sample_weight: np.ndarray | None = None,
-        *,
-        groups: np.ndarray | None = None,
-    ) -> tuple[DistributionForecast, DistributionForecast]:
-
-        X_tr, y_tr = X[train_idx], y[train_idx]
-        X_te = X[test_idx]
-        ids_tr, ts_tr = ids[train_idx], ts[train_idx]
-        ids_te, ts_te = ids[test_idx], ts[test_idx]
-        sw_tr = sample_weight[train_idx] if sample_weight is not None else None
-        g_tr = groups[train_idx] if groups is not None else None
-        g_te = groups[test_idx] if groups is not None else None
-
-        if isinstance(f, LiftedForecaster):
-            half = len(train_idx) // 2
-            base_fit_idx = train_idx[:half]
-            base_oof_idx = train_idx[half:]
-            sw_half = sample_weight[base_fit_idx] if sample_weight is not None else None
-            _fit_with_optional_weight(f.base, X[base_fit_idx], y[base_fit_idx], sw_half)
-            base_pt_oof = f.base.predict(
-                X[base_oof_idx], ids=ids[base_oof_idx], timestamps=ts[base_oof_idx],
-            )
-            _fit_with_optional_weight(f.base, X_tr, y_tr, sw_tr)
-            if f.lifter.requires_X:
-                f.lifter.fit(base_pt_oof, y[base_oof_idx], X=X[base_oof_idx])
-            else:
-                f.lifter.fit(base_pt_oof, y[base_oof_idx])
-            dist_train = f.predict_dist(X_tr, ids=ids_tr, timestamps=ts_tr)
-            dist_test = f.predict_dist(X_te, ids=ids_te, timestamps=ts_te)
-            return dist_train, dist_test
-
-        # Pass ids/timestamps/deps/groups explicitly. Signature-based
-        # routing in _fit_with_optional_weight + _predict_with_extras
-        # drops anything a particular trainer doesn't declare.
-        fit_extras: dict[str, Any] = {"ids": ids_tr, "timestamps": ts_tr}
-        if deps_for_fit:
-            fit_extras["deps_oof"] = deps_for_fit
-        if g_tr is not None:
-            fit_extras["groups"] = g_tr
-        _fit_with_optional_weight(f, X_tr, y_tr, sw_tr, **fit_extras)
-        dist_train = _predict_with_extras(
-            f, X_tr, ids_tr, ts_tr,
-            deps_oof=deps_for_fit if deps_for_fit else None,
-            groups=g_tr,
+            stages = [inner]
+        if calibrator is not None:
+            stages = stages + [calibrator]
+        return Pipeline(
+            stages, name=name, calibration_fraction=self.calibration_fraction,
         )
-        dist_test = _predict_with_extras(
-            f, X_te, ids_te, ts_te,
-            deps_oof=deps_for_pred if deps_for_pred else None,
-            groups=g_te,
-        )
-        return dist_train, dist_test
 
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
-
-
-def _hash_array(arr: np.ndarray) -> str:
-    h = hashlib.sha256()
-    h.update(arr.tobytes())
-    h.update(str(arr.shape).encode())
-    return h.hexdigest()[:16]
-
-
-def _to_dt(x: Any) -> datetime:
-    if isinstance(x, datetime):
-        return x
-    if isinstance(x, np.datetime64):
-        return x.astype("datetime64[s]").astype(datetime)
-    if isinstance(x, (int, float, np.integer, np.floating)):
-        return datetime.fromtimestamp(float(x)) if float(x) > 1e6 else datetime(2024, 1, 1)
-    return datetime(2024, 1, 1)
 
 
 def _fit_with_optional_weight(
@@ -924,17 +536,6 @@ def _predict_with_extras(
     return forecaster.predict_dist(X, **call_kwargs)
 
 
-def _predict_with_deps(
-    forecaster: Any,
-    X: np.ndarray,
-    ids: np.ndarray,
-    ts: np.ndarray,
-    deps_oof: dict[str, DistributionForecast],
-) -> DistributionForecast:
-    """Back-compat wrapper for the deps-only call path."""
-    return _predict_with_extras(forecaster, X, ids, ts, deps_oof=deps_oof)
-
-
 def _stitch_folds(
     folds: list[tuple[np.ndarray, DistributionForecast]],
     *,
@@ -958,16 +559,6 @@ def _stitch_folds(
         )
     cls = next(iter(types))
     return cls.stitch(folds, timestamps=timestamps, provenance=provenance)
-
-
-def _set_provenance(dist: DistributionForecast, prov: ProvenanceMeta) -> DistributionForecast:
-    """Return a copy of ``dist`` with provenance replaced.
-
-    Subclass-agnostic: ``dataclasses.replace`` copies all dataclass fields
-    (which differ per concrete subclass) and overrides only ``provenance``.
-    """
-    import dataclasses
-    return dataclasses.replace(dist, provenance=prov)
 
 
 # ---------------------------------------------------------------------------
@@ -1156,7 +747,8 @@ class Pipeline:
 
     # ---- predict ----
 
-    def _core_predict_dist(self, Xz, ids, ts, deps_oof=None, upstream=None):
+    def _core_predict_dist(self, Xz, ids, ts, deps_oof=None, upstream=None,
+                           groups=None):
         """The core forecaster's dist in the model's working (z) space —
         before calibration and before the transformers' inverse."""
         if self._point is not None:
@@ -1167,16 +759,18 @@ class Pipeline:
             extras["deps_oof"] = deps_oof
         if upstream is not None:
             extras["upstream"] = upstream
+        if groups is not None:
+            extras["groups"] = groups
         return _predict_with_extras(self._model, Xz, ids, ts, **extras)
 
     def predict_dist(self, X, *, ids, timestamps, center=None,
-                     deps_oof=None, upstream=None):
+                     deps_oof=None, upstream=None, groups=None):
         Xz = np.asarray(X, dtype=float)
         ids_arr = np.asarray(ids)
         ts = np.asarray(timestamps)
         for t in self._transformers:
             Xz = t.transform(Xz, ids=ids_arr, center=center)   # stamps test (c, s)
-        dist = self._core_predict_dist(Xz, ids_arr, ts, deps_oof, upstream)
+        dist = self._core_predict_dist(Xz, ids_arr, ts, deps_oof, upstream, groups)
         if self._calibrator is not None and getattr(self._calibrator, "fitted_", True):
             dist = self._calibrator.transform(dist)
         for t in reversed(self._transformers):

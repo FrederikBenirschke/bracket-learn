@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 from sklearn.linear_model import LinearRegression
 
+from bracketlearn.compose import WalkForward
 from bracketlearn.lift import GlobalResidual
 from bracketlearn.multitarget import MultiOutputForecastPipeline
 from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster
@@ -45,7 +46,7 @@ def _synthetic(n: int = 200, k: int = 3, seed: int = 0):
 
 class TestCVVariants:
     def test_kfold_disjoint_test_folds(self):
-        p = ForecastPipeline(steps=[("emos", EMOS())], cv="kfold", n_folds=4)
+        p = WalkForward(cv="kfold", n_folds=4)
         folds = p._make_folds(200)
         assert len(folds) == 4
         all_test = np.concatenate([te for _, te in folds])
@@ -53,35 +54,31 @@ class TestCVVariants:
         assert len(set(all_test.tolist())) == 200   # disjoint
 
     def test_kfold_no_train_test_overlap(self):
-        p = ForecastPipeline(steps=[("emos", EMOS())], cv="kfold", n_folds=5)
+        p = WalkForward(cv="kfold", n_folds=5)
         for tr, te in p._make_folds(200):
             assert not (set(tr.tolist()) & set(te.tolist()))
 
     def test_kfold_shuffle_changes_assignment(self):
-        p1 = ForecastPipeline(steps=[("emos", EMOS())], cv="kfold", n_folds=5,
-                              shuffle=True, random_state=0)
-        p2 = ForecastPipeline(steps=[("emos", EMOS())], cv="kfold", n_folds=5,
-                              shuffle=False)
+        p1 = WalkForward(cv="kfold", n_folds=5, shuffle=True, random_state=0)
+        p2 = WalkForward(cv="kfold", n_folds=5, shuffle=False)
         f1 = p1._make_folds(200)
         f2 = p2._make_folds(200)
         # At least one fold's test set should differ.
         assert any(not np.array_equal(a[1], b[1]) for a, b in zip(f1, f2, strict=True))
 
     def test_kfold_too_few_rows_raises(self):
-        p = ForecastPipeline(steps=[("emos", EMOS())], cv="kfold", n_folds=10)
+        p = WalkForward(cv="kfold", n_folds=10)
         with pytest.raises(ValueError, match="< n_folds"):
             p._make_folds(5)
 
     def test_rolling_fixed_train_size(self):
-        p = ForecastPipeline(steps=[("emos", EMOS())], cv="rolling-window",
-                             n_folds=4, rolling_window=50)
+        p = WalkForward(cv="rolling-window", n_folds=4, rolling_window=50)
         folds = p._make_folds(200)
         for tr, _ in folds:
             assert tr.shape[0] == 50
 
     def test_rolling_test_after_train(self):
-        p = ForecastPipeline(steps=[("emos", EMOS())], cv="rolling-window",
-                             n_folds=3, rolling_window=80)
+        p = WalkForward(cv="rolling-window", n_folds=3, rolling_window=80)
         for tr, te in p._make_folds(200):
             assert te.min() >= tr.max()
 

@@ -80,7 +80,8 @@ def test_expanding_window_absorbs_tail():
     # 203 - 6·33 = 5 rows would be lost. With absorb, fold 5 takes them.
     n = 203
     X, y, ids, ts = _synthetic(n=n)
-    p = ForecastPipeline(steps=[("emos", EMOS())], n_folds=5)
+    from bracketlearn.compose import WalkForward
+    p = WalkForward(n_folds=5)
     folds = p._expanding_folds(n)
     covered = np.concatenate([te for _, te in folds])
     assert covered.max() == n - 1, (

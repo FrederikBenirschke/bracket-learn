@@ -178,6 +178,7 @@ class WalkForward:
         ids: np.ndarray,
         timestamps: np.ndarray,
         sample_weight: np.ndarray | None = None,
+        groups: np.ndarray | None = None,
     ) -> PipelineResult:
         X = np.asarray(X)
         y = np.asarray(y, dtype=float)
@@ -185,6 +186,13 @@ class WalkForward:
         timestamps = np.asarray(timestamps)
         N = y.shape[0]
         sw = np.asarray(sample_weight, dtype=float) if sample_weight is not None else None
+        if sw is not None and sw.shape[0] != N:
+            raise ValueError(
+                f"sample_weight length {sw.shape[0]} != y length {N}"
+            )
+        g = np.asarray(groups) if groups is not None else None
+        if g is not None and g.shape[0] != N:
+            raise ValueError(f"groups length {g.shape[0]} != y length {N}")
 
         nodes = _flatten(model)
 
@@ -192,6 +200,7 @@ class WalkForward:
         order = np.arange(N) if self.cv == "kfold" else np.argsort(timestamps, kind="stable")
         Xo, yo, ids_o, ts_o = X[order], y[order], ids[order], timestamps[order]
         sw_o = sw[order] if sw is not None else None
+        g_o = g[order] if g is not None else None
 
         folds = self._make_folds(N)
         per_node: dict[int, list[tuple[np.ndarray, Any]]] = {i: [] for i in range(len(nodes))}
@@ -204,12 +213,14 @@ class WalkForward:
                 if node["is_meta"]:
                     up_tr = [fold_train[j] for j in node["deps"]]
                     up_te = [fold_test[j] for j in node["deps"]]
-                    dist_tr, dist_te = self._fit_meta(
-                        obj, Xo, yo, ids_o, ts_o, train_idx, test_idx, up_tr, up_te, sw_o,
+                    dist_tr, dist_te = self._fit_node(
+                        obj, Xo, yo, ids_o, ts_o, train_idx, test_idx, sw_o, g_o,
+                        up_tr, up_te,
                     )
                 else:
-                    dist_tr, dist_te = self._fit_plain(
-                        obj, Xo, yo, ids_o, ts_o, train_idx, test_idx, sw_o,
+                    dist_tr, dist_te = self._fit_node(
+                        obj, Xo, yo, ids_o, ts_o, train_idx, test_idx, sw_o, g_o,
+                        None, None,
                     )
                 fold_train[i] = dist_tr
                 fold_test[i] = dist_te
@@ -225,26 +236,28 @@ class WalkForward:
         # Refit each node on the full (sorted) training data → canonical models
         # for predict() on truly-unseen rows (sklearn's CV-then-final pattern).
         if self.refit_on_full:
-            self._refit_full(nodes, Xo, yo, ids_o, ts_o, sw_o)
+            self._refit_full(nodes, Xo, yo, ids_o, ts_o, sw_o, g_o)
 
         return PipelineResult(forecasts=out)
 
     # ---- refit-on-full + predict on unseen rows ----
 
-    def _refit_full(self, nodes, X, y, ids, ts, sw) -> None:
+    def _refit_full(self, nodes, X, y, ids, ts, sw, g) -> None:
         fitted: list[Any] = [None] * len(nodes)
         canonical: dict[int, Any] = {}   # node index → in-sample full-data dist
         for i, node in enumerate(nodes):
             obj = copy.deepcopy(node["obj"])
-            if node["is_meta"]:
-                up = [canonical[j] for j in node["deps"]]
-                _fit_with_optional_weight(
-                    obj, X, y, sw, ids=ids, timestamps=ts, upstream=up,
-                )
-                canonical[i] = _predict_with_extras(obj, X, ids, ts, upstream=up)
-            else:
-                _fit_with_optional_weight(obj, X, y, sw, ids=ids, timestamps=ts)
-                canonical[i] = _predict_with_extras(obj, X, ids, ts)
+            up = [canonical[j] for j in node["deps"]] if node["is_meta"] else None
+            fit_extras: dict[str, Any] = {"ids": ids, "timestamps": ts}
+            pred_extras: dict[str, Any] = {}
+            if up is not None:
+                fit_extras["upstream"] = up
+                pred_extras["upstream"] = up
+            if g is not None:
+                fit_extras["groups"] = g
+                pred_extras["groups"] = g
+            _fit_with_optional_weight(obj, X, y, sw, **fit_extras)
+            canonical[i] = _predict_with_extras(obj, X, ids, ts, **pred_extras)
             fitted[i] = obj
         self._nodes = nodes
         self._fitted = fitted
@@ -255,6 +268,7 @@ class WalkForward:
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
+        groups: np.ndarray | None = None,
     ) -> dict[str, Any]:
         """Predict on unseen rows with the canonical (full-train) models.
 
@@ -269,15 +283,17 @@ class WalkForward:
         X = np.asarray(X)
         ids = np.asarray(ids)
         timestamps = np.asarray(timestamps)
+        g = np.asarray(groups) if groups is not None else None
         out: dict[str, Any] = {}
         node_dist: dict[int, Any] = {}
         for i, node in enumerate(self._nodes):
             f = self._fitted[i]
+            extras: dict[str, Any] = {}
             if node["is_meta"]:
-                up = [node_dist[j] for j in node["deps"]]
-                dist = _predict_with_extras(f, X, ids, timestamps, upstream=up)
-            else:
-                dist = _predict_with_extras(f, X, ids, timestamps)
+                extras["upstream"] = [node_dist[j] for j in node["deps"]]
+            if g is not None:
+                extras["groups"] = g
+            dist = _predict_with_extras(f, X, ids, timestamps, **extras)
             node_dist[i] = dist
             out[node["name"]] = dist
         return out
@@ -285,23 +301,31 @@ class WalkForward:
     # ---- per-node fold fit ----
 
     @staticmethod
-    def _fit_plain(f, X, y, ids, ts, tr, te, sw):
-        sw_tr = sw[tr] if sw is not None else None
-        _fit_with_optional_weight(
-            f, X[tr], y[tr], sw_tr, ids=ids[tr], timestamps=ts[tr],
-        )
-        dist_tr = _predict_with_extras(f, X[tr], ids[tr], ts[tr])
-        dist_te = _predict_with_extras(f, X[te], ids[te], ts[te])
-        return dist_tr, dist_te
+    def _fit_node(f, X, y, ids, ts, tr, te, sw, g, up_tr, up_te):
+        """Fit node ``f`` on the fold's train slice; predict on train + test.
 
-    @staticmethod
-    def _fit_meta(m, X, y, ids, ts, tr, te, up_tr, up_te, sw):
+        ``up_tr``/``up_te`` are the upstream fold dists for a meta node (None
+        for a plain node). ``groups`` is threaded when present; the helpers
+        drop any kwarg the node's signature doesn't declare.
+        """
         sw_tr = sw[tr] if sw is not None else None
-        _fit_with_optional_weight(
-            m, X[tr], y[tr], sw_tr, ids=ids[tr], timestamps=ts[tr], upstream=up_tr,
-        )
-        dist_tr = _predict_with_extras(m, X[tr], ids[tr], ts[tr], upstream=up_tr)
-        dist_te = _predict_with_extras(m, X[te], ids[te], ts[te], upstream=up_te)
+        fit_extras: dict[str, Any] = {"ids": ids[tr], "timestamps": ts[tr]}
+        if up_tr is not None:
+            fit_extras["upstream"] = up_tr
+        if g is not None:
+            fit_extras["groups"] = g[tr]
+        _fit_with_optional_weight(f, X[tr], y[tr], sw_tr, **fit_extras)
+
+        tr_extras: dict[str, Any] = {}
+        te_extras: dict[str, Any] = {}
+        if up_tr is not None:
+            tr_extras["upstream"] = up_tr
+            te_extras["upstream"] = up_te
+        if g is not None:
+            tr_extras["groups"] = g[tr]
+            te_extras["groups"] = g[te]
+        dist_tr = _predict_with_extras(f, X[tr], ids[tr], ts[tr], **tr_extras)
+        dist_te = _predict_with_extras(f, X[te], ids[te], ts[te], **te_extras)
         return dist_tr, dist_te
 
     # ---- folds (mirror ForecastPipeline; shared into _cv when it shims) ----
