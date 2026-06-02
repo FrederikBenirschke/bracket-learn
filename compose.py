@@ -73,11 +73,13 @@ class Stacker:
         self.depends_on = ()
 
 
-def _flatten(model) -> tuple[list[dict], int]:
+def _flatten(model) -> list[dict]:
     """Topo-flatten an object graph into ordered nodes (deps before dependents).
 
-    Each node: ``{obj, name, deps: list[int], is_meta: bool}``. Shared objects
-    (same identity) collapse to one node, so a reused upstream is computed once.
+    ``model`` is a single `Pipeline`/`Stacker`/forecaster or a list of them
+    (multiple independent leaderboard outputs). Each node:
+    ``{obj, name, deps: list[int], is_meta: bool}``. Shared objects (same
+    identity) collapse to one node, so a reused upstream is computed once.
     """
     nodes: list[dict] = []
     idx_by_id: dict[int, int] = {}
@@ -102,8 +104,18 @@ def _flatten(model) -> tuple[list[dict], int]:
         idx_by_id[id(node)] = i
         return i
 
-    root = visit(model)
-    return nodes, root
+    roots = list(model) if isinstance(model, (list, tuple)) else [model]
+    for r in roots:
+        visit(r)
+    seen: set[str] = set()
+    for n in nodes:
+        if n["name"] in seen:
+            raise ValueError(
+                f"WalkForward: duplicate node name {n['name']!r} — names label "
+                f"leaderboard rows and must be unique across the graph"
+            )
+        seen.add(n["name"])
+    return nodes
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +186,7 @@ class WalkForward:
         N = y.shape[0]
         sw = np.asarray(sample_weight, dtype=float) if sample_weight is not None else None
 
-        nodes, _root = _flatten(model)
+        nodes = _flatten(model)
 
         # Time-series CV sorts by timestamp; k-fold leaves rows as-is.
         order = np.arange(N) if self.cv == "kfold" else np.argsort(timestamps, kind="stable")

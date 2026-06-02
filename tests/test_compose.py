@@ -135,6 +135,25 @@ def test_predict_requires_refit():
         wf.predict(X, ids=ids, timestamps=ts)
 
 
+def test_walkforward_multi_root_outputs_and_dedup():
+    # A list of independent models = multiple leaderboard outputs; a stacker
+    # sharing one of them must NOT duplicate it (object identity dedup).
+    X, y, ids, ts = _synthetic(n=160)
+    emos = Pipeline([EMOS()], name="emos")
+    ridge = Pipeline([SklearnPoint(LinearRegression()), GlobalResidual()], name="ridge")
+    stack = Stacker([emos, ridge], StackedParametric(), name="stack")
+    res = WalkForward(n_folds=3).fit_predict([emos, ridge, stack], X, y, ids=ids, timestamps=ts)
+    assert set(res.forecasts) == {"emos", "ridge", "stack"}
+
+
+def test_walkforward_rejects_duplicate_node_names():
+    X, y, ids, ts = _synthetic(n=120)
+    a = Pipeline([EMOS()], name="dup")
+    b = Pipeline([EMOS()], name="dup")
+    with pytest.raises(ValueError, match="duplicate node name"):
+        WalkForward(n_folds=3).fit_predict([a, b], X, y, ids=ids, timestamps=ts)
+
+
 def test_stacker_requires_upstreams_and_meta():
     with pytest.raises(ValueError, match="at least one upstream"):
         Stacker([], StackedParametric())
