@@ -94,6 +94,47 @@ def test_shared_upstream_computed_once_and_nested_stacker_runs():
         assert res[nm].ids.shape[0] > 0
 
 
+def test_walkforward_predict_matches_forecastpipeline():
+    X, y, ids, ts = _synthetic(n=220)
+    Xtr, ytr, idtr, tstr = X[:180], y[:180], ids[:180], ts[:180]
+    Xte, idte, tste = X[180:], ids[180:], ts[180:]
+
+    old = ForecastPipeline(
+        steps=[
+            ("ridge", LiftedForecaster(
+                base=SklearnPoint(LinearRegression()),
+                lifter=GlobalResidual(), name="ridge",
+            )),
+            ("emos", EMOS()),
+            ("stack", StackedParametric(deps=("ridge", "emos"))),
+        ],
+        n_folds=3, refit_on_full=True,
+    )
+    old.fit_predict(Xtr, ytr, ids=idtr, timestamps=tstr)
+    old_pred = old.predict(Xte, ids=idte, timestamps=tste)
+
+    ridge = Pipeline([SklearnPoint(LinearRegression()), GlobalResidual()], name="ridge")
+    emos = Pipeline([EMOS()], name="emos")
+    stack = Stacker([ridge, emos], StackedParametric(), name="stack")
+    wf = WalkForward(n_folds=3, refit_on_full=True)
+    wf.fit_predict(stack, Xtr, ytr, ids=idtr, timestamps=tstr)
+    new_pred = wf.predict(Xte, ids=idte, timestamps=tste)
+
+    for nm in ("ridge", "emos", "stack"):
+        assert_allclose(old_pred[nm].params["mu"], new_pred[nm].params["mu"],
+                        rtol=1e-9, atol=1e-9, err_msg=f"{nm}: mu")
+        assert_allclose(old_pred[nm].params["sigma"], new_pred[nm].params["sigma"],
+                        rtol=1e-9, atol=1e-9, err_msg=f"{nm}: sigma")
+
+
+def test_predict_requires_refit():
+    X, y, ids, ts = _synthetic(n=120)
+    wf = WalkForward(n_folds=3)  # refit_on_full=False
+    wf.fit_predict(Pipeline([EMOS()], name="emos"), X, y, ids=ids, timestamps=ts)
+    with pytest.raises(RuntimeError, match="refit_on_full=True"):
+        wf.predict(X, ids=ids, timestamps=ts)
+
+
 def test_stacker_requires_upstreams_and_meta():
     with pytest.raises(ValueError, match="at least one upstream"):
         Stacker([], StackedParametric())

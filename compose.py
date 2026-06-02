@@ -131,6 +131,7 @@ class WalkForward:
         cv: str = "expanding-window",
         n_folds: int = 5,
         embargo: int = 0,
+        refit_on_full: bool = False,
         shuffle: bool = False,
         random_state: int | None = None,
         rolling_window: int | None = None,
@@ -146,9 +147,13 @@ class WalkForward:
         self.cv = cv
         self.n_folds = n_folds
         self.embargo = embargo
+        self.refit_on_full = refit_on_full
         self.shuffle = shuffle
         self.random_state = random_state
         self.rolling_window = rolling_window
+        # Set by fit_predict when refit_on_full=True; consumed by predict().
+        self._nodes: list[dict] | None = None
+        self._fitted: list[Any] | None = None
 
     # ---- run ----
 
@@ -204,7 +209,66 @@ class WalkForward:
             out[node["name"]] = _stitch_folds(
                 per_node[i], timestamps=timestamps, provenance=prov,
             )
+
+        # Refit each node on the full (sorted) training data → canonical models
+        # for predict() on truly-unseen rows (sklearn's CV-then-final pattern).
+        if self.refit_on_full:
+            self._refit_full(nodes, Xo, yo, ids_o, ts_o, sw_o)
+
         return PipelineResult(forecasts=out)
+
+    # ---- refit-on-full + predict on unseen rows ----
+
+    def _refit_full(self, nodes, X, y, ids, ts, sw) -> None:
+        fitted: list[Any] = [None] * len(nodes)
+        canonical: dict[int, Any] = {}   # node index → in-sample full-data dist
+        for i, node in enumerate(nodes):
+            obj = copy.deepcopy(node["obj"])
+            if node["is_meta"]:
+                up = [canonical[j] for j in node["deps"]]
+                _fit_with_optional_weight(
+                    obj, X, y, sw, ids=ids, timestamps=ts, upstream=up,
+                )
+                canonical[i] = _predict_with_extras(obj, X, ids, ts, upstream=up)
+            else:
+                _fit_with_optional_weight(obj, X, y, sw, ids=ids, timestamps=ts)
+                canonical[i] = _predict_with_extras(obj, X, ids, ts)
+            fitted[i] = obj
+        self._nodes = nodes
+        self._fitted = fitted
+
+    def predict(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+    ) -> dict[str, Any]:
+        """Predict on unseen rows with the canonical (full-train) models.
+
+        Requires ``refit_on_full=True`` and a prior ``fit_predict``. Returns
+        ``{node_name: DistributionForecast}`` — every node addressable, same as
+        the leaderboard.
+        """
+        if self._fitted is None or self._nodes is None:
+            raise RuntimeError(
+                "predict() requires a prior fit_predict() with refit_on_full=True"
+            )
+        X = np.asarray(X)
+        ids = np.asarray(ids)
+        timestamps = np.asarray(timestamps)
+        out: dict[str, Any] = {}
+        node_dist: dict[int, Any] = {}
+        for i, node in enumerate(self._nodes):
+            f = self._fitted[i]
+            if node["is_meta"]:
+                up = [node_dist[j] for j in node["deps"]]
+                dist = _predict_with_extras(f, X, ids, timestamps, upstream=up)
+            else:
+                dist = _predict_with_extras(f, X, ids, timestamps)
+            node_dist[i] = dist
+            out[node["name"]] = dist
+        return out
 
     # ---- per-node fold fit ----
 
