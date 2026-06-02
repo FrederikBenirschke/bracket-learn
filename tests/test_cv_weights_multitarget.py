@@ -10,12 +10,12 @@ Each section pins one user-visible guarantee:
   underlying estimator. EMOS with extreme weights collapses to the
   weighted target. Trainers that don't accept ``sample_weight`` don't
   crash when the pipeline threads it through.
-- Multi-target: ``MultiOutputForecastPipeline`` fits M independent
-  pipelines, results are indexable per-target, and ``predict()`` returns
-  per-target dicts on unseen data.
-- GridSearch: enumerates the grid, routes nested ``stage__field`` params
-  into the right stage, picks the param with lowest CRPS, refuses unknown
-  scoring metrics.
+- Multi-target: ``MultiOutput`` fits M independent models, results are
+  indexable per-target, and ``predict()`` returns per-target dicts on
+  unseen data.
+- GridSearch: enumerates the grid, routes nested ``node__field`` params
+  into the right graph node, picks the param with lowest CRPS, refuses
+  unknown scoring metrics.
 """
 
 from __future__ import annotations
@@ -24,10 +24,10 @@ import numpy as np
 import pytest
 from sklearn.linear_model import LinearRegression
 
-from bracketlearn.compose import WalkForward
+from bracketlearn.compose import Stacker, WalkForward
 from bracketlearn.lift import GlobalResidual
-from bracketlearn.multitarget import MultiOutputForecastPipeline
-from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster
+from bracketlearn.multitarget import MultiOutput
+from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster, Pipeline
 from bracketlearn.search import GridSearch
 from bracketlearn.trainers import EMOS, MixtureNormals, SklearnPoint
 
@@ -209,18 +209,21 @@ class TestMultiTarget:
 
     def test_fit_predict_indexes_per_target(self):
         X, Y, ids, ts = self._multi_y(M=2)
-        proto = ForecastPipeline(
-            steps=[("emos", EMOS())], n_folds=3, refit_on_full=False,
+        mt = MultiOutput(
+            Pipeline([EMOS()], name="emos"),
+            WalkForward(n_folds=3, refit_on_full=False),
         )
-        mt = MultiOutputForecastPipeline(proto)
         result = mt.fit_predict(X, Y, ids=ids, timestamps=ts)
         assert set(result.targets) == {"target_0", "target_1"}
         assert "emos" in result["target_0"].forecasts
 
     def test_predict_unseen(self):
         X, Y, ids, ts = self._multi_y(M=2)
-        proto = ForecastPipeline(steps=[("emos", EMOS())], n_folds=3)
-        mt = MultiOutputForecastPipeline(proto, target_names=["a", "b"])
+        mt = MultiOutput(
+            Pipeline([EMOS()], name="emos"),
+            WalkForward(n_folds=3, refit_on_full=True),
+            target_names=["a", "b"],
+        )
         mt.fit_predict(X, Y, ids=ids, timestamps=ts)
         X_new = np.random.default_rng(1).normal(0, 1, (30, 3))
         pred = mt.predict(X_new, ids=np.arange(30), timestamps=np.arange(30, dtype=float))
@@ -229,10 +232,10 @@ class TestMultiTarget:
 
     def test_score_multi(self):
         X, Y, ids, ts = self._multi_y(M=2)
-        proto = ForecastPipeline(
-            steps=[("emos", EMOS())], n_folds=3, refit_on_full=False,
+        mt = MultiOutput(
+            Pipeline([EMOS()], name="emos"),
+            WalkForward(n_folds=3, refit_on_full=False),
         )
-        mt = MultiOutputForecastPipeline(proto)
         result = mt.fit_predict(X, Y, ids=ids, timestamps=ts)
         scores = result.score(Y, metrics=["crps"])
         assert {"target_0", "target_1"} == set(scores)
@@ -240,8 +243,10 @@ class TestMultiTarget:
 
     def test_misshapen_target_names_raises(self):
         X, Y, ids, ts = self._multi_y(M=2)
-        proto = ForecastPipeline(steps=[("emos", EMOS())], n_folds=3)
-        mt = MultiOutputForecastPipeline(proto, target_names=["only_one"])
+        mt = MultiOutput(
+            Pipeline([EMOS()], name="emos"), WalkForward(n_folds=3),
+            target_names=["only_one"],
+        )
         with pytest.raises(ValueError, match="target_names"):
             mt.fit_predict(X, Y, ids=ids, timestamps=ts)
 
@@ -254,13 +259,11 @@ class TestMultiTarget:
 class TestGridSearch:
     def test_picks_best_param(self):
         X, y, ids, ts = _synthetic()
-        proto = ForecastPipeline(
-            steps=[("emos", EMOS())], n_folds=3, refit_on_full=False,
-        )
         gs = GridSearch(
-            proto,
+            Pipeline([EMOS()], name="emos"),
+            WalkForward(n_folds=3, refit_on_full=False),
             param_grid={"n_folds": [3, 5]},
-            scoring="crps", refit_stage="emos",
+            scoring="crps", refit_node="emos",
         )
         gs.fit(X, y, ids=ids, timestamps=ts)
         assert gs.best_params_ is not None
@@ -271,17 +274,14 @@ class TestGridSearch:
         assert gs.best_score_ == pytest.approx(best_obs)
 
     def test_nested_param_routes_to_stage(self):
-        """``stage__field`` keys must dispatch into the stage's forecaster.
+        """``node__field`` keys must dispatch into the node's owning stage.
         Use log_score (mixture supports it natively) so the score is finite."""
         X, y, ids, ts = _synthetic()
-        proto = ForecastPipeline(
-            steps=[("mix", MixtureNormals(sigma_floor=0.5))], n_folds=3,
-            refit_on_full=False,
-        )
         gs = GridSearch(
-            proto,
+            Pipeline([MixtureNormals(sigma_floor=0.5)], name="mix"),
+            WalkForward(n_folds=3, refit_on_full=False),
             param_grid={"mix__sigma_floor": [0.1, 2.0]},
-            scoring="log_score", refit_stage="mix",
+            scoring="log_score", refit_node="mix",
         )
         gs.fit(X, y, ids=ids, timestamps=ts)
         assert gs.best_params_ in (
@@ -291,37 +291,39 @@ class TestGridSearch:
 
     def test_unknown_param_raises(self):
         X, y, ids, ts = _synthetic()
-        proto = ForecastPipeline(steps=[("emos", EMOS())], n_folds=3)
         gs = GridSearch(
-            proto, param_grid={"not_a_param": [1, 2]},
-            scoring="crps", refit_stage="emos",
+            Pipeline([EMOS()], name="emos"), WalkForward(n_folds=3),
+            param_grid={"not_a_param": [1, 2]},
+            scoring="crps", refit_node="emos",
         )
-        with pytest.raises(ValueError, match="neither a pipeline ctor arg"):
+        with pytest.raises(ValueError, match="neither a WalkForward arg"):
             gs.fit(X, y, ids=ids, timestamps=ts)
 
     def test_unknown_scoring_raises(self):
-        proto = ForecastPipeline(steps=[("emos", EMOS())], n_folds=3)
         with pytest.raises(ValueError, match="scoring"):
-            GridSearch(proto, param_grid={"n_folds": [3]},
-                       scoring="not_a_metric")
+            GridSearch(
+                Pipeline([EMOS()], name="emos"), WalkForward(n_folds=3),
+                param_grid={"n_folds": [3]}, scoring="not_a_metric",
+            )
 
     def test_empty_grid_raises(self):
-        proto = ForecastPipeline(steps=[("emos", EMOS())], n_folds=3)
         with pytest.raises(ValueError, match="empty"):
-            GridSearch(proto, param_grid={}, scoring="crps")
+            GridSearch(
+                Pipeline([EMOS()], name="emos"), WalkForward(n_folds=3),
+                param_grid={}, scoring="crps",
+            )
 
     def test_does_not_mutate_prototype(self):
         X, y, ids, ts = _synthetic()
-        proto = ForecastPipeline(
-            steps=[("emos", EMOS())], n_folds=3, refit_on_full=False,
-        )
-        proto_emos = proto._stages[0].forecaster
+        model = Pipeline([EMOS()], name="emos")
+        wf = WalkForward(n_folds=3, refit_on_full=False)
+        proto_emos = model.stages[0]
         gs = GridSearch(
-            proto, param_grid={"n_folds": [3, 5]},
-            scoring="crps", refit_stage="emos",
+            model, wf, param_grid={"n_folds": [3, 5]},
+            scoring="crps", refit_node="emos",
         )
         gs.fit(X, y, ids=ids, timestamps=ts)
         # Prototype's EMOS instance must remain unfitted.
         assert proto_emos.a_ is None
-        # Pipeline n_folds unchanged at the prototype level.
-        assert proto.n_folds == 3
+        # WalkForward n_folds unchanged at the prototype level.
+        assert wf.n_folds == 3

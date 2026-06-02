@@ -58,8 +58,8 @@ from bracketlearn.lift import (
     StudentTResidual,
 )
 from bracketlearn.multitarget import (
-    MultiOutputForecastPipeline,
-    MultiOutputPipelineResult,
+    MultiOutput,
+    MultiOutputResult,
 )
 from bracketlearn.compose import Stacker, WalkForward
 from bracketlearn.pipeline import (
@@ -165,6 +165,6 @@ __all__ = [
     "Stacker",
     "WalkForward",
     "GridSearch",
-    "MultiOutputForecastPipeline",
-    "MultiOutputPipelineResult",
+    "MultiOutput",
+    "MultiOutputResult",
 ]

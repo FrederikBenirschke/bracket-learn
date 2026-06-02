@@ -1,4 +1,10 @@
-"""Convenience builders: pre-wrap common (forecaster, lifter/calibrator) combos."""
+"""Convenience builders: pre-wrap common (forecaster, lifter/calibrator) combos.
+
+Each returns a `Pipeline` — the self-contained chain that absorbs the old
+`LiftedForecaster` / `CalibratedForecaster` wrappers. Drop it straight into
+`WalkForward.fit_predict` (or nest it in a `Stacker`); ``name`` labels the
+leaderboard row.
+"""
 
 from __future__ import annotations
 
@@ -15,37 +21,34 @@ def ridge(
     alphas: tuple[float, ...] = (1e-3, 1e-2, 1e-1, 1.0, 10.0, 100.0, 1000.0),
     name: str = "ridge",
 ) -> Any:
-    """RidgeCV + GlobalResidual wrapped in LiftedForecaster.
+    """RidgeCV point forecaster lifted to a Normal via `GlobalResidual`.
 
     Picks α from `alphas` via leave-one-out CV on the inner-fit slice.
-    Returns a LiftedForecaster ready to register with a ForecastPipeline.
+    Returns a `Pipeline([SklearnPoint(RidgeCV), GlobalResidual()])` — a
+    self-contained `DistForecaster`.
     """
     from sklearn.linear_model import RidgeCV
 
     from bracketlearn.lift import GlobalResidual
-    from bracketlearn.pipeline import LiftedForecaster
+    from bracketlearn.pipeline import Pipeline
 
-    return LiftedForecaster(
-        base=SklearnPoint(RidgeCV(alphas=np.asarray(alphas))),
-        lifter=GlobalResidual(),
+    return Pipeline(
+        [SklearnPoint(RidgeCV(alphas=np.asarray(alphas))), GlobalResidual()],
         name=name,
     )
 
 
 def emos_calibrated(*, edges: np.ndarray, name: str = "emos_calibrated") -> Any:
-    """EMOS wrapped with Isotonic on the given bracket ladder.
+    """EMOS calibrated with Isotonic on the given bracket ladder.
 
     `edges` defines the ladder used for isotonic calibration. The pipeline
     fits the isotonic on a held-out tail of each training fold and applies
-    it to the test fold.
+    it to the test fold. Returns a `Pipeline([EMOS(), Isotonic(edges)])`.
     """
     from bracketlearn.lift import Isotonic
-    from bracketlearn.pipeline import CalibratedForecaster
+    from bracketlearn.pipeline import Pipeline
 
-    return CalibratedForecaster(
-        forecaster=EMOS(),
-        calibrator=Isotonic(pre_integrate_edges=np.asarray(edges, dtype=float)),
+    return Pipeline(
+        [EMOS(), Isotonic(pre_integrate_edges=np.asarray(edges, dtype=float))],
         name=name,
     )
-
-

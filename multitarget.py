@@ -1,48 +1,45 @@
-"""Multi-target wrapper: a single (N, M) y becomes M independent pipelines.
+"""Multi-target wrapper: a single (N, M) y becomes M independent models.
 
 Mirrors sklearn's ``MultiOutputRegressor``: each target column is fit by a
-separate clone of the inner pipeline. No cross-target sharing — if joint
-modelling is desired, the user builds a single trainer that natively
-consumes (N, M) y and uses it inside an ordinary ``ForecastPipeline``.
+separate deep-copy of the model graph, run under its own `WalkForward`. No
+cross-target sharing — if joint modelling is desired, build a single trainer
+that natively consumes (N, M) y.
 
 Why a wrapper rather than threading M through every trainer:
 
 - The (N, M) → (N, M) contract would multiply every backing's shape (e.g.
   ``DistributionForecast.params['mu']`` becomes (N, M)) and break every
-  scoring rule. The blast radius is huge for a feature most users won't
-  touch.
-- ``MultiOutputForecastPipeline`` keeps the existing single-target machinery
-  unchanged and composes M times — readable, debuggable, and matches
-  user expectation that "M targets = M models" unless they explicitly
-  build a joint trainer.
+  scoring rule. The blast radius is huge for a feature most users won't touch.
+- ``MultiOutput`` keeps the single-target machinery unchanged and composes M
+  times — readable, debuggable, and matches the expectation that "M targets =
+  M models" unless a joint trainer is explicitly built.
 
 Example::
 
-    mt = MultiOutputForecastPipeline(
-        ForecastPipeline(steps=[("emos", EMOS())], n_folds=5),
-    )
-    result = mt.fit_predict(X, Y, ids=ids, timestamps=ts)  # Y shape (N, 2)
+    mt = MultiOutput(Pipeline([EMOS()], name="emos"), WalkForward(n_folds=5))
+    result = mt.fit_predict(X, Y, ids=ids, timestamps=ts)   # Y shape (N, 2)
     print(result.score(Y, metrics=["crps"])["target_0"]["emos"]["crps"])
 """
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
-from bracketlearn.base import clone
-from bracketlearn.pipeline import ForecastPipeline, PipelineResult
+from bracketlearn.compose import WalkForward
+from bracketlearn.pipeline import PipelineResult
 
 
 @dataclass
-class MultiOutputPipelineResult:
+class MultiOutputResult:
     """Per-target ``PipelineResult``. Indexed by target name (``target_0`` etc.,
     or user-supplied ``target_names``).
 
-    ``score()`` returns ``{target_name: {stage: {metric: value}}}``.
+    ``score()`` returns ``{target_name: {node: {metric: value}}}``.
     """
 
     per_target: dict[str, PipelineResult]
@@ -69,13 +66,13 @@ class MultiOutputPipelineResult:
         ladder: Any = None,
     ) -> dict[str, dict[str, dict[str, float]]]:
         """Score every target against its column of Y. Returns
-        ``{target_name: {stage: {metric: value}}}``."""
+        ``{target_name: {node: {metric: value}}}``."""
         Y = np.asarray(Y, dtype=float)
         if Y.ndim != 2:
             raise ValueError(f"Y must be 2-D (N, M); got shape {Y.shape}")
         if Y.shape[1] != len(self.target_names):
             raise ValueError(
-                f"Y has {Y.shape[1]} columns but pipeline was fit with "
+                f"Y has {Y.shape[1]} columns but was fit with "
                 f"{len(self.target_names)} targets"
             )
         out: dict[str, dict[str, dict[str, float]]] = {}
@@ -86,30 +83,43 @@ class MultiOutputPipelineResult:
         return out
 
 
-class MultiOutputForecastPipeline:
-    """Fits ``n_targets`` independent clones of a ``ForecastPipeline``.
+class MultiOutput:
+    """Fits ``M`` independent deep-copies of a model graph, one per target.
 
-    The inner pipeline is cloned per target so fitted state from one target
-    cannot leak into another. The user-supplied pipeline is never mutated.
+    The model graph is deep-copied per target so fitted state from one target
+    cannot leak into another. The user-supplied ``model`` and ``wf`` are never
+    mutated.
 
     Args:
-        pipeline: the prototype ``ForecastPipeline`` to clone per target.
+        model: prototype model graph (`Pipeline` / `Stacker` / list), cloned
+            per target.
+        wf: prototype `WalkForward`, cloned per target. Use ``refit_on_full=True``
+            to enable ``predict`` on unseen rows.
         target_names: optional list of M names; defaults to
             ``["target_0", "target_1", ...]``.
     """
 
     def __init__(
         self,
-        pipeline: ForecastPipeline,
+        model: Any,
+        wf: WalkForward,
         *,
         target_names: Sequence[str] | None = None,
     ):
-        self.pipeline = pipeline
+        self.model = model
+        self.wf = wf
         self._target_names_init = (
             list(target_names) if target_names is not None else None
         )
-        self._fitted: dict[str, ForecastPipeline] = {}
+        self._fitted: dict[str, WalkForward] = {}
         self._target_names: list[str] = []
+
+    def _clone_wf(self) -> WalkForward:
+        return WalkForward(
+            cv=self.wf.cv, n_folds=self.wf.n_folds, embargo=self.wf.embargo,
+            refit_on_full=self.wf.refit_on_full, shuffle=self.wf.shuffle,
+            random_state=self.wf.random_state, rolling_window=self.wf.rolling_window,
+        )
 
     def fit_predict(
         self,
@@ -119,7 +129,8 @@ class MultiOutputForecastPipeline:
         ids: np.ndarray,
         timestamps: np.ndarray,
         sample_weight: np.ndarray | None = None,
-    ) -> MultiOutputPipelineResult:
+        groups: np.ndarray | None = None,
+    ) -> MultiOutputResult:
         Y = np.asarray(Y, dtype=float)
         if Y.ndim != 2:
             raise ValueError(f"Y must be 2-D (N, M); got shape {Y.shape}")
@@ -137,14 +148,15 @@ class MultiOutputForecastPipeline:
         per_target: dict[str, PipelineResult] = {}
         self._fitted = {}
         for j, name in enumerate(self._target_names):
-            p = _clone_pipeline(self.pipeline)
-            result = p.fit_predict(
-                X, Y[:, j], ids=ids, timestamps=timestamps,
-                sample_weight=sample_weight,
+            model = copy.deepcopy(self.model)
+            wf = self._clone_wf()
+            result = wf.fit_predict(
+                model, X, Y[:, j], ids=ids, timestamps=timestamps,
+                sample_weight=sample_weight, groups=groups,
             )
             per_target[name] = result
-            self._fitted[name] = p
-        return MultiOutputPipelineResult(
+            self._fitted[name] = wf
+        return MultiOutputResult(
             per_target=per_target, target_names=self._target_names,
         )
 
@@ -154,29 +166,16 @@ class MultiOutputForecastPipeline:
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
+        groups: np.ndarray | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Predict per target on unseen X. Returns
-        ``{target_name: {stage_name: DistributionForecast}}``."""
+        ``{target_name: {node_name: DistributionForecast}}``. Requires the
+        prototype ``wf`` to have ``refit_on_full=True``."""
         if not self._fitted:
             raise RuntimeError(
                 "predict() requires a prior fit_predict() with refit_on_full=True"
             )
         return {
-            name: p.predict(X, ids=ids, timestamps=timestamps)
-            for name, p in self._fitted.items()
+            name: wf.predict(X, ids=ids, timestamps=timestamps, groups=groups)
+            for name, wf in self._fitted.items()
         }
-
-
-def _clone_pipeline(p: ForecastPipeline) -> ForecastPipeline:
-    """Deep-clone a ForecastPipeline: each stage's forecaster gets cloned;
-    constructor params are preserved."""
-    new = ForecastPipeline(
-        cv=p.cv, n_folds=p.n_folds, embargo=p.embargo,
-        calibration_fraction=p.calibration_fraction,
-        refit_on_full=p.refit_on_full,
-        shuffle=p.shuffle, random_state=p.random_state,
-        rolling_window=p.rolling_window,
-    )
-    for stage in p._stages:
-        new._register(stage.name, clone(stage.forecaster))
-    return new

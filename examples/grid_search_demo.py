@@ -10,11 +10,12 @@ Run::
 
 What this script demonstrates:
 
-- ``GridSearch`` with two stage-level params (``qreg__n_estimators`` and
-  ``qreg__learning_rate``) using sklearn's ``__``-nested syntax.
+- ``GridSearch`` over a (model graph, WalkForward) pair with two node-level
+  params (``qreg__n_estimators`` and ``qreg__learning_rate``) using sklearn's
+  ``__``-nested syntax.
 - The result table sorted by CRPS so the user can see the whole landscape,
   not just the winner.
-- ``best_pipeline_`` is a fitted ``ForecastPipeline`` ready for
+- ``best_wf_`` is a fitted ``WalkForward`` (refit_on_full=True) ready for
   ``.predict()`` on new rows — no extra refit needed.
 """
 
@@ -31,7 +32,8 @@ warnings.filterwarnings(
 )
 
 from bracketlearn.baselines import EmpiricalDistribution
-from bracketlearn.pipeline import ForecastPipeline
+from bracketlearn.compose import WalkForward
+from bracketlearn.pipeline import Pipeline
 from bracketlearn.search import GridSearch
 from bracketlearn.trainers import QuantileReg
 
@@ -51,19 +53,18 @@ def main() -> None:
     # "you must beat this" anchor; we'll report the grid winner's skill
     # score against it. Doing this outside the grid avoids re-fitting
     # an identical baseline at every grid point.
-    base_pipeline = ForecastPipeline(
-        steps=[("emp", EmpiricalDistribution())],
-        cv="kfold", n_folds=4, shuffle=True, random_state=0,
-        refit_on_full=False,
+    base_result = WalkForward(
+        cv="kfold", n_folds=4, shuffle=True, random_state=0, refit_on_full=False,
+    ).fit_predict(
+        Pipeline([EmpiricalDistribution()], name="emp"),
+        X, y, ids=ids, timestamps=ts,
     )
-    base_result = base_pipeline.fit_predict(X, y, ids=ids, timestamps=ts)
     baseline_crps = base_result.score(y, metrics=["crps"])["emp"]["crps"]
     print(f"\nbaseline EmpiricalDistribution CRPS = {baseline_crps:.4f}")
 
-    prototype = ForecastPipeline(
-        steps=[("qreg", QuantileReg(random_seed=0))],
-        cv="kfold", n_folds=4, shuffle=True, random_state=0,
-        refit_on_full=True,
+    model = Pipeline([QuantileReg(random_seed=0)], name="qreg")
+    wf = WalkForward(
+        cv="kfold", n_folds=4, shuffle=True, random_state=0, refit_on_full=True,
     )
 
     grid = {
@@ -75,8 +76,8 @@ def main() -> None:
     print(f"\nrunning GridSearch over {n_points} grid points "
           f"({list(grid)}) …")
     search = GridSearch(
-        prototype, param_grid=grid,
-        scoring="crps", refit_stage="qreg",
+        model, wf, param_grid=grid,
+        scoring="crps", refit_node="qreg",
     )
     search.fit(X, y, ids=ids, timestamps=ts)
 
@@ -92,11 +93,11 @@ def main() -> None:
     print(f"baseline    : {baseline_crps:.4f}  (EmpiricalDistribution)")
     print(f"CRPSS       : {1.0 - search.best_score_ / baseline_crps:+.3f}")
 
-    # best_pipeline_ is already fitted on full data (refit_on_full=True).
-    pred = search.best_pipeline_.predict(
+    # best_wf_ is already fitted on full data (refit_on_full=True).
+    pred = search.best_wf_.predict(
         X[:3], ids=np.arange(3), timestamps=np.arange(3, dtype=float),
     )
-    print("\nthree predicted quantile vectors from best_pipeline_:")
+    print("\nthree predicted quantile vectors from best_wf_:")
     qvals = pred["qreg"].qvals       # (3, Q)
     taus = pred["qreg"].taus
     print("  τ:    " + "  ".join(f"{t:.2f}" for t in taus))

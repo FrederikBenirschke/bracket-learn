@@ -1,71 +1,87 @@
-"""GridSearch over ForecastPipeline hyperparameters.
+"""GridSearch over a model graph + WalkForward hyperparameters.
 
-We do *not* reuse ``sklearn.model_selection.GridSearchCV`` because our
-pipeline owns its own time-aware CV (``expanding-window`` / ``rolling-window``
-/ ``kfold``). Sklearn's GridSearchCV would re-split the data with its own
-KFold, which destroys time ordering and silently inflates OOF metrics on
-sequential data.
+We do *not* reuse ``sklearn.model_selection.GridSearchCV`` because our CV is
+time-aware (``expanding-window`` / ``rolling-window`` / ``kfold``, owned by
+`WalkForward`). Sklearn's GridSearchCV would re-split with its own KFold,
+destroying time ordering and silently inflating OOF metrics on sequential
+data.
 
-Instead we expose a small loop that:
+The search takes a **model graph** (a `Pipeline` / `Stacker` / list of them)
+and a **WalkForward** template, kept separate the way the native surface keeps
+model and CV separate. For each combination from ``param_grid`` it:
 
-1. Iterates over every combination from ``param_grid``.
-2. For each combination, clones the prototype pipeline, applies the params
-   via ``set_params`` (sklearn ``__``-nested syntax — e.g.
-   ``emos__sigma_floor=0.5``), runs ``fit_predict``, and scores the chosen
-   stage with the chosen metric.
-3. Returns the best params and a full results table.
+1. deep-copies the model graph and applies any ``node__field`` params to the
+   graph node named ``node`` (sklearn ``__``-nested syntax — e.g.
+   ``qreg__n_estimators=400`` routes into the stage owning ``n_estimators``);
+2. clones the WalkForward template, overriding any CV-level params
+   (``n_folds``, ``cv``, ``embargo``, ``rolling_window``, ``refit_on_full``,
+   ``shuffle``, ``random_state``);
+3. runs ``WalkForward.fit_predict`` and scores the chosen node with the chosen
+   metric.
+
+It returns the best params, the fitted winning ``WalkForward`` (ready for
+``.predict`` when ``refit_on_full=True``), and a full results table.
 
 Usage::
 
-    grid = {
-        "emos__sigma_floor": [0.3, 0.5, 1.0],
-        "n_folds": [3, 5],
-    }
-    search = GridSearch(prototype, param_grid=grid, scoring="crps",
-                       refit_stage="emos")
+    model = Pipeline([QuantileReg()], name="qreg")
+    wf = WalkForward(cv="kfold", n_folds=4, refit_on_full=True)
+    grid = {"qreg__n_estimators": [50, 150, 400], "n_folds": [3, 5]}
+    search = GridSearch(model, wf, param_grid=grid,
+                        scoring="crps", refit_node="qreg")
     search.fit(X, y, ids=ids, timestamps=ts)
-    print(search.best_params_)        # {"emos__sigma_floor": 0.5, "n_folds": 5}
-    print(search.best_score_)         # mean CRPS at that combo
-    print(search.results_)            # list of (params, score) rows
+    print(search.best_params_)      # {"qreg__n_estimators": 400, "n_folds": 5}
+    print(search.best_score_)       # mean CRPS at that combo
+    preds = search.best_wf_.predict(X_new, ids=..., timestamps=...)
 """
 
 from __future__ import annotations
 
+import copy
 import itertools
 from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
 
-from bracketlearn.base import clone
-from bracketlearn.pipeline import ForecastPipeline
+from bracketlearn.compose import WalkForward, _flatten
+from bracketlearn.pipeline import Pipeline
+
+# CV-level params route to the WalkForward clone; everything else must be a
+# ``node__field`` nested key.
+_WF_KEYS = {
+    "cv", "n_folds", "embargo", "refit_on_full", "shuffle", "random_state",
+    "rolling_window",
+}
 
 
 class GridSearch:
-    """Brute-force grid search over a ``ForecastPipeline``'s params.
+    """Brute-force grid search over a model graph + `WalkForward` params.
 
     Args:
-        pipeline: prototype pipeline. Cloned per grid point; never mutated.
-        param_grid: dict mapping param name (or ``stage__param`` nested name)
-            to a list of candidate values.
-        scoring: metric name passed to ``PipelineResult.score``. Must be one
-            of: ``crps``, ``log_score``, ``log_loss_bracket``, ``brier_bracket``.
-            Lower is better for all four — this is a *loss*, not a score.
-        refit_stage: name of the stage whose OOF metric is the objective.
-            If ``None``, the *mean* across all stages is used (rarely useful;
-            usually a single 'final' stage is the comparison target).
+        model: prototype model graph (`Pipeline` / `Stacker` / list). Deep-copied
+            per grid point; never mutated.
+        wf: prototype `WalkForward`. Cloned per grid point; never mutated.
+        param_grid: dict mapping param name to a list of candidate values. Keys
+            are either a CV-level WalkForward arg (``n_folds`` etc.) or a
+            ``node__field`` nested key routed into the graph node named ``node``.
+        scoring: metric name passed to ``PipelineResult.score`` — one of
+            ``crps``, ``log_score``, ``log_loss_bracket``, ``brier_bracket``.
+            Lower is better for all four (this is a *loss*).
+        refit_node: name of the node whose OOF metric is the objective. If
+            ``None``, the *mean* across all nodes is used.
         ladder: required if ``scoring`` is a bracket metric.
-        greater_is_better: defaults to ``False`` since all built-in metrics
-            are losses. Flip if you wire in a custom higher-is-better metric.
+        greater_is_better: defaults to ``False`` (built-in metrics are losses).
     """
 
     def __init__(
         self,
-        pipeline: ForecastPipeline,
+        model: Any,
+        wf: WalkForward,
         *,
         param_grid: dict[str, Sequence[Any]],
         scoring: str = "crps",
-        refit_stage: str | None = None,
+        refit_node: str | None = None,
         ladder: Any = None,
         greater_is_better: bool = False,
     ):
@@ -76,16 +92,18 @@ class GridSearch:
             raise ValueError(f"scoring={scoring!r} not in {_ALLOWED}")
         if scoring in ("log_loss_bracket", "brier_bracket") and ladder is None:
             raise ValueError(f"scoring={scoring!r} requires ladder=...")
-        self.pipeline = pipeline
+        self.model = model
+        self.wf = wf
         self.param_grid = {k: list(v) for k, v in param_grid.items()}
         self.scoring = scoring
-        self.refit_stage = refit_stage
+        self.refit_node = refit_node
         self.ladder = ladder
         self.greater_is_better = greater_is_better
         self.results_: list[dict[str, Any]] = []
         self.best_params_: dict[str, Any] | None = None
         self.best_score_: float | None = None
-        self.best_pipeline_: ForecastPipeline | None = None
+        self.best_model_: Any = None
+        self.best_wf_: WalkForward | None = None
 
     def _iter_grid(self) -> list[dict[str, Any]]:
         keys = list(self.param_grid.keys())
@@ -100,27 +118,28 @@ class GridSearch:
         ids: np.ndarray,
         timestamps: np.ndarray,
         sample_weight: np.ndarray | None = None,
+        groups: np.ndarray | None = None,
     ) -> GridSearch:
         self.results_ = []
         best_score = -np.inf if self.greater_is_better else np.inf
         best_params: dict[str, Any] | None = None
-        best_pipeline: ForecastPipeline | None = None
+        best_model: Any = None
+        best_wf: WalkForward | None = None
 
         for params in self._iter_grid():
-            p = _clone_pipeline_with_params(self.pipeline, params)
-            result = p.fit_predict(
-                X, y, ids=ids, timestamps=timestamps, sample_weight=sample_weight,
+            model, wf = _clone_with_params(self.model, self.wf, params)
+            result = wf.fit_predict(
+                model, X, y, ids=ids, timestamps=timestamps,
+                sample_weight=sample_weight, groups=groups,
             )
-            scores = result.score(
-                y, metrics=[self.scoring], ladder=self.ladder,
-            )
-            if self.refit_stage is not None:
-                if self.refit_stage not in scores:
+            scores = result.score(y, metrics=[self.scoring], ladder=self.ladder)
+            if self.refit_node is not None:
+                if self.refit_node not in scores:
                     raise ValueError(
-                        f"refit_stage={self.refit_stage!r} not in pipeline stages "
+                        f"refit_node={self.refit_node!r} not in graph nodes "
                         f"{list(scores)}"
                     )
-                metric_val = float(scores[self.refit_stage][self.scoring])
+                metric_val = float(scores[self.refit_node][self.scoring])
             else:
                 vals = [
                     s[self.scoring] for s in scores.values()
@@ -128,14 +147,11 @@ class GridSearch:
                 ]
                 if not vals:
                     raise RuntimeError(
-                        f"no stage produced a finite {self.scoring} score; "
-                        "set refit_stage=... explicitly"
+                        f"no node produced a finite {self.scoring} score; "
+                        "set refit_node=... explicitly"
                     )
                 metric_val = float(np.mean(vals))
-            self.results_.append({
-                "params": dict(params),
-                self.scoring: metric_val,
-            })
+            self.results_.append({"params": dict(params), self.scoring: metric_val})
             improved = (
                 metric_val > best_score if self.greater_is_better
                 else metric_val < best_score
@@ -143,56 +159,79 @@ class GridSearch:
             if improved:
                 best_score = metric_val
                 best_params = dict(params)
-                best_pipeline = p
+                best_model = model
+                best_wf = wf
 
         self.best_params_ = best_params
         self.best_score_ = float(best_score) if best_params is not None else None
-        self.best_pipeline_ = best_pipeline
+        self.best_model_ = best_model
+        self.best_wf_ = best_wf
         return self
 
 
-def _clone_pipeline_with_params(
-    prototype: ForecastPipeline, params: dict[str, Any],
-) -> ForecastPipeline:
-    """Clone the prototype, then route each param to the right level:
-    keys without ``__`` (or starting with a recognised pipeline ctor arg)
-    set pipeline-level params; keys like ``stage__field`` route into the
-    stage's forecaster.
+def _clone_with_params(
+    model: Any, wf: WalkForward, params: dict[str, Any],
+) -> tuple[Any, WalkForward]:
+    """Deep-copy ``model`` + clone ``wf``, then route each param to its level.
 
-    Pipeline-level params recognised: ``cv``, ``n_folds``, ``embargo``,
-    ``calibration_fraction``, ``refit_on_full``, ``shuffle``,
-    ``random_state``, ``rolling_window``.
+    ``node__field`` keys set ``field`` on the graph node named ``node`` (for a
+    `Pipeline` node, on the single stage that owns ``field``); bare keys in
+    ``_WF_KEYS`` override the WalkForward clone. Anything else raises.
     """
-    pipeline_keys = {
-        "cv", "n_folds", "embargo", "calibration_fraction", "refit_on_full",
-        "shuffle", "random_state", "rolling_window",
-    }
-    pipeline_params: dict[str, Any] = {}
-    stage_params: dict[str, dict[str, Any]] = {}
+    wf_overrides: dict[str, Any] = {}
+    node_params: dict[str, dict[str, Any]] = {}
     for k, v in params.items():
         if "__" in k:
             head, _, tail = k.partition("__")
-            stage_params.setdefault(head, {})[tail] = v
-        elif k in pipeline_keys:
-            pipeline_params[k] = v
+            node_params.setdefault(head, {})[tail] = v
+        elif k in _WF_KEYS:
+            wf_overrides[k] = v
         else:
             raise ValueError(
-                f"param {k!r} is neither a pipeline ctor arg nor a "
-                f"stage-nested key (use 'stage_name__field' form)"
+                f"param {k!r} is neither a WalkForward arg ({sorted(_WF_KEYS)}) "
+                f"nor a node-nested key (use 'node_name__field' form)"
             )
 
-    base_kwargs = dict(
-        cv=prototype.cv, n_folds=prototype.n_folds, embargo=prototype.embargo,
-        calibration_fraction=prototype.calibration_fraction,
-        refit_on_full=prototype.refit_on_full,
-        shuffle=prototype.shuffle, random_state=prototype.random_state,
-        rolling_window=prototype.rolling_window,
+    new_model = copy.deepcopy(model)
+    if node_params:
+        nodes_by_name = {n["name"]: n["obj"] for n in _flatten(new_model)}
+        for node_name, fields in node_params.items():
+            if node_name not in nodes_by_name:
+                raise ValueError(
+                    f"param targets node {node_name!r}, not in graph nodes "
+                    f"{sorted(nodes_by_name)}"
+                )
+            for field, value in fields.items():
+                _set_node_field(nodes_by_name[node_name], node_name, field, value)
+
+    wf_kwargs = dict(
+        cv=wf.cv, n_folds=wf.n_folds, embargo=wf.embargo,
+        refit_on_full=wf.refit_on_full, shuffle=wf.shuffle,
+        random_state=wf.random_state, rolling_window=wf.rolling_window,
     )
-    base_kwargs.update(pipeline_params)
-    new = ForecastPipeline(**base_kwargs)
-    for stage in prototype._stages:
-        cloned = clone(stage.forecaster)
-        if stage.name in stage_params:
-            cloned.set_params(**stage_params[stage.name])
-        new._register(stage.name, cloned)
-    return new
+    wf_kwargs.update(wf_overrides)
+    return new_model, WalkForward(**wf_kwargs)
+
+
+def _set_node_field(obj: Any, node_name: str, field: str, value: Any) -> None:
+    """Set ``field=value`` on a graph node's underlying estimator.
+
+    For a `Pipeline` node the field is routed to the single stage that exposes
+    it (ambiguity or absence raises loud, per Rule #0.5). For a bare forecaster
+    or a `Stacker` meta the field is set directly.
+    """
+    if isinstance(obj, Pipeline):
+        owners = [s for s in obj.stages if field in s.get_params(deep=False)]
+        if not owners:
+            raise ValueError(
+                f"node {node_name!r}: no stage exposes param {field!r} "
+                f"(stages: {[type(s).__name__ for s in obj.stages]})"
+            )
+        if len(owners) > 1:
+            raise ValueError(
+                f"node {node_name!r}: param {field!r} is exposed by "
+                f"{len(owners)} stages — ambiguous"
+            )
+        owners[0].set_params(**{field: value})
+    else:
+        obj.set_params(**{field: value})

@@ -46,8 +46,9 @@ from _style import (
     predicted_vs_realized_grid,
 )
 from bracketlearn.baselines import EmpiricalDistribution
+from bracketlearn.compose import WalkForward
 from bracketlearn.lift import GlobalResidual
-from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster
+from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster, Pipeline
 from bracketlearn.score import to_point
 from bracketlearn.search import GridSearch
 from bracketlearn.trainers import (
@@ -86,10 +87,9 @@ print(f"baseline Empirical CRPS = {baseline_crps:.4f}")
 # ## Grid: 3 × 3 over (n_estimators, learning_rate)
 
 # %%
-prototype = ForecastPipeline(
-    steps=[("qreg", QuantileReg(random_seed=0))],
-    cv="kfold", n_folds=4, shuffle=True, random_state=0,
-    refit_on_full=True,
+model = Pipeline([QuantileReg(random_seed=0)], name="qreg")
+wf = WalkForward(
+    cv="kfold", n_folds=4, shuffle=True, random_state=0, refit_on_full=True,
 )
 n_est_grid = [50, 150, 400]
 lr_grid = [0.03, 0.1, 0.2]
@@ -99,8 +99,8 @@ grid = {
 }
 print(f"running GridSearch over {len(n_est_grid) * len(lr_grid)} points …")
 search = GridSearch(
-    prototype, param_grid=grid,
-    scoring="crps", refit_stage="qreg",
+    model, wf, param_grid=grid,
+    scoring="crps", refit_node="qreg",
 )
 search.fit(X, y, ids=ids, timestamps=ts)
 print(f"best: {search.best_params_}  CRPS={search.best_score_:.4f}")
@@ -181,12 +181,12 @@ plt.show()
 # %% [markdown]
 # ## Predicted vs realized — best pipeline on a held-out slice
 #
-# `best_pipeline_` is already refit on the full training data. Predict
+# `best_wf_` is already refit on the full training data. Predict
 # on a held-out 200-row slice and show the headline scatter.
 
 # %%
 test_idx = rng.choice(X.shape[0], size=200, replace=False)
-pred = search.best_pipeline_.predict(
+pred = search.best_wf_.predict(
     X[test_idx], ids=np.arange(test_idx.size),
     timestamps=np.arange(test_idx.size, dtype=float),
 )["qreg"]

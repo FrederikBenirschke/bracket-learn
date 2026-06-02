@@ -1,4 +1,4 @@
-"""Save and load fitted ``ForecastPipeline`` / ``PipelineResult`` instances.
+"""Save and load fitted ``WalkForward`` / ``PipelineResult`` instances.
 
 bracketlearn objects pickle natively — every trainer's fitted state is
 plain numpy arrays plus picklable third-party models (sklearn,
@@ -20,12 +20,12 @@ Usage::
 
     from bracketlearn.persistence import save, load
 
-    save(pipeline, "ridge_emos_qreg.pkl", note="prod-2026-05")
+    save(wf, "ridge_emos_qreg.pkl", note="prod-2026-05")   # fitted WalkForward
     loaded = load("ridge_emos_qreg.pkl")
     new_dists = loaded.predict(X_new, ids=..., timestamps=...)
 
-Both ``ForecastPipeline`` and ``PipelineResult`` are accepted — anything
-picklable, really. The envelope is identical.
+A fitted ``WalkForward`` (refit_on_full=True), a ``PipelineResult``, or any
+other picklable object are all accepted — the envelope is identical.
 
 Security note: ``pickle`` executes arbitrary code on load. Only load
 artefacts you produced yourself or that came from a trusted source.
@@ -56,7 +56,7 @@ def save(obj: Any, path: str | Path, *, note: str | None = None) -> None:
     """Pickle ``obj`` to ``path`` with a bracketlearn-version envelope.
 
     Args:
-        obj: any picklable object — typically a fitted ``ForecastPipeline``
+        obj: any picklable object — typically a fitted ``WalkForward``
             or a ``PipelineResult``.
         path: filesystem path. Parent directories are not created.
         note: optional free-text note stored in the envelope (e.g. the

@@ -5,24 +5,26 @@ Run:
 
 Trainers exercising the major code paths:
 
+Composition is the native surface: each model is a `Pipeline` (chain) or a
+`Stacker` (parallel combiner over upstream objects); the whole list is run by
+one `WalkForward` (the CV/OOF driver). Names are leaderboard labels only.
+
 Tier 1 (parametric / mixture backings):
-  - ridge            — LiftedForecaster(SklearnPoint(RidgeCV) + GlobalResidual)
-  - lin_ols          — LiftedForecaster(SklearnPoint(LinearRegression) + GlobalResidual);
-                       same shape as `ridge` with α=0, written out explicitly
-                       since the prior `market_ols()` factory was misleading
-                       (no market knowledge in bracketlearn) and was removed.
+  - ridge            — Pipeline([SklearnPoint(RidgeCV), GlobalResidual])
+  - lin_ols          — Pipeline([SklearnPoint(LinearRegression), GlobalResidual]);
+                       same shape as `ridge` with α=0, written out explicitly.
   - emos             — native parametric-normal DistForecaster
-  - emos_calibrated  — CalibratedForecaster(EMOS, Isotonic(edges))
+  - emos_calibrated  — Pipeline([EMOS, Isotonic(edges)])
   - ngboost          — non-linear EMOS via NGBoost (native parametric normal)
   - mixture          — per-vendor Gaussian mixture (native parametric mixture)
-  - stack            — StackedParametric meta-learner over (ridge, emos)
+  - stack            — Stacker([ridge, emos], StackedParametric())
 
 Tier 2 (quantile / bracket backings, conformal calibration, tail specialist):
   - qreg             — LightGBM per-τ quantile heads (quantile-backed)
-  - qreg_conformal   — qreg + ConformalCalibrate (per-τ offsets)
+  - qreg_conformal   — Pipeline([QuantileReg, ConformalCalibrate])
   - qforest          — Random Forest quantile regression (quantile-backed)
   - cumbin           — cumulative-binary classifier (bracket-backed)
-  - tail_specialist  — EMOS body + LightGBM tail classifiers (bracket-backed)
+  - tail_specialist  — Stacker([emos], TailSpecialist()): EMOS body + LightGBM tails
 
 Tier 3 (online aggregation):
   - online_agg       — sleeping-experts AdaHedge over the K columns of X,
@@ -49,8 +51,9 @@ warnings.filterwarnings(
 from sklearn.linear_model import LinearRegression
 
 from bracketlearn.adapters import BracketLadder
+from bracketlearn.compose import Stacker, WalkForward
 from bracketlearn.lift import ConformalCalibrate, GlobalResidual
-from bracketlearn.pipeline import CalibratedForecaster, ForecastPipeline, LiftedForecaster
+from bracketlearn.pipeline import Pipeline
 from bracketlearn.trainers import (
     EMOS,
     CumulativeBinary,
@@ -108,46 +111,54 @@ def main() -> None:
     outer_edges_by_id = {int(i): (float(edges[0]), float(edges[-1])) for i in ids}
     brackets_by_id = {int(i): edges for i in ids}
 
-    pipeline = ForecastPipeline(
-        steps=[
-            # Tier 1
-            ("ridge",           ridge()),
-            ("lin_ols",         LiftedForecaster(
-                                    base=SklearnPoint(LinearRegression()),
-                                    lifter=GlobalResidual(),
-                                    name="lin_ols")),
-            ("emos",            EMOS()),
-            ("emos_calibrated", emos_calibrated(edges=edges)),
-            ("ngboost",         NGBoostNormal(n_estimators=200, learning_rate=0.02, random_seed=0)),
-            ("mixture",         MixtureNormals()),
-            ("stack",           StackedParametric(deps=("ridge", "emos"))),
-            # Tier 2
-            ("qreg",            QuantileReg(n_estimators=100, random_seed=0)),
-            ("qreg_conformal",  CalibratedForecaster(
-                                    QuantileReg(n_estimators=100, random_seed=0),
-                                    ConformalCalibrate(),
-                                    name="qreg_conformal")),
-            ("qforest",         QuantileForest(n_estimators=200, random_seed=0)),
-            ("cumbin",          CumulativeBinary(
-                                    cutpoints_by_id=cutpoints_by_id,
-                                    outer_edges_by_id=outer_edges_by_id,
-                                )),
-            ("tail_specialist", TailSpecialist(
-                                    brackets_by_id=brackets_by_id, upstream="emos",
-                                )),
-            # Tier 3
-            ("online_agg",      LiftedForecaster(
-                                    base=OnlineAggregator(min_experts=2),
-                                    lifter=GlobalResidual(),
-                                    name="online_agg")),
-        ],
-        cv="expanding-window",
-        n_folds=4,
-        embargo=0,
+    # Tier 1 — names are leaderboard labels; ``ridge()`` / ``emos_calibrated()``
+    # already return named Pipelines. ``emos`` is reused by two combiners
+    # (stack, tail_specialist) — the SAME object, so it is fit once per fold.
+    ridge_node = ridge()
+    lin_ols = Pipeline(
+        [SklearnPoint(LinearRegression()), GlobalResidual()], name="lin_ols",
+    )
+    emos = Pipeline([EMOS()], name="emos")
+    emos_cal = emos_calibrated(edges=edges)
+    ngboost = Pipeline(
+        [NGBoostNormal(n_estimators=200, learning_rate=0.02, random_seed=0)],
+        name="ngboost",
+    )
+    mixture = Pipeline([MixtureNormals()], name="mixture")
+    stack = Stacker([ridge_node, emos], StackedParametric(), name="stack")
+    # Tier 2
+    qreg = Pipeline([QuantileReg(n_estimators=100, random_seed=0)], name="qreg")
+    qreg_conformal = Pipeline(
+        [QuantileReg(n_estimators=100, random_seed=0), ConformalCalibrate()],
+        name="qreg_conformal",
+    )
+    qforest = Pipeline(
+        [QuantileForest(n_estimators=200, random_seed=0)], name="qforest",
+    )
+    cumbin = Pipeline(
+        [CumulativeBinary(
+            cutpoints_by_id=cutpoints_by_id, outer_edges_by_id=outer_edges_by_id,
+        )],
+        name="cumbin",
+    )
+    tail_specialist = Stacker(
+        [emos], TailSpecialist(brackets_by_id=brackets_by_id),
+        name="tail_specialist",
+    )
+    # Tier 3
+    online_agg = Pipeline(
+        [OnlineAggregator(min_experts=2), GlobalResidual()], name="online_agg",
     )
 
-    print(f"\nfitting pipeline (5-fold expanding window, {len(pipeline._stages)} stages)...")
-    result = pipeline.fit_predict(X, y, ids=ids, timestamps=ts)
+    model = [
+        ridge_node, lin_ols, emos, emos_cal, ngboost, mixture, stack,
+        qreg, qreg_conformal, qforest, cumbin, tail_specialist, online_agg,
+    ]
+
+    print(f"\nfitting (4-fold expanding window, {len(model)} models)...")
+    result = WalkForward(
+        cv="expanding-window", n_folds=4, embargo=0,
+    ).fit_predict(model, X, y, ids=ids, timestamps=ts)
     print(f"got OOF dists for: {result.stages}")
 
     print("\n[distribution metrics]")

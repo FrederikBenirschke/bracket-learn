@@ -14,8 +14,8 @@ ties ``EmpiricalDistribution``, the features aren't predictive.
   output. Trivial on i.i.d. data, surprisingly strong on autocorrelated
   series — use it to spot autocorrelation you weren't modelling.
 
-Both inherit ``BaseEstimator`` so they slot into ``ForecastPipeline``
-unchanged.
+Both inherit ``BaseEstimator`` so they slot into a ``Pipeline`` (run under
+``WalkForward``) unchanged.
 """
 
 from __future__ import annotations

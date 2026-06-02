@@ -916,25 +916,26 @@ def test_tail_specialist_positional_upstream_matches_deps_oof():
 
 
 def test_ridge_factory_emits_distforecaster_via_lift():
+    from bracketlearn.compose import WalkForward
+    from bracketlearn.pipeline import Pipeline
     from bracketlearn.trainers import ridge
     X, y, ids, ts = _synthetic()
     r = ridge()
-    # ridge() returns a LiftedForecaster. The lifter needs OOF residuals,
-    # so we fit the base directly via the wrapper's exposed path.
-    # Simpler integration: use it inside a one-step ForecastPipeline.
-    from bracketlearn.pipeline import ForecastPipeline
-    p = ForecastPipeline(steps=[("ridge", r)], n_folds=3, refit_on_full=False)
-    result = p.fit_predict(X, y, ids=ids, timestamps=ts)
-    d = result["ridge"]
-    assert isinstance(d, NormalForecast)
+    # ridge() returns a self-contained Pipeline([SklearnPoint(Ridge), Lift]).
+    assert isinstance(r, Pipeline)
+    assert r.name == "ridge"
+    result = WalkForward(n_folds=3, refit_on_full=False).fit_predict(
+        r, X, y, ids=ids, timestamps=ts,
+    )
+    assert isinstance(result["ridge"], NormalForecast)
 
 
-def test_emos_calibrated_factory_returns_calibrated_forecaster():
-    from bracketlearn.pipeline import CalibratedForecaster
+def test_emos_calibrated_factory_returns_pipeline():
+    from bracketlearn.pipeline import Pipeline
     from bracketlearn.trainers import emos_calibrated
     edges = np.linspace(0, 20, 7)
     ec = emos_calibrated(edges=edges)
-    assert isinstance(ec, CalibratedForecaster)
+    assert isinstance(ec, Pipeline)
     assert ec.name == "emos_calibrated"
 
 
