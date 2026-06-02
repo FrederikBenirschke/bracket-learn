@@ -877,6 +877,39 @@ def test_tail_specialist_emits_bracket_with_classifier_tails():
     assert np.all(out.probs >= 0)
 
 
+def test_tail_specialist_positional_upstream_matches_deps_oof():
+    """Positional upstream=[dist] reproduces legacy deps_oof={'emos': dist}."""
+    _skip_if_missing("lightgbm")
+    from bracketlearn.trainers import EMOS, TailSpecialist
+
+    rng = np.random.default_rng(0)
+    N, k = 300, 4
+    X = rng.normal(0, 1, (N, k))
+    y = X.mean(axis=1) + rng.normal(0, 1.0, N)
+    emos = EMOS().fit(X, y)
+    emos_dist = emos.predict_dist(X, ids=np.arange(N), timestamps=np.arange(N, dtype=float))
+    edges = np.array([-10.0, -2.0, -1.0, 0.0, 1.0, 2.0, 10.0])
+    ids_arr = np.arange(N)
+    brackets_by_id = {int(i): edges for i in ids_arr}
+    ts_kw = dict(brackets_by_id=brackets_by_id, n_estimators=30)
+
+    legacy = TailSpecialist(upstream="emos", **ts_kw)
+    legacy.fit(X, y, ids=ids_arr, deps_oof={"emos": emos_dist})
+    pos = TailSpecialist(**ts_kw)
+    pos.fit(X, y, ids=ids_arr, upstream=[emos_dist])
+    with pytest.warns(UserWarning, match="TailSpecialist"):
+        out_l = legacy.predict_dist(
+            X, ids=ids_arr, timestamps=np.arange(N, dtype=float),
+            deps_oof={"emos": emos_dist},
+        )
+    with pytest.warns(UserWarning, match="TailSpecialist"):
+        out_p = pos.predict_dist(
+            X, ids=ids_arr, timestamps=np.arange(N, dtype=float),
+            upstream=[emos_dist],
+        )
+    np.testing.assert_allclose(out_l.probs, out_p.probs, rtol=1e-12, atol=1e-12)
+
+
 # ---------------------------------------------------------------------------
 # Factories (audit §6.T1) — ridge / emos_calibrated.
 # ---------------------------------------------------------------------------

@@ -314,3 +314,26 @@ class TestCDFBoostBracket:
         )
         with pytest.raises(ValueError, match="deps_oof"):
             node.fit(np.zeros((5, 1)), np.zeros(5), ids=np.arange(5), deps_oof={"a": None})
+
+    def test_positional_upstream_matches_deps_oof(self, prov, ids_ts):
+        """The Stacker positional contract (upstream=[...], no deps names)
+        reproduces the legacy name-keyed deps_oof path bit-for-bit."""
+        _skip_if_no_lightgbm()
+        ids, ts = ids_ts(120)
+        rng = np.random.default_rng(7)
+        X = rng.normal(0, 1, (120, 3))
+        y = X.mean(axis=1) + rng.normal(0, 0.5, 120)
+        d_a = _normal_dist(X.mean(axis=1), np.full(120, 1.0), prov, ids, ts)
+        d_b = _normal_dist(X.mean(axis=1) + 0.5, np.full(120, 1.5), prov, ids, ts)
+        edges = np.array([-3.0, -1.0, 0.0, 1.0, 3.0])
+        brackets_by_id = {int(k): edges for k in ids}
+        kw = dict(n_estimators=30, num_leaves=7, min_child_samples=5)
+        # Legacy: deps names + deps_oof.
+        legacy = CDFBoostBracket(deps=("a", "b"), brackets_by_id=brackets_by_id, **kw)
+        legacy.fit(X, y, ids=ids, deps_oof={"a": d_a, "b": d_b})
+        out_l = legacy.predict_dist(X, ids=ids, timestamps=ts, deps_oof={"a": d_a, "b": d_b})
+        # Positional: no deps, upstream list in declared order.
+        pos = CDFBoostBracket(brackets_by_id=brackets_by_id, **kw)
+        pos.fit(X, y, ids=ids, upstream=[d_a, d_b])
+        out_p = pos.predict_dist(X, ids=ids, timestamps=ts, upstream=[d_a, d_b])
+        np.testing.assert_allclose(out_l.probs, out_p.probs, rtol=1e-12, atol=1e-12)

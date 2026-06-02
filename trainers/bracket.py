@@ -29,6 +29,7 @@ from bracketlearn.trainers._common import (
     _estimator_accepts_sample_weight,
     _validate_brackets_by_id,
 )
+from bracketlearn.trainers._compose_util import resolve_upstream
 
 # ---------------------------------------------------------------------------
 # CumulativeBinary — one classifier on (X ⊕ cutpoint) → 1[y ≤ cutpoint].
@@ -312,13 +313,16 @@ class TailSpecialist(BaseEstimator):
         ids: np.ndarray,
         sample_weight: np.ndarray | None = None,
         deps_oof: dict[str, Any] | None = None,
+        upstream: list[Any] | None = None,
     ) -> Self:
         import lightgbm as lgb
 
-        if not deps_oof or self.upstream not in deps_oof:
-            raise ValueError(
-                f"TailSpecialist.fit needs deps_oof[{self.upstream!r}]"
-            )
+        # Validate an upstream is present (fit reads only X/y; the body
+        # Gaussian is consumed at predict time). Accepts the positional
+        # ``Stacker`` contract or legacy name-keyed ``deps_oof``.
+        resolve_upstream(
+            self.depends_on, deps_oof, upstream, where="TailSpecialist.fit",
+        )
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
         ids = np.asarray(ids)
@@ -362,21 +366,21 @@ class TailSpecialist(BaseEstimator):
         ids: np.ndarray,
         timestamps: np.ndarray,
         deps_oof: dict[str, Any] | None = None,
+        upstream: list[Any] | None = None,
     ) -> DistributionForecast:
         if self.clf_lo_ is None:
             raise RuntimeError("TailSpecialist.predict_dist called before fit")
-        if not deps_oof or self.upstream not in deps_oof:
-            raise ValueError(
-                f"TailSpecialist.predict_dist needs deps_oof[{self.upstream!r}]"
-            )
-        upstream = deps_oof[self.upstream]
+        up_dist = resolve_upstream(
+            self.depends_on, deps_oof, upstream,
+            where="TailSpecialist.predict_dist",
+        )[0]
         ids = np.asarray(ids)
         timestamps = np.asarray(timestamps)
         X = np.asarray(X, dtype=float)
         N = X.shape[0]
         per_row_edges = self._row_edges(ids)
         # Discretise upstream on each row's grid via integrate().
-        body = upstream.integrate(per_row_edges)            # BracketForecast
+        body = up_dist.integrate(per_row_edges)             # BracketForecast
         body_probs = body.probs                              # (N, B_max), NaN-padded
         body_edges = body.edges                              # (N, B_max+1)
         B_per_row = (~np.isnan(body_probs)).sum(axis=1).astype(int)
@@ -631,8 +635,8 @@ class CDFBoostBracket(BaseEstimator):
       - CumulativeBinary:  single classifier with cutpoint augmentation
     """
 
-    deps: tuple[str, ...]
     brackets_by_id: dict[Any, np.ndarray]
+    deps: tuple[str, ...] = ()
     n_estimators: int = 200
     learning_rate: float = 0.05
     num_leaves: int = 15
@@ -642,8 +646,8 @@ class CDFBoostBracket(BaseEstimator):
     clfs_: list[Any] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
-        if not self.deps:
-            raise ValueError("CDFBoostBracket requires at least one upstream dep")
+        # ``deps`` may be empty under the positional ``Stacker`` contract —
+        # the upstream count is resolved at fit from ``upstream=[...]``.
         if not isinstance(self.brackets_by_id, dict) or not self.brackets_by_id:
             raise ValueError(
                 "CDFBoostBracket needs a non-empty brackets_by_id dict "
@@ -678,14 +682,14 @@ class CDFBoostBracket(BaseEstimator):
         self,
         X: np.ndarray | None,
         ids: np.ndarray,
-        deps_oof: dict[str, Any],
+        ups: list[Any],
     ) -> np.ndarray:
         # Per-row CDF of each upstream dist evaluated at the row's own
         # edges. cdf_at_grid returns (N, B+1) for a (N, B+1) edge array.
         per_row_edges = np.stack(
             [np.asarray(self.brackets_by_id[k], dtype=float) for k in ids], axis=0,
         )                                                # (N, B+1)
-        cols = [deps_oof[name].cdf_at_grid(per_row_edges) for name in self.depends_on]
+        cols = [d.cdf_at_grid(per_row_edges) for d in ups]
         Z = np.column_stack(cols)                        # (N, K * (B+1))
         if self.include_raw_X:
             if X is None:
@@ -704,17 +708,16 @@ class CDFBoostBracket(BaseEstimator):
         ids: np.ndarray,
         sample_weight: np.ndarray | None = None,
         deps_oof: dict[str, Any] | None = None,
+        upstream: list[Any] | None = None,
     ) -> Self:
         import lightgbm as lgb
 
-        if not deps_oof or set(self.depends_on) - set(deps_oof):
-            raise ValueError(
-                f"CDFBoostBracket.fit needs deps_oof for {self.depends_on}; "
-                f"got {list(deps_oof or [])}"
-            )
+        ups = resolve_upstream(
+            self.depends_on, deps_oof, upstream, where="CDFBoostBracket.fit",
+        )
         y = np.asarray(y, dtype=float)
         ids = np.asarray(ids)
-        Z = self._featurize(X, ids, deps_oof)
+        Z = self._featurize(X, ids, ups)
         B = self._B
         # Per-row bin assignment of y under each row's own edges.
         N = y.shape[0]
@@ -754,16 +757,17 @@ class CDFBoostBracket(BaseEstimator):
         ids: np.ndarray,
         timestamps: np.ndarray,
         deps_oof: dict[str, Any] | None = None,
+        upstream: list[Any] | None = None,
     ) -> DistributionForecast:
         if not self.clfs_:
             raise RuntimeError("CDFBoostBracket.predict_dist called before fit")
-        if not deps_oof or set(self.depends_on) - set(deps_oof):
-            raise ValueError(
-                f"CDFBoostBracket.predict_dist needs deps_oof for {self.depends_on}"
-            )
+        ups = resolve_upstream(
+            self.depends_on, deps_oof, upstream,
+            where="CDFBoostBracket.predict_dist",
+        )
         ids = np.asarray(ids)
         timestamps = np.asarray(timestamps)
-        Z = self._featurize(X, ids, deps_oof)
+        Z = self._featurize(X, ids, ups)
         N = Z.shape[0]
         B = len(self.clfs_)
         probs = np.empty((N, B))
