@@ -317,6 +317,208 @@ def _crps_nelder_mead_loss(
 
 
 # ---------------------------------------------------------------------------
+# HeteroscedasticNormal — distributional linear regression. Both the mean
+# and the (log) scale of a Normal are linear functions of arbitrary feature
+# columns. Generalises EMOS (which is the special case μ-features=[ens_mean],
+# σ-features=[ens_std]) to any predictors — cloud, wind, dewpoint, spread, …
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class HeteroscedasticNormal(BaseEstimator):
+    r"""Distributional linear regression for a Normal: ``N(μ(x), σ(x)²)``.
+
+    Both moments are linear functions of (selectable) feature columns, fit
+    jointly by maximum likelihood::
+
+        μ(x)      = β_μ0 + xμ · β_μ
+        log σ(x)  = β_σ0 + xσ · β_σ           (log link → σ > 0 always)
+
+    where ``xμ = X[:, mu_idx]`` and ``xσ = X[:, sigma_idx]`` select which
+    columns of the shared design matrix ``X`` drive the mean vs the scale
+    (the two sets may overlap — e.g. cloud cover in both). When ``mu_idx`` /
+    ``sigma_idx`` are ``None`` every column drives that moment.
+
+    This is the parametric, interpretable counterpart to ``NGBoostNormal``
+    (which boosts μ̂/σ̂ non-linearly) and the feature-driven generalisation
+    of ``EMOS`` (whose mean is hard-wired to ``ens_mean`` and whose scale is
+    hard-wired to ``ens_std``). Setting ``mu_idx=(i_mean,)`` and
+    ``sigma_idx=(i_logstd,)`` recovers EMOS's modelling philosophy — affine
+    mean, spread-driven scale — but now cloud / wind / dewpoint can enter
+    *either* moment as additional columns. The coefficients are readable:
+    each ``β_σ`` is the multiplicative log-scale response to its feature.
+
+    Fit details:
+
+    * **NLL.** Minimises the Gaussian negative log-likelihood
+      ``Σ wᵢ·(log σᵢ + ½·zᵢ²)``, ``zᵢ = (yᵢ − μᵢ)/σᵢ`` (the constant
+      ``½log 2π`` is dropped). ``sample_weight`` reweights rows.
+    * **Optimiser.** L-BFGS-B with the analytic gradient
+      ``∂/∂β_μ = −Aμᵀ(w·(y−μ)/σ²)`` and ``∂/∂β_σ = Aσᵀ(w·(1−z²))``.
+      Initialised from an OLS mean fit + a constant log-scale at the
+      residual std. Non-convergence raises (Rule #0.5 — no silent
+      return of the init).
+    * **Standardisation.** Columns are standardised (mean/std stored from
+      fit, reused at predict) so the optimiser is well-conditioned across
+      features on different scales. Predictions are invariant to this.
+    * **Ridge.** ``l2 > 0`` adds an L2 penalty on the non-intercept
+      coefficients of *both* heads — the low-N overfit guard.
+    * **σ floor.** ``sigma_floor`` clamps σ̂ at predict time only (the
+      log link already keeps it positive; the floor bounds confidence).
+
+    Per Rule #0.5: non-finite ``X``/``y`` raise rather than being imputed
+    here — the caller decides how to handle missing features.
+    """
+
+    mu_idx: tuple[int, ...] | None = None
+    sigma_idx: tuple[int, ...] | None = None
+    l2: float = 0.0
+    sigma_floor: float = 1e-3
+    standardize: bool = True
+    maxiter: int = 5000
+    name: str = "HeteroscedasticNormal"
+    depends_on: tuple[str, ...] = ()
+    beta_mu_: np.ndarray | None = field(default=None, init=False)
+    beta_sigma_: np.ndarray | None = field(default=None, init=False)
+    _x_mean_: np.ndarray | None = field(default=None, init=False)
+    _x_std_: np.ndarray | None = field(default=None, init=False)
+    _mu_idx_: tuple[int, ...] | None = field(default=None, init=False)
+    _sigma_idx_: tuple[int, ...] | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        if self.l2 < 0:
+            raise ValueError(f"HeteroscedasticNormal: l2 must be ≥ 0; got {self.l2}")
+        if self.sigma_floor <= 0:
+            raise ValueError(
+                f"HeteroscedasticNormal: sigma_floor must be > 0; got {self.sigma_floor}"
+            )
+
+    def _resolve_idx(self, F: int) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        mu_idx = tuple(range(F)) if self.mu_idx is None else tuple(self.mu_idx)
+        sig_idx = tuple(range(F)) if self.sigma_idx is None else tuple(self.sigma_idx)
+        for name, idx in (("mu_idx", mu_idx), ("sigma_idx", sig_idx)):
+            bad = [i for i in idx if not (0 <= i < F)]
+            if bad:
+                raise ValueError(
+                    f"HeteroscedasticNormal: {name} {bad} out of range for "
+                    f"X with {F} columns"
+                )
+            if not idx:
+                raise ValueError(
+                    f"HeteroscedasticNormal: {name} is empty — each moment "
+                    f"needs at least its intercept's companion feature set "
+                    f"(pass at least one column)"
+                )
+        return mu_idx, sig_idx
+
+    def _designs(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        Xs = (X - self._x_mean_) / self._x_std_
+        ones = np.ones((X.shape[0], 1))
+        Amu = np.column_stack([ones, Xs[:, self._mu_idx_]])
+        Asig = np.column_stack([ones, Xs[:, self._sigma_idx_]])
+        return Amu, Asig
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        sample_weight: np.ndarray | None = None,
+        deps_oof: dict[str, Any] | None = None,
+    ) -> Self:
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        if X.ndim != 2:
+            raise ValueError(
+                f"HeteroscedasticNormal.fit: X must be 2-D; got shape {X.shape}"
+            )
+        if not np.all(np.isfinite(X)):
+            raise ValueError(
+                "HeteroscedasticNormal.fit: X has non-finite entries — impute "
+                "or drop upstream; this estimator does not guess (Rule #0.5)"
+            )
+        if not np.all(np.isfinite(y)):
+            raise ValueError("HeteroscedasticNormal.fit: y has non-finite entries")
+        N, F = X.shape
+        self._mu_idx_, self._sigma_idx_ = self._resolve_idx(F)
+
+        if self.standardize:
+            xm = X.mean(axis=0)
+            xs = X.std(axis=0)
+            xs = np.where(xs > 0, xs, 1.0)  # constant column → no scaling
+        else:
+            xm = np.zeros(F)
+            xs = np.ones(F)
+        self._x_mean_, self._x_std_ = xm, xs
+
+        Amu, Asig = self._designs(X)
+        kmu, ksig = Amu.shape[1], Asig.shape[1]
+        w = (np.ones(N) if sample_weight is None
+             else np.asarray(sample_weight, dtype=float))
+
+        # Init: OLS mean, constant log-scale at residual std.
+        beta_mu0, *_ = np.linalg.lstsq(Amu, y, rcond=None)
+        resid = y - Amu @ beta_mu0
+        log_s0 = math.log(max(float(np.std(resid)), 1e-3))
+        beta_sig0 = np.zeros(ksig)
+        beta_sig0[0] = log_s0
+        p0 = np.concatenate([beta_mu0, beta_sig0])
+
+        def nll_and_grad(p: np.ndarray) -> tuple[float, np.ndarray]:
+            bmu = p[:kmu]
+            bsig = p[kmu:]
+            mu = Amu @ bmu
+            eta = Asig @ bsig
+            sigma = np.exp(eta)
+            z = (y - mu) / sigma
+            nll = float(np.sum(w * (eta + 0.5 * z ** 2)))
+            gmu = -Amu.T @ (w * (y - mu) / sigma ** 2)
+            gsig = Asig.T @ (w * (1.0 - z ** 2))
+            if self.l2 > 0:
+                nll += self.l2 * (float(bmu[1:] @ bmu[1:]) + float(bsig[1:] @ bsig[1:]))
+                gmu[1:] += 2.0 * self.l2 * bmu[1:]
+                gsig[1:] += 2.0 * self.l2 * bsig[1:]
+            return nll, np.concatenate([gmu, gsig])
+
+        res = minimize(
+            nll_and_grad, p0, jac=True, method="L-BFGS-B",
+            options={"maxiter": self.maxiter},
+        )
+        if not res.success:
+            raise RuntimeError(
+                f"HeteroscedasticNormal.fit: optimiser did not converge "
+                f"({res.message}); refusing to return the unfit init (Rule #0.5)"
+            )
+        self.beta_mu_ = res.x[:kmu]
+        self.beta_sigma_ = res.x[kmu:]
+        return self
+
+    def predict_dist(
+        self,
+        X: np.ndarray,
+        *,
+        ids: np.ndarray,
+        timestamps: np.ndarray,
+    ) -> DistributionForecast:
+        if self.beta_mu_ is None:
+            raise RuntimeError("HeteroscedasticNormal.predict_dist called before fit")
+        X = np.asarray(X, dtype=float)
+        if not np.all(np.isfinite(X)):
+            raise ValueError(
+                "HeteroscedasticNormal.predict_dist: X has non-finite entries — "
+                "impute or drop upstream (Rule #0.5)"
+            )
+        Amu, Asig = self._designs(X)
+        mu = Amu @ self.beta_mu_
+        sigma = np.maximum(np.exp(Asig @ self.beta_sigma_), self.sigma_floor)
+        prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
+        return DistributionForecast.from_normal(
+            mu, sigma, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
+            provenance=prov,
+        )
+
+
+# ---------------------------------------------------------------------------
 # StackedParametric — DistForecaster with depends_on. Parametric meta-learner
 # over upstream μ (and optionally σ). Legacy name ``Stacking`` aliased below.
 # ---------------------------------------------------------------------------

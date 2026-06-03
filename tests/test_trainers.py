@@ -24,6 +24,7 @@ from bracketlearn.trainers import (
     EMOS,
     BayesianRidge,
     BMAStacking,
+    HeteroscedasticNormal,
     MixtureNormals,
     OnlineAggregator,
     SklearnPoint,
@@ -65,6 +66,58 @@ def test_emos_emits_parametric_normal():
     assert isinstance(d, NormalForecast)
     assert d.params["mu"].shape == (X.shape[0],)
     assert np.all(d.params["sigma"] > 0)
+
+
+def test_heteroscedastic_normal_emits_parametric_normal():
+    X, y, ids, ts = _synthetic()
+    h = HeteroscedasticNormal().fit(X, y)
+    d = h.predict_dist(X, ids=ids, timestamps=ts)
+    assert isinstance(d, NormalForecast)
+    assert d.params["mu"].shape == (X.shape[0],)
+    assert np.all(d.params["sigma"] > 0)
+
+
+def test_heteroscedastic_normal_recovers_feature_driven_scale():
+    """Column 0 drives the mean, column 1 drives the (log) scale.
+
+    The fitted σ̂ must track the true feature-driven scale — the property
+    EMOS (scale ← ens_std only) and homoscedastic regressions cannot model.
+    """
+    rng = np.random.default_rng(0)
+    n = 3000
+    x_mean = rng.normal(0, 1, n)
+    x_scale = rng.uniform(0, 1, n)
+    true_mu = 2.0 + 3.0 * x_mean
+    true_sigma = np.exp(0.0 + 1.2 * x_scale)
+    y = true_mu + true_sigma * rng.standard_normal(n)
+    X = np.column_stack([x_mean, x_scale])
+
+    h = HeteroscedasticNormal().fit(X, y)
+    d = h.predict_dist(X, ids=np.arange(n), timestamps=np.zeros(n))
+    mu, sigma = d.params["mu"], d.params["sigma"]
+    assert np.corrcoef(mu, true_mu)[0, 1] > 0.99
+    assert np.corrcoef(sigma, true_sigma)[0, 1] > 0.95
+
+
+def test_heteroscedastic_normal_head_selection():
+    """mu_idx / sigma_idx route columns to the right moment; out-of-range raises."""
+    X, y, ids, ts = _synthetic(k=3)
+    h = HeteroscedasticNormal(mu_idx=(0, 1), sigma_idx=(2,)).fit(X, y)
+    d = h.predict_dist(X, ids=ids, timestamps=ts)
+    # μ head has intercept + 2 features; σ head intercept + 1.
+    assert h.beta_mu_.shape == (3,)
+    assert h.beta_sigma_.shape == (2,)
+    assert np.all(d.params["sigma"] > 0)
+    with pytest.raises(ValueError, match="out of range"):
+        HeteroscedasticNormal(mu_idx=(0, 9)).fit(X, y)
+
+
+def test_heteroscedastic_normal_rejects_nonfinite():
+    X, y, ids, ts = _synthetic()
+    X_bad = X.copy()
+    X_bad[0, 0] = np.nan
+    with pytest.raises(ValueError, match="non-finite"):
+        HeteroscedasticNormal().fit(X_bad, y)
 
 
 def test_bayesian_ridge_emits_parametric_student_t():

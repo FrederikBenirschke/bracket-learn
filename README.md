@@ -325,9 +325,42 @@ a length-N sequence of 1-D arrays (NaN-padded internally). Each row
 is renormalised to sum to 1; rows that land entirely outside the
 distribution's support raise (no silent uniform fabrication).
 
+### Estimator families
+
+The trainers group into six families by **what they model**. Pick the
+family by the shape of the signal you have; within a family the members
+trade off linearity, priors, and compute.
+
+| Family | Estimators | What it models |
+|---|---|---|
+| **Point** | `SklearnPoint`, `OnlineAggregator`, `RNNHourly` | a single μ̂ per row; lift to a distribution with a residual σ (or a calibration stage) |
+| **Parametric distribution** | `EMOS`, `HeteroscedasticNormal`, `NGBoostNormal`, `MixtureNormals`, `BayesianRidge`, `HierarchicalNormal` | a closed-form density (Normal / mixture) whose moments are functions of the features |
+| **Quantile / non-parametric** | `QuantileReg`, `QuantileForest` | a quantile function / empirical CDF — no distributional shape assumed |
+| **Bracket-native** | `CumulativeBinary`, `TailSpecialist`, `CDFBoostBracket` (+ the `BracketExpander` entry point) | bracket / cutpoint indicators directly on each row's own grid |
+| **Stacking / combiners** | `StackedParametric` (alias `Stacking`), `BMAStacking`, `BracketStacking`, `LinearPoolDist`, `DistAsFeatures` | a combination of upstream forecasts (parametric meta-learner, Bayesian average, opinion pool) |
+| **Baselines** | `Persistence`, `PersistenceDist`, `EmpiricalDistribution` | reference forecasts to beat; plus convenience factories `ridge`, `emos_calibrated` |
+
+Within the **parametric** family the mean/variance flexibility ladder is
+the thing to know:
+
+- `EMOS` — affine mean in `ens_mean`, scale a fixed function of `ens_std`.
+  Two hard-wired inputs.
+- `HeteroscedasticNormal` — the feature-driven generalisation: `μ = Xμ·βμ`,
+  `log σ = Xσ·βσ`, so *any* columns (cloud, wind, dewpoint, spread, …) can
+  drive **both** the location and the width, with readable linear
+  coefficients. `EMOS` is the special case `Xμ=[ens_mean]`,
+  `Xσ=[ens_std]`.
+- `NGBoostNormal` — same `(μ̂, σ̂)`-from-features target as
+  `HeteroscedasticNormal` but gradient-boosted (non-linear, higher
+  variance at low N, not interpretable).
+- `MixtureNormals` — multimodal, for bi-/multi-modal outcomes.
+- `BayesianRidge` / `HierarchicalNormal` — conjugate priors / cross-site
+  partial pooling for small samples.
+
 ### Distribution-first vs bracket-aware trainers
 
-Two fundamentally different trainer families:
+Orthogonal to the families above, trainers split by **fit interface** into
+two modes:
 
 - **Distribution-first** (`EMOS`, `NGBoostNormal`, `MixtureNormals`,
   `QuantileReg`, `QuantileForest`, `StackedParametric` (alias
@@ -449,6 +482,12 @@ print(gs.best_params_, gs.best_score_)
 ```
 
 ## Status
+
+Unreleased — `HeteroscedasticNormal` added to the parametric family:
+distributional linear regression with a feature-driven mean **and**
+feature-driven (log) scale (`μ = Xμ·βμ`, `log σ = Xσ·βσ`), fit by MLE.
+The interpretable generalisation of `EMOS` and linear counterpart to
+`NGBoostNormal`. See the Estimator-families table above.
 
 v0.6.0 — `Backing` / `ParametricFamily` enums removed along with the
 `DistributionForecast.backing` / `.family` properties. The enums were
