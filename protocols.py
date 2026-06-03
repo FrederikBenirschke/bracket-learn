@@ -54,7 +54,6 @@ class PointForecaster(Forecaster, Protocol):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> Self:
         ...
@@ -82,7 +81,6 @@ class DistForecaster(Forecaster, Protocol):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> Self:
         ...

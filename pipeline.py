@@ -188,7 +188,7 @@ def _fit_with_optional_weight(
 
     Drops ``sample_weight`` if not supported (online-learning trainers like
     ``OnlineAggregator`` and pure-sequence trainers like ``RNNHourly``).
-    Also drops other extras (``ids``, ``timestamps``, ``deps_oof``) that
+    Also drops other extras (``ids``, ``timestamps``, ``groups``) that
     a particular trainer doesn't declare — keeps callers free to pass the
     full row-alignment context without worrying about each trainer's API.
 
@@ -225,7 +225,7 @@ def _predict_with_extras(
     ts: np.ndarray,
     **extra: Any,
 ) -> DistributionForecast:
-    """Call predict_dist threading any extras (``deps_oof``, ``groups``, …)
+    """Call predict_dist threading any extras (``groups``, …)
     that the forecaster's signature declares.
 
     Signature-based introspection — never a bare ``except TypeError``,

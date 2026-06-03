@@ -60,7 +60,6 @@ class EmpiricalDistribution(BaseEstimator):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
     ) -> Self:
         y = np.asarray(y, dtype=float)
         taus = np.asarray(self.taus, dtype=float)
@@ -137,7 +136,6 @@ class Persistence(BaseEstimator):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
     ) -> Self:
         if self.lag < 1:
             raise ValueError(f"lag must be >= 1; got {self.lag}")
@@ -200,7 +198,6 @@ class PersistenceDist(BaseEstimator):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
     ) -> Self:
         if self.lag < 1:
             raise ValueError(f"lag must be >= 1; got {self.lag}")

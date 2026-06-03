@@ -85,7 +85,6 @@ class QuantileReg(BaseEstimator):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
     ) -> Self:
         import lightgbm as lgb
 
@@ -160,7 +159,6 @@ class QuantileForest(BaseEstimator):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
     ) -> Self:
         from quantile_forest import RandomForestQuantileRegressor
 

@@ -143,7 +143,6 @@ class EMOS(BaseEstimator):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
     ) -> Self:
         y = np.asarray(y, dtype=float)
         ens_mean, ens_var, ens_std = self._row_aggregates(X)
@@ -424,7 +423,6 @@ class HeteroscedasticNormal(BaseEstimator):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
     ) -> Self:
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
@@ -1152,7 +1150,6 @@ class BayesianRidge(BaseEstimator):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
     ) -> Self:
         y = np.asarray(y, dtype=float)
         A = self._design(X, fit_phase=True)
@@ -1423,7 +1420,6 @@ class HierarchicalNormal(BaseEstimator):
         *,
         groups: np.ndarray | None = None,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
     ) -> Self:
         if groups is None:
             raise ValueError(
@@ -1608,7 +1604,6 @@ class NGBoostNormal(BaseEstimator):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
     ) -> Self:
         from ngboost import NGBRegressor
         from ngboost.distns import Normal
@@ -1707,7 +1702,6 @@ class MixtureNormals(BaseEstimator):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
     ) -> Self:
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)

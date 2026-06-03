@@ -154,7 +154,6 @@ class CumulativeBinary(BaseEstimator):
         *,
         ids: np.ndarray,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
     ) -> Self:
         import lightgbm as lgb
 

@@ -53,7 +53,6 @@ class SklearnPoint(BaseEstimator):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
     ) -> Self:
         # Record input signature BEFORE np.asarray strips the columns
         # attribute (sklearn convention: feature_names_in_ from DataFrame).
@@ -140,7 +139,6 @@ class OnlineAggregator(BaseEstimator):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
         groups: np.ndarray | None = None,
     ) -> Self:
         X = np.asarray(X, dtype=float)
@@ -421,7 +419,6 @@ class RNNHourly(BaseEstimator):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
         station_ids: np.ndarray | None = None,
     ) -> Self:
         import os
