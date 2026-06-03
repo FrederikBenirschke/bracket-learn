@@ -13,7 +13,7 @@ Run::
 
 What this script demonstrates:
 
-- ``LiftedForecaster(SklearnPoint(RidgeCV()), GlobalResidual())`` —
+- ``Pipeline([SklearnPoint(RidgeCV()), GlobalResidual()])`` —
   a sklearn regressor lifted to a parametric-normal distribution.
 - ``QuantileReg`` — LightGBM per-τ heads; quantile-backed distribution
   that captures heteroscedasticity ridge cannot.
@@ -37,8 +37,9 @@ warnings.filterwarnings(
 
 from bracketlearn.adapters import BracketLadder
 from bracketlearn.baselines import EmpiricalDistribution
+from bracketlearn.compose import WalkForward
 from bracketlearn.lift import GlobalResidual
-from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster
+from bracketlearn.pipeline import Pipeline
 from bracketlearn.trainers import QuantileReg, SklearnPoint
 
 
@@ -69,21 +70,20 @@ def main() -> None:
           f"${edges[0]*100:.0f}k to ${edges[-1]*100:.0f}k "
           f"(outer bins absorb tail mass)")
 
-    print("fitting pipeline (kfold, 5 folds) …")
-    pipeline = ForecastPipeline(
-        steps=[
-            # Baseline: marginal-y distribution, ignores X.
-            ("emp", EmpiricalDistribution()),
-            ("ridge", LiftedForecaster(
-                SklearnPoint(RidgeCV()), GlobalResidual(), name="ridge",
-            )),
-            ("qreg", QuantileReg(n_estimators=200, learning_rate=0.05,
-                                 random_seed=0)),
-        ],
-        cv="kfold", n_folds=5, shuffle=True, random_state=0,
-        refit_on_full=True,
+    print("fitting (kfold, 5 folds) …")
+    model = [
+        # Baseline: marginal-y distribution, ignores X.
+        Pipeline([EmpiricalDistribution()], name="emp"),
+        Pipeline([SklearnPoint(RidgeCV()), GlobalResidual()], name="ridge"),
+        Pipeline(
+            [QuantileReg(n_estimators=200, learning_rate=0.05, random_seed=0)],
+            name="qreg",
+        ),
+    ]
+    wf = WalkForward(
+        cv="kfold", n_folds=5, shuffle=True, random_state=0, refit_on_full=True,
     )
-    result = pipeline.fit_predict(X, y, ids=ids, timestamps=ts)
+    result = wf.fit_predict(model, X, y, ids=ids, timestamps=ts)
 
     print("\n=== distribution-level OOF metrics ===")
     print(result.to_table(y, metrics=["crps", "log_score", "pit"]))
@@ -113,8 +113,8 @@ def main() -> None:
                       in zip(edges[:-1], edges[1:], strict=True)]
     header = "  ".join(f"{lbl:>11}" for lbl in bracket_labels)
     print(f"{'stage / row':<24}{header}")
-    pred = pipeline.predict(X[:3], ids=np.arange(3),
-                            timestamps=np.arange(3, dtype=float))
+    pred = wf.predict(X[:3], ids=np.arange(3),
+                      timestamps=np.arange(3, dtype=float))
     B = edges.shape[0] - 1
     for stage_name, dist in pred.items():
         contracts = ladder.price(dist)

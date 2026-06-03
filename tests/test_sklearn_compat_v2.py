@@ -35,10 +35,8 @@ def test_top_level_estimator_imports():
         # lifters / calibrators
         "GlobalResidual", "StudentTResidual", "GARCHResidual",
         "Isotonic", "ConformalCalibrate",
-        # composites
-        "LiftedForecaster", "CalibratedForecaster",
-        # pipeline + search
-        "ForecastPipeline", "PipelineResult", "GridSearch",
+        # composition + search
+        "Pipeline", "Stacker", "WalkForward", "PipelineResult", "GridSearch",
         # adapters
         "BracketLadder",
         "BinaryAbove", "BinaryBelow", "Twin", "ThresholdLadder",

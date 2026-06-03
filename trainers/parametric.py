@@ -1,8 +1,8 @@
 """Native parametric-distribution forecasters.
 
 EMOS, NGBoostNormal, MixtureNormals (parametric normal / mixture);
-StackedParametric (parametric meta-learner with depends_on; legacy
-name ``Stacking`` is preserved as a module-level alias for back-compat).
+StackedParametric (parametric meta-learner over positional ``upstream=``;
+legacy name ``Stacking`` is preserved as a module-level alias for back-compat).
 """
 
 from __future__ import annotations
@@ -328,9 +328,7 @@ class StackedParametric(BaseEstimator):
 
     Defaults reproduce v0.1 ``Stacking`` behaviour exactly: OLS over
     upstream μ with intercept (unconstrained), constant σ̂ from residual
-    std, Gaussian output. The optional knobs below widen the surface;
-    nothing changes for existing ``StackedParametric(deps=...)`` (or
-    legacy-alias ``Stacking(deps=...)``) callers.
+    std, Gaussian output. The optional knobs below widen the surface.
 
     ``weight_constraint``:
         * ``"unconstrained"`` (default) — OLS with intercept; μ-weights
@@ -362,19 +360,17 @@ class StackedParametric(BaseEstimator):
           equals σ̂² regardless of ν.
 
     Upstream forecasts arrive **positionally** via ``upstream=[dist, ...]``
-    (the clean ``Stacker`` contract) — this reads ``.params['mu']`` (and
+    (the ``Stacker`` contract) — this reads ``.params['mu']`` (and
     ``['sigma']`` when ``sigma_method='geometric_mean_upstream'``) from each,
-    in order. Legacy callers may instead pass name-keyed
-    ``deps_oof={name: dist}`` with ``deps=(names...)`` declared; both resolve
-    to the same ordered list via ``resolve_upstream``.
+    in declared order.
     """
 
-    deps: tuple[str, ...] = ()
     name: str = "StackedParametric"
     weight_constraint: Literal["unconstrained", "convex"] = "unconstrained"
     sigma_method: Literal["constant", "geometric_mean_upstream"] = "constant"
     dist_family: Literal["normal", "student_t"] = "normal"
     student_t_df: float = 5.0
+    depends_on: tuple[str, ...] = ()
     weights_: np.ndarray | None = field(default=None, init=False)
     intercept_: float | None = field(default=None, init=False)
     sigma_: float | None = field(default=None, init=False)
@@ -382,7 +378,6 @@ class StackedParametric(BaseEstimator):
     sigma_log_weights_: np.ndarray | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
-        self.depends_on = tuple(self.deps)
         if self.weight_constraint not in ("unconstrained", "convex"):
             raise ValueError(
                 f"StackedParametric.weight_constraint must be 'unconstrained' or "
@@ -411,12 +406,9 @@ class StackedParametric(BaseEstimator):
         *,
         ids: np.ndarray | None = None,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
         upstream: list[Any] | None = None,
     ) -> Self:
-        ups = resolve_upstream(
-            self.depends_on, deps_oof, upstream, where="StackedParametric.fit",
-        )
+        ups = resolve_upstream(upstream, where="StackedParametric.fit")
         y = np.asarray(y, dtype=float)
         # Stack upstream μ predictions row-aligned. We REQUIRE that each
         # upstream dist's .ids matches our (X, y) row order (no silent
@@ -426,7 +418,7 @@ class StackedParametric(BaseEstimator):
         # mis-zipped predictions).
         upstream_ids = None
         for i, d in enumerate(ups):
-            label = upstream_label(self.depends_on, i)
+            label = upstream_label(i)
             if not isinstance(d, _PARAMETRIC_BACKINGS):
                 raise NotImplementedError(
                     f"StackedParametric expects parametric upstream; "
@@ -569,7 +561,7 @@ class StackedParametric(BaseEstimator):
     ) -> list[np.ndarray]:
         cols: list[np.ndarray] = []
         for i, d in enumerate(ups):
-            label = upstream_label(self.depends_on, i)
+            label = upstream_label(i)
             if "sigma" not in d.params:
                 raise ValueError(
                     f"StackedParametric({where}, sigma_method='geometric_mean_upstream'): "
@@ -594,15 +586,11 @@ class StackedParametric(BaseEstimator):
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
-        deps_oof: dict[str, Any] | None = None,
         upstream: list[Any] | None = None,
     ) -> DistributionForecast:
         # At predict time, the driver must have re-run the upstream stages
-        # on the current X; it passes their dist positionally (or by name).
-        ups = resolve_upstream(
-            self.depends_on, deps_oof, upstream,
-            where="StackedParametric.predict_dist",
-        )
+        # on the current X; it passes their dist positionally.
+        ups = resolve_upstream(upstream, where="StackedParametric.predict_dist")
         # Row-alignment check: each upstream's ids must match the caller's ids
         # exactly (no silent misalignment).
         ids_arr = np.asarray(ids)
@@ -610,7 +598,7 @@ class StackedParametric(BaseEstimator):
             if not np.array_equal(d.ids, ids_arr):
                 raise ValueError(
                     f"StackedParametric.predict_dist: upstream "
-                    f"{upstream_label(self.depends_on, i)}.ids does not "
+                    f"{upstream_label(i)}.ids does not "
                     f"match caller ids — rows would be misaligned"
                 )
         cols = [d.params["mu"] for d in ups]
@@ -696,17 +684,16 @@ class BMAStacking(BaseEstimator):
       unconstrained OLS coefficients).
     """
 
-    deps: tuple[str, ...] = ()
     alpha_prior: float = 1.0
     max_iter: int = 500
     tol: float = 1e-6
     name: str = "BMAStacking"
+    depends_on: tuple[str, ...] = ()
     weights_: np.ndarray | None = field(default=None, init=False)
     alpha_n_: np.ndarray | None = field(default=None, init=False)
     n_iter_: int | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
-        self.depends_on = tuple(self.deps)
         if self.alpha_prior <= 0:
             raise ValueError(
                 f"BMAStacking: alpha_prior must be > 0 (got {self.alpha_prior}); "
@@ -743,12 +730,9 @@ class BMAStacking(BaseEstimator):
         *,
         ids: np.ndarray | None = None,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
         upstream: list[Any] | None = None,
     ) -> Self:
-        ups = resolve_upstream(
-            self.depends_on, deps_oof, upstream, where="BMAStacking.fit",
-        )
+        ups = resolve_upstream(upstream, where="BMAStacking.fit")
         y = np.asarray(y, dtype=float)
         N = y.shape[0]
         # Row-alignment guard. Same contract as Stacking — upstream ids
@@ -759,7 +743,7 @@ class BMAStacking(BaseEstimator):
                 upstream_ids = d.ids
             elif not np.array_equal(upstream_ids, d.ids):
                 raise ValueError(
-                    f"BMAStacking.fit: upstream {upstream_label(self.depends_on, i)}.ids "
+                    f"BMAStacking.fit: upstream {upstream_label(i)}.ids "
                     "does not match the first upstream's ids — mixture rows would be misaligned"
                 )
         if (
@@ -777,7 +761,7 @@ class BMAStacking(BaseEstimator):
         sigma = np.empty((N, K))
         for j, d in enumerate(ups):
             mu[:, j], sigma[:, j] = self._upstream_moments(
-                d, N, upstream_label(self.depends_on, j),
+                d, N, upstream_label(j),
             )
         # Likelihood matrix L_ik = N(y_i; μ_{k,i}, σ_{k,i}).
         z = (y[:, None] - mu) / sigma
@@ -840,22 +824,18 @@ class BMAStacking(BaseEstimator):
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
-        deps_oof: dict[str, Any] | None = None,
         upstream: list[Any] | None = None,
     ) -> DistributionForecast:
         if self.weights_ is None:
             raise RuntimeError("BMAStacking.predict_dist called before fit")
-        ups = resolve_upstream(
-            self.depends_on, deps_oof, upstream,
-            where="BMAStacking.predict_dist",
-        )
+        ups = resolve_upstream(upstream, where="BMAStacking.predict_dist")
         ids_arr = np.asarray(ids)
         N = ids_arr.shape[0]
         for i, d in enumerate(ups):
             if not np.array_equal(d.ids, ids_arr):
                 raise ValueError(
                     f"BMAStacking.predict_dist: upstream "
-                    f"{upstream_label(self.depends_on, i)}.ids does "
+                    f"{upstream_label(i)}.ids does "
                     "not match caller ids — mixture rows would be misaligned"
                 )
         K = len(ups)
@@ -863,7 +843,7 @@ class BMAStacking(BaseEstimator):
         sigma = np.empty((N, K))
         for j, d in enumerate(ups):
             mu[:, j], sigma[:, j] = self._upstream_moments(
-                d, N, upstream_label(self.depends_on, j),
+                d, N, upstream_label(j),
             )
         weights = np.broadcast_to(self.weights_, (N, K)).copy()
         prov = ProvenanceMeta.placeholder(self.name, sigma_source="native")
@@ -1105,10 +1085,10 @@ class HierarchicalNormal(BaseEstimator):
     identifier per row (str or int). Features are standardised before
     fit (with stored stats reused at predict time).
 
-    Pipeline integration: this trainer needs ``groups`` at both fit
-    and predict time, which the current ``ForecastPipeline`` does not
-    thread. Use standalone or wrap it with a pipeline that propagates
-    the array. Closed-form fit; no MCMC.
+    Pipeline integration: this trainer needs ``groups`` at both fit and
+    predict time. ``WalkForward`` threads ``groups`` through to any node whose
+    signature declares it; run standalone or as a ``Pipeline`` node under
+    ``WalkForward(...).fit_predict(..., groups=...)``. Closed-form fit; no MCMC.
 
     Computational shortcut: per-site Σ_s = σ²·I + τ²·X_s X_sᵀ is a
     rank-K perturbation of σ²·I, so by Woodbury we only invert K×K

@@ -249,9 +249,9 @@ class TailSpecialist(BaseEstimator):
     """Gaussian body (from upstream EMOS μ̂/σ̂) + LightGBM tail classifiers,
     on per-row brackets.
 
-    depends_on a parametric-normal upstream (typically named ``emos``)
-    and a per-row bracket ladder via ``brackets_by_id`` (id → 1-D edge
-    array). Fits two global binary classifiers — one for "y in row's
+    Takes a single parametric-normal upstream (positionally, via the
+    ``Stacker`` contract) and a per-row bracket ladder via ``brackets_by_id``
+    (id → 1-D edge array). Fits two global binary classifiers — one for "y in row's
     first bracket" and one for "y in row's last bracket" — and at
     predict time replaces each row's first/last bin mass with the
     classifier outputs, rescaling the middle bins to (1 - p_lo - p_hi).
@@ -271,17 +271,16 @@ class TailSpecialist(BaseEstimator):
     """
 
     brackets_by_id: dict[Any, np.ndarray]
-    upstream: str = "emos"
     n_estimators: int = 200
     learning_rate: float = 0.05
     num_leaves: int = 15
     min_child_samples: int = 20
     name: str = "TailSpecialist"
+    depends_on: tuple[str, ...] = ()
     clf_lo_: Any = field(default=None, init=False)
     clf_hi_: Any = field(default=None, init=False)
 
     def __post_init__(self) -> None:
-        self.depends_on = (self.upstream,)
         if not isinstance(self.brackets_by_id, dict) or not self.brackets_by_id:
             raise ValueError(
                 "TailSpecialist needs a non-empty brackets_by_id dict "
@@ -312,17 +311,13 @@ class TailSpecialist(BaseEstimator):
         *,
         ids: np.ndarray,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
         upstream: list[Any] | None = None,
     ) -> Self:
         import lightgbm as lgb
 
         # Validate an upstream is present (fit reads only X/y; the body
-        # Gaussian is consumed at predict time). Accepts the positional
-        # ``Stacker`` contract or legacy name-keyed ``deps_oof``.
-        resolve_upstream(
-            self.depends_on, deps_oof, upstream, where="TailSpecialist.fit",
-        )
+        # Gaussian is consumed at predict time).
+        resolve_upstream(upstream, where="TailSpecialist.fit")
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
         ids = np.asarray(ids)
@@ -365,14 +360,12 @@ class TailSpecialist(BaseEstimator):
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
-        deps_oof: dict[str, Any] | None = None,
         upstream: list[Any] | None = None,
     ) -> DistributionForecast:
         if self.clf_lo_ is None:
             raise RuntimeError("TailSpecialist.predict_dist called before fit")
         up_dist = resolve_upstream(
-            self.depends_on, deps_oof, upstream,
-            where="TailSpecialist.predict_dist",
+            upstream, where="TailSpecialist.predict_dist",
         )[0]
         ids = np.asarray(ids)
         timestamps = np.asarray(timestamps)
@@ -464,27 +457,28 @@ class LinearPoolDist(BaseEstimator):
     et al., 2006) — left as a v0.2 optimisation.
     """
 
-    deps: tuple[str, ...]
     n_samples: int = 200
     name: str = "LinearPoolDist"
+    depends_on: tuple[str, ...] = ()
     weights_: np.ndarray | None = field(default=None, init=False)
-
-    def __post_init__(self) -> None:
-        if len(self.deps) < 2:
-            raise ValueError(
-                f"LinearPoolDist needs ≥2 upstream deps; got {self.deps}"
-            )
-        self.depends_on = tuple(self.deps)
 
     def _sample_grid(self) -> np.ndarray:
         # Mid-rank τ grid in (0, 1); excludes endpoints so parametric-normal
         # tails don't blow up to ±inf.
         return (np.arange(self.n_samples) + 0.5) / self.n_samples
 
-    def _component_samples(self, deps_oof: dict[str, Any]) -> np.ndarray:
+    def _resolve(self, upstream: list[Any] | None, *, where: str) -> list[Any]:
+        ups = resolve_upstream(upstream, where=where)
+        if len(ups) < 2:
+            raise ValueError(
+                f"{where}: LinearPoolDist needs ≥2 upstreams; got {len(ups)}"
+            )
+        return ups
+
+    def _component_samples(self, ups: list[Any]) -> np.ndarray:
         """Return (K, N, n_samples) sample tensor from upstream ppfs."""
         taus = self._sample_grid()
-        cols = [deps_oof[name].ppf(taus) for name in self.depends_on]
+        cols = [d.ppf(taus) for d in ups]
         return np.stack(cols, axis=0)
 
     @staticmethod
@@ -534,17 +528,13 @@ class LinearPoolDist(BaseEstimator):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
+        upstream: list[Any] | None = None,
     ) -> Self:
         from scipy.optimize import minimize
 
-        if not deps_oof or set(self.depends_on) - set(deps_oof):
-            raise ValueError(
-                f"LinearPoolDist.fit needs deps_oof for {self.depends_on}; "
-                f"got {list(deps_oof or [])}"
-            )
+        ups = self._resolve(upstream, where="LinearPoolDist.fit")
         y = np.asarray(y, dtype=float)
-        comp_samples = self._component_samples(deps_oof)
+        comp_samples = self._component_samples(ups)
         K = comp_samples.shape[0]
         w0 = np.full(K, 1.0 / K)
         bounds = [(0.0, 1.0)] * K
@@ -569,17 +559,14 @@ class LinearPoolDist(BaseEstimator):
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
-        deps_oof: dict[str, Any] | None = None,
+        upstream: list[Any] | None = None,
     ) -> DistributionForecast:
         from bracketlearn.forecast import TailPolicy, TailRule
 
         if self.weights_ is None:
             raise RuntimeError("LinearPoolDist.predict_dist called before fit")
-        if not deps_oof or set(self.depends_on) - set(deps_oof):
-            raise ValueError(
-                f"LinearPoolDist.predict_dist needs deps_oof for {self.depends_on}"
-            )
-        comp_samples = self._component_samples(deps_oof)        # (K, N, S)
+        ups = self._resolve(upstream, where="LinearPoolDist.predict_dist")
+        comp_samples = self._component_samples(ups)        # (K, N, S)
         K, N, S = comp_samples.shape
         stacked = comp_samples.transpose(1, 0, 2).reshape(N, K * S)
         sample_w = np.repeat(self.weights_, S) / S
@@ -613,8 +600,9 @@ class CDFBoostBracket(BaseEstimator):
     """B LightGBM binary classifiers over upstream-CDF features.
 
     Construction
-        - ``edges`` (B+1,): bracket ladder. B = ``len(edges) - 1`` bins.
-        - ``deps``: K upstream DistForecaster names.
+        - ``brackets_by_id``: id → 1-D edge array (B = len(edges) - 1 bins,
+          uniform across rows).
+        - K upstream DistForecasters arrive positionally via ``upstream=[...]``.
 
     Feature matrix per row (passed to all B heads): the CDF of each upstream
     dist evaluated at every ladder edge → shape ``(K * (B+1),)``. Optionally
@@ -636,18 +624,17 @@ class CDFBoostBracket(BaseEstimator):
     """
 
     brackets_by_id: dict[Any, np.ndarray]
-    deps: tuple[str, ...] = ()
     n_estimators: int = 200
     learning_rate: float = 0.05
     num_leaves: int = 15
     min_child_samples: int = 20
     include_raw_X: bool = False
     name: str = "CDFBoostBracket"
+    depends_on: tuple[str, ...] = ()
     clfs_: list[Any] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
-        # ``deps`` may be empty under the positional ``Stacker`` contract —
-        # the upstream count is resolved at fit from ``upstream=[...]``.
+        # The upstream count is resolved at fit from ``upstream=[...]``.
         if not isinstance(self.brackets_by_id, dict) or not self.brackets_by_id:
             raise ValueError(
                 "CDFBoostBracket needs a non-empty brackets_by_id dict "
@@ -676,7 +663,6 @@ class CDFBoostBracket(BaseEstimator):
                 f"CumulativeBinary for ragged B."
             )
         self._B = next(iter(Bs))
-        self.depends_on = tuple(self.deps)
 
     def _featurize(
         self,
@@ -707,14 +693,11 @@ class CDFBoostBracket(BaseEstimator):
         *,
         ids: np.ndarray,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
         upstream: list[Any] | None = None,
     ) -> Self:
         import lightgbm as lgb
 
-        ups = resolve_upstream(
-            self.depends_on, deps_oof, upstream, where="CDFBoostBracket.fit",
-        )
+        ups = resolve_upstream(upstream, where="CDFBoostBracket.fit")
         y = np.asarray(y, dtype=float)
         ids = np.asarray(ids)
         Z = self._featurize(X, ids, ups)
@@ -756,15 +739,11 @@ class CDFBoostBracket(BaseEstimator):
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
-        deps_oof: dict[str, Any] | None = None,
         upstream: list[Any] | None = None,
     ) -> DistributionForecast:
         if not self.clfs_:
             raise RuntimeError("CDFBoostBracket.predict_dist called before fit")
-        ups = resolve_upstream(
-            self.depends_on, deps_oof, upstream,
-            where="CDFBoostBracket.predict_dist",
-        )
+        ups = resolve_upstream(upstream, where="CDFBoostBracket.predict_dist")
         ids = np.asarray(ids)
         timestamps = np.asarray(timestamps)
         Z = self._featurize(X, ids, ups)

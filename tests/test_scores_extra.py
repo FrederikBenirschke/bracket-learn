@@ -19,8 +19,9 @@ from datetime import datetime
 import numpy as np
 import pytest
 
+from bracketlearn.compose import WalkForward
 from bracketlearn.forecast import DistributionForecast, ProvenanceMeta, TailPolicy, TailRule
-from bracketlearn.pipeline import ForecastPipeline
+from bracketlearn.pipeline import Pipeline
 from bracketlearn.score import (
     crps_gaussian,
     crps_mixture_normal,
@@ -247,24 +248,23 @@ def _signal_dataset(n=200, seed=0):
 class TestPipelineNoMoreNaN:
     def test_mixture_crps_is_finite(self):
         X, y, ids, ts = _signal_dataset()
-        p = ForecastPipeline(
-            steps=[("mix", MixtureNormals())],
-            cv="kfold", n_folds=3, shuffle=True, random_state=0,
-            refit_on_full=False,
+        result = WalkForward(
+            cv="kfold", n_folds=3, shuffle=True, random_state=0, refit_on_full=False,
+        ).fit_predict(
+            Pipeline([MixtureNormals()], name="mix"), X, y, ids=ids, timestamps=ts,
         )
-        result = p.fit_predict(X, y, ids=ids, timestamps=ts)
         s = result.score(y, metrics=["crps", "log_score"])
         assert np.isfinite(s["mix"]["crps"])
         assert np.isfinite(s["mix"]["log_score"])
 
     def test_quantile_log_score_is_finite(self):
         X, y, ids, ts = _signal_dataset()
-        p = ForecastPipeline(
-            steps=[("qreg", QuantileReg(n_estimators=40, random_seed=0))],
-            cv="kfold", n_folds=3, shuffle=True, random_state=0,
-            refit_on_full=False,
+        result = WalkForward(
+            cv="kfold", n_folds=3, shuffle=True, random_state=0, refit_on_full=False,
+        ).fit_predict(
+            Pipeline([QuantileReg(n_estimators=40, random_seed=0)], name="qreg"),
+            X, y, ids=ids, timestamps=ts,
         )
-        result = p.fit_predict(X, y, ids=ids, timestamps=ts)
         s = result.score(y, metrics=["crps", "log_score"])
         assert np.isfinite(s["qreg"]["crps"])
         assert np.isfinite(s["qreg"]["log_score"])

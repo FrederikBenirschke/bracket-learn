@@ -18,8 +18,9 @@ import numpy as np
 import pytest
 
 from bracketlearn.baselines import EmpiricalDistribution, Persistence, PersistenceDist
+from bracketlearn.compose import WalkForward
 from bracketlearn.lift import GlobalResidual
-from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster
+from bracketlearn.pipeline import Pipeline
 from bracketlearn.trainers import QuantileReg
 
 
@@ -70,14 +71,13 @@ class TestEmpiricalDistribution:
         """Empirical is a real baseline — its CRPS must be finite, and a
         properly-fit QuantileReg must beat it on a signal-bearing dataset."""
         X, y, ids, ts = _signal_dataset()
-        p = ForecastPipeline(
-            steps=[
-                ("emp", EmpiricalDistribution()),
-                ("qreg", QuantileReg(n_estimators=80, random_seed=0)),
-            ],
-            cv="kfold", n_folds=3, refit_on_full=False,
+        model = [
+            Pipeline([EmpiricalDistribution()], name="emp"),
+            Pipeline([QuantileReg(n_estimators=80, random_seed=0)], name="qreg"),
+        ]
+        result = WalkForward(cv="kfold", n_folds=3, refit_on_full=False).fit_predict(
+            model, X, y, ids=ids, timestamps=ts,
         )
-        result = p.fit_predict(X, y, ids=ids, timestamps=ts)
         s = result.score(y, metrics=["crps"])
         assert np.isfinite(s["emp"]["crps"])
         assert s["qreg"]["crps"] < s["emp"]["crps"]
@@ -129,15 +129,10 @@ class TestPersistence:
     def test_lifted_in_pipeline(self):
         """Wrapped with GlobalResidual, Persistence drops into a pipeline."""
         X, y, ids, ts = _signal_dataset(n=300)
-        p = ForecastPipeline(
-            steps=[
-                ("persist", LiftedForecaster(
-                    Persistence(lag=1), GlobalResidual(), name="persist",
-                )),
-            ],
+        persist = Pipeline([Persistence(lag=1), GlobalResidual()], name="persist")
+        result = WalkForward(
             cv="expanding-window", n_folds=3, refit_on_full=False,
-        )
-        result = p.fit_predict(X, y, ids=ids, timestamps=ts)
+        ).fit_predict(persist, X, y, ids=ids, timestamps=ts)
         s = result.score(y, metrics=["crps"])
         assert np.isfinite(s["persist"]["crps"])
 
@@ -225,10 +220,11 @@ class TestPersistenceDist:
         X = np.zeros((n, 1))
         ids = np.arange(n)
         ts = np.arange(n, dtype=float)
-        p = ForecastPipeline(
-            steps=[("pdist", PersistenceDist(lag=1))],
+        result = WalkForward(
             cv="expanding-window", n_folds=3, refit_on_full=False,
+        ).fit_predict(
+            Pipeline([PersistenceDist(lag=1)], name="pdist"),
+            X, y, ids=ids, timestamps=ts,
         )
-        result = p.fit_predict(X, y, ids=ids, timestamps=ts)
         s = result.score(y, metrics=["crps"])
         assert np.isfinite(s["pdist"]["crps"])

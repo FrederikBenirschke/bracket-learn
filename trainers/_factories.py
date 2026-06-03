@@ -1,7 +1,6 @@
 """Convenience builders: pre-wrap common (forecaster, lifter/calibrator) combos.
 
-Each returns a `Pipeline` — the self-contained chain that absorbs the old
-`LiftedForecaster` / `CalibratedForecaster` wrappers. Drop it straight into
+Each returns a self-contained `Pipeline` chain. Drop it straight into
 `WalkForward.fit_predict` (or nest it in a `Stacker`); ``name`` labels the
 leaderboard row.
 """

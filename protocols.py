@@ -29,11 +29,12 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class Forecaster(Protocol):
-    """Anything that can be added to a ForecastPipeline.
+    """Anything that can be used as a stage in a `Pipeline` / `Stacker`.
 
-    `depends_on` names upstream pipeline nodes whose OOF this forecaster
-    consumes. Pipeline topo-sorts on this at build time and raises loudly
-    on missing deps. Default empty tuple = no deps.
+    `depends_on` is retained for back-compat (default empty tuple = no deps);
+    under the object-graph surface the dependency IS the `Stacker` nesting, so
+    upstream forecasts arrive positionally via ``upstream=[...]`` rather than
+    by name.
     """
 
     name: str

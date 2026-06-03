@@ -27,7 +27,7 @@ from bracketlearn import (
     EMOS,
     BaseEstimator,
     BracketLadder,
-    CalibratedForecaster,
+    DistAsFeatures,
     DistributionForecast,
     EmpiricalDistribution,
     GlobalResidual,
@@ -58,28 +58,18 @@ def _all_baseestimator_subclasses() -> list[type]:
 def _try_construct(cls: type) -> object | None:
     """Try to construct ``cls`` with sensible defaults.
 
-    Some estimators need required arguments (Stacking needs deps,
-    CumulativeBinary needs cutpoints + outer_edges, TailSpecialist needs
-    edges, Isotonic needs edges, …). We special-case the ones we can
-    reach; others get skipped.
+    Some estimators need required arguments (CumulativeBinary needs
+    cutpoints + outer_edges, Isotonic needs edges, DistAsFeatures needs a
+    downstream, …). We special-case the ones we can reach; others get skipped.
     """
     presets: dict[str, dict] = {
-        "StackedParametric": {"deps": ("a", "b")},
         "CumulativeBinary": {
             "cutpoints_by_id": {0: np.array([1.0, 2.0, 3.0])},
             "outer_edges_by_id": {0: (0.0, 4.0)},
         },
-        "TailSpecialist": {"edges": np.linspace(0, 10, 6)},
         "Isotonic": {"pre_integrate_edges": np.linspace(0, 10, 6)},
         "SklearnPoint": {"estimator": _LinearRegressionFactory()},
-        "LiftedForecaster": {
-            "base": SklearnPoint(_LinearRegressionFactory()),
-            "lifter": GlobalResidual(),
-        },
-        "CalibratedForecaster": {
-            "forecaster": EMOS(),
-            "calibrator": Isotonic(pre_integrate_edges=np.linspace(0, 10, 6)),
-        },
+        "DistAsFeatures": {"downstream": SklearnPoint(_LinearRegressionFactory())},
     }
     kwargs = presets.get(cls.__name__, {})
     try:
@@ -135,13 +125,11 @@ def test_clone_does_not_share_fitted_state():
 def test_clone_deep_copies_nested_estimators():
     """clone() should give the nested estimator a fresh instance, not
     share the same object."""
-    inner = EMOS()
-    iso = Isotonic(pre_integrate_edges=np.linspace(0, 10, 6))
-    composite = CalibratedForecaster(forecaster=inner, calibrator=iso)
+    inner = SklearnPoint(_LinearRegressionFactory())
+    composite = DistAsFeatures(downstream=inner)
     cloned = clone(composite)
-    # cloned should have its own EMOS and Isotonic
-    assert cloned.forecaster is not composite.forecaster, "EMOS instance shared after clone"
-    assert cloned.calibrator is not composite.calibrator, "Isotonic shared after clone"
+    # cloned should have its own downstream estimator.
+    assert cloned.downstream is not composite.downstream, "downstream shared after clone"
 
 
 # ---------------------------------------------------------------------------

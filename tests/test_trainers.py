@@ -396,15 +396,15 @@ def test_stacking_recovers_truth_from_perfect_upstream():
         mu=mu_precise, sigma=np.ones(N), ids=ids, timestamps=ts, provenance=prov,
     )
 
-    stack = StackedParametric(deps=("noisy", "precise"))
-    stack.fit(np.zeros((N, 1)), y, deps_oof={"noisy": d_noisy, "precise": d_precise})
+    stack = StackedParametric()
+    stack.fit(np.zeros((N, 1)), y, upstream=[d_noisy, d_precise])
 
     # Precise upstream should get the bigger weight.
     assert abs(stack.weights_[1]) > abs(stack.weights_[0])
     # StackedParametric dist on the same rows should match y closely.
     out = stack.predict_dist(
         np.zeros((N, 1)), ids=ids, timestamps=ts,
-        deps_oof={"noisy": d_noisy, "precise": d_precise},
+        upstream=[d_noisy, d_precise],
     )
     np.testing.assert_allclose(out.params["mu"].mean(), y.mean(), atol=0.1)
 
@@ -436,12 +436,12 @@ def test_stacking_passes_sample_weight_through_to_lstsq():
                                            timestamps=ts, provenance=prov)
     d_b = DistributionForecast.from_normal(mu=mu_b, sigma=np.ones(N), ids=ids,
                                            timestamps=ts, provenance=prov)
-    s_unw = StackedParametric(deps=("a", "b"))
-    s_unw.fit(np.zeros((N, 1)), y, deps_oof={"a": d_a, "b": d_b})
+    s_unw = StackedParametric()
+    s_unw.fit(np.zeros((N, 1)), y, upstream=[d_a, d_b])
 
     w_emph_first = np.where(np.arange(N) < N // 2, 4.0, 1.0)
-    s_w = StackedParametric(deps=("a", "b"))
-    s_w.fit(np.zeros((N, 1)), y, deps_oof={"a": d_a, "b": d_b},
+    s_w = StackedParametric()
+    s_w.fit(np.zeros((N, 1)), y, upstream=[d_a, d_b],
             sample_weight=w_emph_first)
     # Weighted fit's intercept should bias toward the first-half data.
     assert not np.allclose(s_unw.weights_, s_w.weights_)
@@ -473,10 +473,10 @@ def test_stacking_convex_weights_sum_to_one_and_nonneg():
     d_precise = DistributionForecast.from_normal(
         mu=mu_precise, sigma=np.ones(N), ids=ids, timestamps=ts, provenance=prov,
     )
-    stack = StackedParametric(deps=("noisy", "precise"), weight_constraint="convex")
+    stack = StackedParametric(weight_constraint="convex")
     stack.fit(
         np.zeros((N, 1)), y,
-        deps_oof={"noisy": d_noisy, "precise": d_precise},
+        upstream=[d_noisy, d_precise],
     )
     assert np.all(stack.weights_ >= -1e-9)
     np.testing.assert_allclose(stack.weights_.sum(), 1.0, atol=1e-6)
@@ -517,13 +517,12 @@ def test_stacking_geometric_sigma_tracks_upstream_dispersion():
         mu=mu_b, sigma=sigma_up, ids=ids, timestamps=ts, provenance=prov,
     )
     stack = StackedParametric(
-        deps=("a", "b"),
         sigma_method="geometric_mean_upstream",
     )
-    stack.fit(np.zeros((N, 1)), y, deps_oof={"a": d_a, "b": d_b})
+    stack.fit(np.zeros((N, 1)), y, upstream=[d_a, d_b])
     out = stack.predict_dist(
         np.zeros((N, 1)), ids=ids, timestamps=ts,
-        deps_oof={"a": d_a, "b": d_b},
+        upstream=[d_a, d_b],
     )
     sigma_hat = out.params["sigma"]
     # σ̂ should not be flat (constant fallback would fail this).
@@ -555,10 +554,10 @@ def test_stacking_student_t_emits_t_backed_forecast_with_matching_variance():
     d_a = DistributionForecast.from_normal(
         mu=mu_a, sigma=np.ones(N), ids=ids, timestamps=ts, provenance=prov,
     )
-    stack = StackedParametric(deps=("a",), dist_family="student_t", student_t_df=5.0)
-    stack.fit(np.zeros((N, 1)), y, deps_oof={"a": d_a})
+    stack = StackedParametric(dist_family="student_t", student_t_df=5.0)
+    stack.fit(np.zeros((N, 1)), y, upstream=[d_a])
     out = stack.predict_dist(
-        np.zeros((N, 1)), ids=ids, timestamps=ts, deps_oof={"a": d_a},
+        np.zeros((N, 1)), ids=ids, timestamps=ts, upstream=[d_a],
     )
     # t-backed with df=5 on every row.
     assert isinstance(out, StudentTForecast)
@@ -577,13 +576,13 @@ def test_stacking_invalid_options_raise_loudly():
     from bracketlearn.trainers import StackedParametric
 
     with pytest.raises(ValueError, match="weight_constraint"):
-        StackedParametric(deps=("a",), weight_constraint="bogus")  # type: ignore[arg-type]
+        StackedParametric(weight_constraint="bogus")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="sigma_method"):
-        StackedParametric(deps=("a",), sigma_method="bogus")  # type: ignore[arg-type]
+        StackedParametric(sigma_method="bogus")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="dist_family"):
-        StackedParametric(deps=("a",), dist_family="bogus")  # type: ignore[arg-type]
+        StackedParametric(dist_family="bogus")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="student_t_df"):
-        StackedParametric(deps=("a",), dist_family="student_t", student_t_df=2.0)
+        StackedParametric(dist_family="student_t", student_t_df=2.0)
 
 
 # ---------------------------------------------------------------------------
@@ -616,13 +615,13 @@ def test_bma_stacking_emits_mixture_normal_with_row_sum_weights():
     y = rng.normal(0, 1, N)
     d_a = _mk_normal_upstream(y + rng.normal(0, 0.3, N), np.full(N, 0.3))
     d_b = _mk_normal_upstream(y + rng.normal(0, 1.0, N), np.full(N, 1.0))
-    bma = BMAStacking(deps=("a", "b")).fit(
-        np.zeros((N, 1)), y, deps_oof={"a": d_a, "b": d_b},
+    bma = BMAStacking().fit(
+        np.zeros((N, 1)), y, upstream=[d_a, d_b],
     )
     out = bma.predict_dist(
         np.zeros((N, 1)),
         ids=np.arange(N), timestamps=np.arange(N, dtype=float),
-        deps_oof={"a": d_a, "b": d_b},
+        upstream=[d_a, d_b],
     )
     assert isinstance(out, MixtureNormalForecast)
     assert out.weights.shape == (N, 2)
@@ -640,21 +639,21 @@ def test_bma_stacking_sigma_inflates_when_upstreams_disagree():
     d_agree = _mk_normal_upstream(y, np.full(N, 0.3))
     d_disagree_a = _mk_normal_upstream(y + 2.0, np.full(N, 0.3))
     d_disagree_b = _mk_normal_upstream(y - 2.0, np.full(N, 0.3))
-    bma_agree = BMAStacking(deps=("p", "q")).fit(
-        np.zeros((N, 1)), y, deps_oof={"p": d_agree, "q": d_agree},
+    bma_agree = BMAStacking().fit(
+        np.zeros((N, 1)), y, upstream=[d_agree, d_agree],
     )
-    bma_dis = BMAStacking(deps=("p", "q")).fit(
-        np.zeros((N, 1)), y, deps_oof={"p": d_disagree_a, "q": d_disagree_b},
+    bma_dis = BMAStacking().fit(
+        np.zeros((N, 1)), y, upstream=[d_disagree_a, d_disagree_b],
     )
     out_agree = bma_agree.predict_dist(
         np.zeros((N, 1)), ids=np.arange(N),
         timestamps=np.arange(N, dtype=float),
-        deps_oof={"p": d_agree, "q": d_agree},
+        upstream=[d_agree, d_agree],
     )
     out_dis = bma_dis.predict_dist(
         np.zeros((N, 1)), ids=np.arange(N),
         timestamps=np.arange(N, dtype=float),
-        deps_oof={"p": d_disagree_a, "q": d_disagree_b},
+        upstream=[d_disagree_a, d_disagree_b],
     )
     assert out_dis.variance().mean() > out_agree.variance().mean() * 3.0
 
@@ -682,16 +681,16 @@ def test_bma_stacking_rejects_misaligned_upstream_ids():
         timestamps=np.arange(N, dtype=float), provenance=prov,
     )
     with pytest.raises(ValueError, match="ids does not match"):
-        BMAStacking(deps=("a", "b")).fit(
-            np.zeros((N, 1)), np.zeros(N), deps_oof={"a": d_a, "b": d_b},
+        BMAStacking().fit(
+            np.zeros((N, 1)), np.zeros(N), upstream=[d_a, d_b],
         )
 
 
 def test_bma_stacking_rejects_invalid_alpha_prior():
     with pytest.raises(ValueError, match="alpha_prior"):
-        BMAStacking(deps=("a",), alpha_prior=0.0)
+        BMAStacking(alpha_prior=0.0)
     with pytest.raises(ValueError, match="alpha_prior"):
-        BMAStacking(deps=("a",), alpha_prior=-1.0)
+        BMAStacking(alpha_prior=-1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -860,54 +859,21 @@ def test_tail_specialist_emits_bracket_with_classifier_tails():
     ids_arr = np.arange(N)
     brackets_by_id = {int(i): edges for i in ids_arr}
     ts = TailSpecialist(
-        brackets_by_id=brackets_by_id, upstream="emos", n_estimators=30,
+        brackets_by_id=brackets_by_id, n_estimators=30,
     )
-    ts.fit(X, y, ids=ids_arr, deps_oof={"emos": emos_dist})
+    ts.fit(X, y, ids=ids_arr, upstream=[emos_dist])
     # Wide outer bins → EMOS body mass concentrates inside, so the classifier's
     # tail probabilities legitimately disagree with EMOS at the edges. That
     # disagreement is what we want; assert the warning fires and silence it.
     with pytest.warns(UserWarning, match="TailSpecialist"):
         out = ts.predict_dist(
             X, ids=ids_arr, timestamps=np.arange(N, dtype=float),
-            deps_oof={"emos": emos_dist},
+            upstream=[emos_dist],
         )
     assert isinstance(out, BracketForecast)
     assert out.probs.shape == (N, 6)
     np.testing.assert_allclose(out.probs.sum(axis=1), 1.0, atol=1e-10)
     assert np.all(out.probs >= 0)
-
-
-def test_tail_specialist_positional_upstream_matches_deps_oof():
-    """Positional upstream=[dist] reproduces legacy deps_oof={'emos': dist}."""
-    _skip_if_missing("lightgbm")
-    from bracketlearn.trainers import EMOS, TailSpecialist
-
-    rng = np.random.default_rng(0)
-    N, k = 300, 4
-    X = rng.normal(0, 1, (N, k))
-    y = X.mean(axis=1) + rng.normal(0, 1.0, N)
-    emos = EMOS().fit(X, y)
-    emos_dist = emos.predict_dist(X, ids=np.arange(N), timestamps=np.arange(N, dtype=float))
-    edges = np.array([-10.0, -2.0, -1.0, 0.0, 1.0, 2.0, 10.0])
-    ids_arr = np.arange(N)
-    brackets_by_id = {int(i): edges for i in ids_arr}
-    ts_kw = dict(brackets_by_id=brackets_by_id, n_estimators=30)
-
-    legacy = TailSpecialist(upstream="emos", **ts_kw)
-    legacy.fit(X, y, ids=ids_arr, deps_oof={"emos": emos_dist})
-    pos = TailSpecialist(**ts_kw)
-    pos.fit(X, y, ids=ids_arr, upstream=[emos_dist])
-    with pytest.warns(UserWarning, match="TailSpecialist"):
-        out_l = legacy.predict_dist(
-            X, ids=ids_arr, timestamps=np.arange(N, dtype=float),
-            deps_oof={"emos": emos_dist},
-        )
-    with pytest.warns(UserWarning, match="TailSpecialist"):
-        out_p = pos.predict_dist(
-            X, ids=ids_arr, timestamps=np.arange(N, dtype=float),
-            upstream=[emos_dist],
-        )
-    np.testing.assert_allclose(out_l.probs, out_p.probs, rtol=1e-12, atol=1e-12)
 
 
 # ---------------------------------------------------------------------------
@@ -1185,7 +1151,6 @@ def test_bracket_stacking_emits_bracket_forecast_with_correct_K():
     # Truth concentrated in one of the bins per row.
     y = rng.uniform(edges[0], edges[-1], N)
     stack = BracketStacking(
-        deps=("a", "b"),
         estimator=lgb.LGBMClassifier(
             n_estimators=20, num_leaves=4, min_child_samples=10,
             objective="multiclass", verbose=-1,
@@ -1193,12 +1158,12 @@ def test_bracket_stacking_emits_bracket_forecast_with_correct_K():
     )
     stack.fit(np.zeros((N, 1)), y,
               ids=np.arange(N),
-              deps_oof={"a": d_a, "b": d_b})
+              upstream=[d_a, d_b])
     out = stack.predict_dist(
         np.zeros((N, 1)),
         ids=np.arange(N),
         timestamps=np.arange(N, dtype=float),
-        deps_oof={"a": d_a, "b": d_b},
+        upstream=[d_a, d_b],
     )
     from bracketlearn.forecast import BracketForecast
     assert isinstance(out, BracketForecast)
@@ -1222,13 +1187,12 @@ def test_bracket_stacking_rejects_K_mismatch():
     d_a = _mk_bracket_upstream(pa, edges_a)
     d_b = _mk_bracket_upstream(pb, edges_b)
     stack = BracketStacking(
-        deps=("a", "b"),
         estimator=lgb.LGBMClassifier(verbose=-1),
     )
     with pytest.raises(ValueError, match="must share bracket count"):
         stack.fit(np.zeros((N, 1)), np.zeros(N),
                   ids=np.arange(N),
-                  deps_oof={"a": d_a, "b": d_b})
+                  upstream=[d_a, d_b])
 
 
 def test_bracket_stacking_rejects_misaligned_ids():
@@ -1255,13 +1219,12 @@ def test_bracket_stacking_rejects_misaligned_ids():
         provenance=prov,
     )
     stack = BracketStacking(
-        deps=("a", "b"),
         estimator=lgb.LGBMClassifier(verbose=-1),
     )
     with pytest.raises(ValueError, match="ids does not match"):
         stack.fit(np.zeros((N, 1)), np.zeros(N),
                   ids=np.arange(N),
-                  deps_oof={"a": d_a, "b": d_b})
+                  upstream=[d_a, d_b])
 
 
 def test_bracket_stacking_rejects_non_bracket_upstream():
@@ -1277,13 +1240,12 @@ def test_bracket_stacking_rejects_non_bracket_upstream():
     d_a = _mk_bracket_upstream(pa, edges)
     d_normal = _mk_normal_upstream(np.zeros(N), np.ones(N))
     stack = BracketStacking(
-        deps=("a", "normal"),
         estimator=lgb.LGBMClassifier(verbose=-1),
     )
     with pytest.raises(NotImplementedError, match="bracket-backed"):
         stack.fit(np.zeros((N, 1)), np.zeros(N),
                   ids=np.arange(N),
-                  deps_oof={"a": d_a, "normal": d_normal})
+                  upstream=[d_a, d_normal])
 
 
 def test_bracket_stacking_predict_before_fit_raises():
@@ -1292,14 +1254,13 @@ def test_bracket_stacking_predict_before_fit_raises():
     from bracketlearn.trainers import BracketStacking
 
     stack = BracketStacking(
-        deps=("a",),
         estimator=DummyClassifier(strategy="uniform"),
     )
     with pytest.raises(RuntimeError, match="before fit"):
         stack.predict_dist(
             np.zeros((1, 1)), ids=np.array([0]),
             timestamps=np.array([0.0]),
-            deps_oof={"a": None},
+            upstream=[None],
         )
 
 
@@ -1312,6 +1273,6 @@ def test_bracket_stacking_requires_upstream_at_fit():
 
     from bracketlearn.trainers import BracketStacking
 
-    est = BracketStacking(deps=(), estimator=DummyClassifier())  # OK: no raise
+    est = BracketStacking(estimator=DummyClassifier())  # OK: no raise
     with pytest.raises(ValueError, match="upstream"):
         est.fit(np.zeros((4, 1)), np.zeros(4), ids=np.arange(4))

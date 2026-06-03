@@ -57,8 +57,9 @@ from _style import (
 )
 from bracketlearn.adapters import BracketLadder
 from bracketlearn.baselines import EmpiricalDistribution
+from bracketlearn.compose import Stacker, WalkForward
 from bracketlearn.lift import ConformalCalibrate, GlobalResidual, Isotonic, StudentTResidual
-from bracketlearn.pipeline import CalibratedForecaster, ForecastPipeline, LiftedForecaster
+from bracketlearn.pipeline import Pipeline
 from bracketlearn.score import to_point
 from bracketlearn.trainers import (
     EMOS,
@@ -130,28 +131,27 @@ SINGLE_TRAINERS = {
                                                             outer_edges=(edges[0], edges[-1])), X_raw, "bracket"),
     "EMOS  (ens. X)":                     (EMOS(), X_ens, "native_dist"),
     "MixtureNormals (ens. X)":            (MixtureNormals(), X_ens, "native_dist"),
-    "Ridge + GlobalResidual":             (LiftedForecaster(SklearnPoint(RidgeCV()), GlobalResidual(), name="ridge_gr"), X_raw, "point_lift"),
-    "Lasso + GlobalResidual":             (LiftedForecaster(SklearnPoint(Lasso(alpha=0.01)), GlobalResidual(), name="lasso_gr"), X_raw, "point_lift"),
-    "LGBM + GlobalResidual":              (LiftedForecaster(SklearnPoint(LGBMRegressor(n_estimators=200, learning_rate=0.05,
-                                                                                       verbose=-1, random_state=0)),
-                                                            GlobalResidual(), name="lgb_gr"), X_raw, "point_lift"),
-    "Ridge + StudentTResidual":           (LiftedForecaster(SklearnPoint(RidgeCV()), StudentTResidual(), name="ridge_t"), X_raw, "point_lift"),
-    "EMOS + Isotonic (ens. X)":           (CalibratedForecaster(EMOS(), Isotonic(edges=edges), name="emos_iso"), X_ens, "calibrated"),
-    "QReg + Conformal":                   (CalibratedForecaster(QuantileReg(n_estimators=200, learning_rate=0.05, random_seed=0),
-                                                                ConformalCalibrate(), name="qreg_conf"), X_raw, "calibrated"),
+    "Ridge + GlobalResidual":             (Pipeline([SklearnPoint(RidgeCV()), GlobalResidual()], name="ridge_gr"), X_raw, "point_lift"),
+    "Lasso + GlobalResidual":             (Pipeline([SklearnPoint(Lasso(alpha=0.01)), GlobalResidual()], name="lasso_gr"), X_raw, "point_lift"),
+    "LGBM + GlobalResidual":              (Pipeline([SklearnPoint(LGBMRegressor(n_estimators=200, learning_rate=0.05,
+                                                                                verbose=-1, random_state=0)),
+                                                     GlobalResidual()], name="lgb_gr"), X_raw, "point_lift"),
+    "Ridge + StudentTResidual":           (Pipeline([SklearnPoint(RidgeCV()), StudentTResidual()], name="ridge_t"), X_raw, "point_lift"),
+    "EMOS + Isotonic (ens. X)":           (Pipeline([EMOS(), Isotonic(pre_integrate_edges=edges)], name="emos_iso"), X_ens, "calibrated"),
+    "QReg + Conformal":                   (Pipeline([QuantileReg(n_estimators=200, learning_rate=0.05, random_seed=0),
+                                                     ConformalCalibrate()], name="qreg_conf"), X_raw, "calibrated"),
 }
 
 
 # %%
 def _score_one(stage_name, forecaster, X_in):
-    p = ForecastPipeline(
-        steps=[(stage_name, forecaster)],
-        cv="kfold", n_folds=5, shuffle=True, random_state=0,
-        refit_on_full=False,
-    )
-    r = p.fit_predict(X_in, y, ids=ids, timestamps=ts)
-    metrics = r.score(y, metrics=["crps", "log_score"])[stage_name]
-    dist = r[stage_name]
+    model = forecaster if isinstance(forecaster, Pipeline) else Pipeline([forecaster], name=stage_name)
+    key = model.name
+    r = WalkForward(
+        cv="kfold", n_folds=5, shuffle=True, random_state=0, refit_on_full=False,
+    ).fit_predict(model, X_in, y, ids=ids, timestamps=ts)
+    metrics = r.score(y, metrics=["crps", "log_score"])[key]
+    dist = r[key]
     y_oof = y[dist.ids.astype(int)]
     mu = to_point(dist, how="mean")
     return {
@@ -186,30 +186,34 @@ for name, (fc, X_in, fam) in SINGLE_TRAINERS.items():
 print("fitting multi-stage DAGs …")
 multistage_results = {}
 
-dag = ForecastPipeline(
-    steps=[
-        ("ridge",   LiftedForecaster(SklearnPoint(RidgeCV()),
-                                     GlobalResidual(), name="ridge")),
-        ("ngboost", NGBoostNormal(n_estimators=150, random_seed=0)),
-        ("qreg",    QuantileReg(n_estimators=150, learning_rate=0.05,
-                                random_seed=0)),
-        ("stack",   StackedParametric(deps=("ridge", "ngboost"))),
-        ("daf_lgb", DistAsFeatures(
-            deps=("ridge", "ngboost", "qreg"),
-            downstream=NGBoostNormal(n_estimators=100, random_seed=0),
-            include_variance=False, name="daf_lgb",
-        )),
-        ("pool",    LinearPoolDist(deps=("ridge", "ngboost", "qreg"))),
-        ("cdfboost", CDFBoostBracket(
-            deps=("ridge", "ngboost", "qreg"),
-            brackets_by_id={int(i): edges for i in ids},
-            n_estimators=80, learning_rate=0.05,
-        )),
-    ],
-    cv="kfold", n_folds=5, shuffle=True, random_state=0,
-    refit_on_full=False,
+# Base nodes are shared OBJECTS; each meta is a Stacker over them. WalkForward
+# dedups by identity, so ridge/ngboost/qreg are each fit once per fold.
+ridge = Pipeline([SklearnPoint(RidgeCV()), GlobalResidual()], name="ridge")
+ngboost = Pipeline([NGBoostNormal(n_estimators=150, random_seed=0)], name="ngboost")
+qreg = Pipeline(
+    [QuantileReg(n_estimators=150, learning_rate=0.05, random_seed=0)], name="qreg",
 )
-dag_result = dag.fit_predict(X_raw, y, ids=ids, timestamps=ts)
+stack = Stacker([ridge, ngboost], StackedParametric(), name="stack")
+daf_lgb = Stacker(
+    [ridge, ngboost, qreg],
+    DistAsFeatures(
+        downstream=NGBoostNormal(n_estimators=100, random_seed=0),
+        include_variance=False,
+    ),
+    name="daf_lgb",
+)
+pool = Stacker([ridge, ngboost, qreg], LinearPoolDist(), name="pool")
+cdfboost = Stacker(
+    [ridge, ngboost, qreg],
+    CDFBoostBracket(
+        brackets_by_id={int(i): edges for i in ids},
+        n_estimators=80, learning_rate=0.05,
+    ),
+    name="cdfboost",
+)
+dag_result = WalkForward(
+    cv="kfold", n_folds=5, shuffle=True, random_state=0, refit_on_full=False,
+).fit_predict([stack, daf_lgb, pool, cdfboost], X_raw, y, ids=ids, timestamps=ts)
 for stage in ["stack", "daf_lgb", "pool", "cdfboost"]:
     dist = dag_result[stage]
     metrics = dag_result.score(y, metrics=["crps", "log_score"])[stage]
@@ -339,21 +343,18 @@ ts_b = ids_b.astype(float)
 print(f"  rows={n_b}  features={X_b.shape[1]}  y in [{y_b.min():.0f}, {y_b.max():.0f}]")
 
 # %%
-TS_PIPELINE_STEPS = [
-    ("emp", EmpiricalDistribution()),
-    ("persist1",  LiftedForecaster(Persistence(lag=1),   GlobalResidual(), name="persist1")),
-    ("persist24", LiftedForecaster(Persistence(lag=24),  GlobalResidual(), name="persist24")),
-    ("persist168",LiftedForecaster(Persistence(lag=168), GlobalResidual(), name="persist168")),
-    ("qreg",      QuantileReg(n_estimators=150, learning_rate=0.05, random_seed=0)),
-    ("ngboost",   NGBoostNormal(n_estimators=150, random_seed=0)),
+TS_MODEL = [
+    Pipeline([EmpiricalDistribution()], name="emp"),
+    Pipeline([Persistence(lag=1), GlobalResidual()], name="persist1"),
+    Pipeline([Persistence(lag=24), GlobalResidual()], name="persist24"),
+    Pipeline([Persistence(lag=168), GlobalResidual()], name="persist168"),
+    Pipeline([QuantileReg(n_estimators=150, learning_rate=0.05, random_seed=0)], name="qreg"),
+    Pipeline([NGBoostNormal(n_estimators=150, random_seed=0)], name="ngboost"),
 ]
-ts_pipeline = ForecastPipeline(
-    steps=TS_PIPELINE_STEPS,
-    cv="expanding-window", n_folds=4, embargo=24,
-    refit_on_full=False,
-)
 print("fitting bike-sharing pipeline …")
-ts_result = ts_pipeline.fit_predict(X_b, y_b, ids=ids_b, timestamps=ts_b)
+ts_result = WalkForward(
+    cv="expanding-window", n_folds=4, embargo=24, refit_on_full=False,
+).fit_predict(TS_MODEL, X_b, y_b, ids=ids_b, timestamps=ts_b)
 ts_scores = ts_result.score(y_b, metrics=["crps", "log_score"])
 
 base_ts = ts_scores["emp"]["crps"]

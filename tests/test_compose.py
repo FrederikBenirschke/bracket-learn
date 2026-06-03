@@ -1,20 +1,18 @@
-"""WalkForward + Stacker (new clean surface) parity vs ForecastPipeline.
+"""WalkForward + Stacker (the object-graph composition surface).
 
-The object-graph surface must reproduce the legacy name-keyed surface
-bit-for-bit: same folds, same inner lifter split, same in-sample deps fed to
-the meta, same OOF dists. Any drift is a bug.
+Covers shared-upstream dedup, nested stackers, multi-root leaderboards,
+duplicate-name rejection, the refit/predict path, and Stacker construction
+guards.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
-from numpy.testing import assert_allclose
 from sklearn.linear_model import LinearRegression
 
-from bracketlearn import Pipeline, Stacker, WalkForward, ForecastPipeline
+from bracketlearn import Pipeline, Stacker, WalkForward
 from bracketlearn.lift import GlobalResidual
-from bracketlearn.pipeline import LiftedForecaster
 from bracketlearn.trainers import EMOS, SklearnPoint, StackedParametric, BMAStacking
 
 
@@ -26,57 +24,6 @@ def _synthetic(n: int = 200, k: int = 3, seed: int = 0):
     ids = np.arange(n)
     ts = days.astype(float)
     return X, truth, ids, ts
-
-
-def _aligned(dist):
-    """Return (mu, sigma) sorted by ids so two surfaces compare row-for-row."""
-    o = np.argsort(dist.ids)
-    return dist.ids[o], dist.params["mu"][o], dist.params["sigma"][o]
-
-
-def test_walkforward_bare_pipeline_matches_forecastpipeline():
-    X, y, ids, ts = _synthetic()
-    old = ForecastPipeline(
-        steps=[("emos", EMOS())], n_folds=4, refit_on_full=False,
-    ).fit_predict(X, y, ids=ids, timestamps=ts)
-    new = WalkForward(n_folds=4).fit_predict(
-        Pipeline([EMOS()], name="emos"), X, y, ids=ids, timestamps=ts,
-    )
-    ia, ma, sa = _aligned(old["emos"])
-    ib, mb, sb = _aligned(new["emos"])
-    assert_allclose(ia, ib)
-    assert_allclose(ma, mb, rtol=1e-9, atol=1e-9)
-    assert_allclose(sa, sb, rtol=1e-9, atol=1e-9)
-
-
-def test_walkforward_stacker_matches_forecastpipeline():
-    X, y, ids, ts = _synthetic()
-    # Legacy name-keyed surface.
-    old = ForecastPipeline(
-        steps=[
-            ("ridge", LiftedForecaster(
-                base=SklearnPoint(LinearRegression()),
-                lifter=GlobalResidual(),
-                name="ridge",
-            )),
-            ("emos", EMOS()),
-            ("stack", StackedParametric(deps=("ridge", "emos"))),
-        ],
-        n_folds=3, refit_on_full=False,
-    ).fit_predict(X, y, ids=ids, timestamps=ts)
-
-    # New object-graph surface — same model, no names-as-wiring.
-    ridge = Pipeline([SklearnPoint(LinearRegression()), GlobalResidual()], name="ridge")
-    emos = Pipeline([EMOS()], name="emos")
-    stack = Stacker([ridge, emos], StackedParametric(), name="stack")
-    new = WalkForward(n_folds=3).fit_predict(stack, X, y, ids=ids, timestamps=ts)
-
-    for nm in ("ridge", "emos", "stack"):
-        ia, ma, sa = _aligned(old[nm])
-        ib, mb, sb = _aligned(new[nm])
-        assert_allclose(ia, ib, err_msg=f"{nm}: ids")
-        assert_allclose(ma, mb, rtol=1e-9, atol=1e-9, err_msg=f"{nm}: mu")
-        assert_allclose(sa, sb, rtol=1e-9, atol=1e-9, err_msg=f"{nm}: sigma")
 
 
 def test_shared_upstream_computed_once_and_nested_stacker_runs():
@@ -94,37 +41,32 @@ def test_shared_upstream_computed_once_and_nested_stacker_runs():
         assert res[nm].ids.shape[0] > 0
 
 
-def test_walkforward_predict_matches_forecastpipeline():
+def test_walkforward_predict_on_unseen_rows():
+    """After refit_on_full, predict() emits a dist for every node on truly
+    unseen rows, and the meta consumes its upstreams' fresh predictions."""
     X, y, ids, ts = _synthetic(n=220)
     Xtr, ytr, idtr, tstr = X[:180], y[:180], ids[:180], ts[:180]
     Xte, idte, tste = X[180:], ids[180:], ts[180:]
-
-    old = ForecastPipeline(
-        steps=[
-            ("ridge", LiftedForecaster(
-                base=SklearnPoint(LinearRegression()),
-                lifter=GlobalResidual(), name="ridge",
-            )),
-            ("emos", EMOS()),
-            ("stack", StackedParametric(deps=("ridge", "emos"))),
-        ],
-        n_folds=3, refit_on_full=True,
-    )
-    old.fit_predict(Xtr, ytr, ids=idtr, timestamps=tstr)
-    old_pred = old.predict(Xte, ids=idte, timestamps=tste)
 
     ridge = Pipeline([SklearnPoint(LinearRegression()), GlobalResidual()], name="ridge")
     emos = Pipeline([EMOS()], name="emos")
     stack = Stacker([ridge, emos], StackedParametric(), name="stack")
     wf = WalkForward(n_folds=3, refit_on_full=True)
     wf.fit_predict(stack, Xtr, ytr, ids=idtr, timestamps=tstr)
-    new_pred = wf.predict(Xte, ids=idte, timestamps=tste)
+    pred = wf.predict(Xte, ids=idte, timestamps=tste)
 
+    assert set(pred) == {"ridge", "emos", "stack"}
+    n_te = Xte.shape[0]
     for nm in ("ridge", "emos", "stack"):
-        assert_allclose(old_pred[nm].params["mu"], new_pred[nm].params["mu"],
-                        rtol=1e-9, atol=1e-9, err_msg=f"{nm}: mu")
-        assert_allclose(old_pred[nm].params["sigma"], new_pred[nm].params["sigma"],
-                        rtol=1e-9, atol=1e-9, err_msg=f"{nm}: sigma")
+        assert pred[nm].params["mu"].shape == (n_te,)
+        assert np.all(pred[nm].params["sigma"] > 0)
+    # The stack's μ is a (calibration-free) affine blend of its upstreams'
+    # μ — it must sit within their row-wise envelope plus a small margin.
+    lo = np.minimum(pred["ridge"].params["mu"], pred["emos"].params["mu"])
+    hi = np.maximum(pred["ridge"].params["mu"], pred["emos"].params["mu"])
+    span = hi - lo + 1.0
+    assert np.all(pred["stack"].params["mu"] >= lo - 2 * span)
+    assert np.all(pred["stack"].params["mu"] <= hi + 2 * span)
 
 
 def test_predict_requires_refit():

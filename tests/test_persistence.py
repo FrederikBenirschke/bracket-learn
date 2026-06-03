@@ -2,7 +2,7 @@
 
 What's guaranteed:
 
-- A fitted ``ForecastPipeline`` round-trips through ``save``/``load`` and
+- A fitted ``WalkForward`` round-trips through ``save``/``load`` and
   produces identical predictions to the original on the same X.
 - The envelope carries a bracketlearn version and a user-supplied note.
 - ``load`` warns on version mismatch (RuntimeWarning) and raises when
@@ -21,9 +21,10 @@ import numpy as np
 import pytest
 
 from bracketlearn import persistence
+from bracketlearn.compose import WalkForward
 from bracketlearn.lift import GlobalResidual
 from bracketlearn.persistence import envelope_info, load, save
-from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster, PipelineResult
+from bracketlearn.pipeline import Pipeline, PipelineResult
 from bracketlearn.trainers import EMOS, SklearnPoint
 
 
@@ -36,8 +37,8 @@ def _synthetic(n: int = 150, k: int = 3, seed: int = 0):
 
 def _build_fitted_pipeline():
     X, y, ids, ts = _synthetic()
-    p = ForecastPipeline(steps=[("emos", EMOS())], n_folds=3)
-    p.fit_predict(X, y, ids=ids, timestamps=ts)
+    p = WalkForward(n_folds=3, refit_on_full=True)
+    p.fit_predict(Pipeline([EMOS()], name="emos"), X, y, ids=ids, timestamps=ts)
     return p, X, ids, ts
 
 
@@ -61,13 +62,11 @@ class TestRoundTrip:
         from sklearn.linear_model import LinearRegression
 
         X, y, ids, ts = _synthetic()
-        p = ForecastPipeline(
-            steps=[("ridge", LiftedForecaster(
-                SklearnPoint(LinearRegression()), GlobalResidual(), name="ridge",
-            ))],
-            n_folds=3,
+        ridge = Pipeline(
+            [SklearnPoint(LinearRegression()), GlobalResidual()], name="ridge",
         )
-        p.fit_predict(X, y, ids=ids, timestamps=ts)
+        p = WalkForward(n_folds=3, refit_on_full=True)
+        p.fit_predict(ridge, X, y, ids=ids, timestamps=ts)
         path = tmp_path / "ridge.pkl"
         save(p, path)
         loaded = load(path)
@@ -82,9 +81,9 @@ class TestRoundTrip:
 
     def test_result_round_trip(self, tmp_path: Path):
         X, y, ids, ts = _synthetic()
-        p = ForecastPipeline(steps=[("emos", EMOS())], n_folds=3,
-                             refit_on_full=False)
-        result = p.fit_predict(X, y, ids=ids, timestamps=ts)
+        result = WalkForward(n_folds=3, refit_on_full=False).fit_predict(
+            Pipeline([EMOS()], name="emos"), X, y, ids=ids, timestamps=ts,
+        )
         path = tmp_path / "result.pkl"
         save(result, path)
         loaded = load(path)
@@ -102,7 +101,7 @@ class TestEnvelope:
         save(p, path, note="prod-2026-05")
         info = envelope_info(path)
         assert info["note"] == "prod-2026-05"
-        assert info["payload_type"] == "ForecastPipeline"
+        assert info["payload_type"] == "WalkForward"
         assert info["bracketlearn_version"] is not None
 
     def test_envelope_info_does_not_require_payload_class(self, tmp_path: Path):

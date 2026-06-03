@@ -6,9 +6,9 @@ predict-on-unseen-data guarantees:
 - ``get_params(deep=True)`` round-trips through ``set_params``.
 - ``clone(estimator)`` returns a fresh unfitted instance with the same
   hyperparameters but independent fitted state.
-- ``ForecastPipeline.fit_predict`` does NOT mutate the user-supplied
+- ``WalkForward.fit_predict`` does NOT mutate the user-supplied
   forecaster instances (fold contamination check).
-- ``ForecastPipeline.predict`` returns dists on truly unseen X after
+- ``WalkForward.predict`` returns dists on truly unseen X after
   ``fit_predict`` with ``refit_on_full=True``.
 - ``refit_on_full=False`` disables ``predict()`` (loud failure).
 """
@@ -20,10 +20,12 @@ import pytest
 from sklearn.linear_model import LinearRegression
 
 from bracketlearn.base import clone
+from bracketlearn.compose import Stacker, WalkForward
 from bracketlearn.lift import GlobalResidual
-from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster
+from bracketlearn.pipeline import Pipeline
 from bracketlearn.trainers import (
     EMOS,
+    DistAsFeatures,
     MixtureNormals,
     OnlineAggregator,
     SklearnPoint,
@@ -64,17 +66,11 @@ class TestGetParams:
 
     def test_get_params_deep_nests_subestimators(self):
         """When a param is itself a BaseEstimator, deep=True should prefix."""
-        lf = LiftedForecaster(
-            base=SklearnPoint(LinearRegression()),
-            lifter=GlobalResidual(),
-            name="ridge",
-        )
-        params = lf.get_params(deep=True)
-        # base + lifter are BaseEstimators; their params should be flattened.
-        assert "base" in params
-        assert "lifter" in params
-        assert any(k.startswith("base__") for k in params)
-        assert any(k.startswith("lifter__") for k in params)
+        daf = DistAsFeatures(downstream=SklearnPoint(LinearRegression()))
+        params = daf.get_params(deep=True)
+        # downstream is a BaseEstimator; its params should be flattened.
+        assert "downstream" in params
+        assert any(k.startswith("downstream__") for k in params)
 
 
 class TestSetParams:
@@ -129,29 +125,28 @@ class TestClone:
 # ---------------------------------------------------------------------------
 
 
-class TestPipelineDoesNotMutate:
+class TestWalkForwardDoesNotMutate:
     def test_user_forecaster_unmutated_after_fit_predict(self):
-        """fit_predict must clone each stage's forecaster per fold so the
-        user's instance never gains fitted state."""
+        """fit_predict must clone each node per fold so the user's instance
+        never gains fitted state."""
         X, y, ids, ts = _synthetic()
         emos = EMOS()
-        p = ForecastPipeline(steps=[("emos", emos)], n_folds=3,
-                             refit_on_full=False)
-        p.fit_predict(X, y, ids=ids, timestamps=ts)
+        WalkForward(n_folds=3, refit_on_full=False).fit_predict(
+            Pipeline([emos], name="emos"), X, y, ids=ids, timestamps=ts,
+        )
         assert emos.a_ is None
         assert emos.b_ is None
 
-    def test_reusable_across_pipelines(self):
-        """A single forecaster instance must be safe to register in two
-        independent pipelines."""
+    def test_reusable_across_runs(self):
+        """A single forecaster instance must be safe to run twice."""
         X, y, ids, ts = _synthetic()
         shared = EMOS()
-        p1 = ForecastPipeline(steps=[("emos", shared)], n_folds=3,
-                              refit_on_full=False)
-        p2 = ForecastPipeline(steps=[("emos", shared)], n_folds=3,
-                              refit_on_full=False)
-        r1 = p1.fit_predict(X, y, ids=ids, timestamps=ts)
-        r2 = p2.fit_predict(X, y, ids=ids, timestamps=ts)
+        r1 = WalkForward(n_folds=3, refit_on_full=False).fit_predict(
+            Pipeline([shared], name="emos"), X, y, ids=ids, timestamps=ts,
+        )
+        r2 = WalkForward(n_folds=3, refit_on_full=False).fit_predict(
+            Pipeline([shared], name="emos"), X, y, ids=ids, timestamps=ts,
+        )
         # Same OOF CRPS — proves both runs were clean refits.
         np.testing.assert_allclose(
             r1.score(y, metrics=["crps"])["emos"]["crps"],
@@ -165,42 +160,37 @@ class TestPipelineDoesNotMutate:
 
 
 class TestPredictUnseen:
-    def test_predict_returns_dist_per_stage(self):
+    def test_predict_returns_dist_per_node(self):
         X, y, ids, ts = _synthetic()
-        p = ForecastPipeline(steps=[("emos", EMOS())], n_folds=3)
-        p.fit_predict(X, y, ids=ids, timestamps=ts)
+        wf = WalkForward(n_folds=3, refit_on_full=True)
+        wf.fit_predict(Pipeline([EMOS()], name="emos"), X, y, ids=ids, timestamps=ts)
         X_new = np.random.default_rng(1).normal(0, 1, (40, 3))
-        pred = p.predict(X_new, ids=np.arange(40), timestamps=np.arange(40, dtype=float))
+        pred = wf.predict(X_new, ids=np.arange(40), timestamps=np.arange(40, dtype=float))
         assert "emos" in pred
         assert pred["emos"].params["mu"].shape == (40,)
 
     def test_predict_works_with_stacking(self):
-        """Pipeline.predict must thread deps_oof through downstream stages."""
+        """predict() must feed each meta its upstreams' fresh predictions."""
         X, y, ids, ts = _synthetic()
-        p = ForecastPipeline(
-            steps=[
-                ("ridge", LiftedForecaster(
-                    SklearnPoint(LinearRegression()),
-                    GlobalResidual(), name="ridge")),
-                ("emos", EMOS()),
-                ("stack", StackedParametric(deps=("ridge", "emos"))),
-            ],
-            n_folds=3,
+        ridge = Pipeline(
+            [SklearnPoint(LinearRegression()), GlobalResidual()], name="ridge",
         )
-        p.fit_predict(X, y, ids=ids, timestamps=ts)
+        emos = Pipeline([EMOS()], name="emos")
+        stack = Stacker([ridge, emos], StackedParametric(), name="stack")
+        wf = WalkForward(n_folds=3, refit_on_full=True)
+        wf.fit_predict(stack, X, y, ids=ids, timestamps=ts)
         X_new = np.random.default_rng(1).normal(0, 1, (20, 3))
-        pred = p.predict(X_new, ids=np.arange(20), timestamps=np.arange(20, dtype=float))
+        pred = wf.predict(X_new, ids=np.arange(20), timestamps=np.arange(20, dtype=float))
         assert pred["stack"].params["mu"].shape == (20,)
 
     def test_predict_before_fit_raises(self):
-        p = ForecastPipeline(steps=[("emos", EMOS())], n_folds=3)
+        wf = WalkForward(n_folds=3, refit_on_full=True)
         with pytest.raises(RuntimeError, match="fit_predict"):
-            p.predict(np.zeros((5, 3)), ids=np.arange(5), timestamps=np.arange(5, dtype=float))
+            wf.predict(np.zeros((5, 3)), ids=np.arange(5), timestamps=np.arange(5, dtype=float))
 
     def test_refit_on_full_false_disables_predict(self):
         X, y, ids, ts = _synthetic()
-        p = ForecastPipeline(steps=[("emos", EMOS())], n_folds=3,
-                             refit_on_full=False)
-        p.fit_predict(X, y, ids=ids, timestamps=ts)
+        wf = WalkForward(n_folds=3, refit_on_full=False)
+        wf.fit_predict(Pipeline([EMOS()], name="emos"), X, y, ids=ids, timestamps=ts)
         with pytest.raises(RuntimeError, match="refit_on_full"):
-            p.predict(np.zeros((5, 3)), ids=np.arange(5), timestamps=np.arange(5, dtype=float))
+            wf.predict(np.zeros((5, 3)), ids=np.arange(5), timestamps=np.arange(5, dtype=float))

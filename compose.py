@@ -17,9 +17,10 @@ Three orthogonal concepts, object-nested, names only label the leaderboard::
   cloned per fold, fit on the fold's train slice, and predicted on train+test;
   a meta receives its upstreams' fold dists **positionally** via ``upstream=``.
 
-This is the homogeneous replacement for ``ForecastPipeline`` +
-``LiftedForecaster`` + ``CalibratedForecaster`` + name-keyed ``deps_oof``. Those
-remain (for now) as the legacy surface; this module is the new core.
+This is the homogeneous composition surface — `Pipeline` (chain), `Stacker`
+(parallel combiner), `WalkForward` (CV). It replaces the retired
+retired ``ForecastPipeline`` / ``LiftedForecaster`` / ``CalibratedForecaster``
+wrappers and the name-keyed ``deps_oof`` contract.
 
 Per Rule #0.5: a meta whose upstream is missing, or a fold that emits nothing,
 raises loud rather than returning a partial result.
@@ -328,7 +329,7 @@ class WalkForward:
         dist_te = _predict_with_extras(f, X[te], ids[te], ts[te], **te_extras)
         return dist_tr, dist_te
 
-    # ---- folds (mirror ForecastPipeline; shared into _cv when it shims) ----
+    # ---- folds ----
 
     def _make_folds(self, N: int) -> list[tuple[np.ndarray, np.ndarray]]:
         if self.cv == "expanding-window":

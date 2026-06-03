@@ -48,7 +48,7 @@ from _style import (
 from bracketlearn.baselines import EmpiricalDistribution
 from bracketlearn.compose import WalkForward
 from bracketlearn.lift import GlobalResidual
-from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster, Pipeline
+from bracketlearn.pipeline import Pipeline
 from bracketlearn.score import to_point
 from bracketlearn.search import GridSearch
 from bracketlearn.trainers import (
@@ -74,12 +74,11 @@ ts = ids.astype(float)
 print(f"X shape {X.shape}, y range ${y.min()*100:.0f}k–${y.max()*100:.0f}k")
 
 # %%
-base_pipeline = ForecastPipeline(
-    steps=[("emp", EmpiricalDistribution())],
-    cv="kfold", n_folds=4, shuffle=True, random_state=0,
-    refit_on_full=False,
+base_result = WalkForward(
+    cv="kfold", n_folds=4, shuffle=True, random_state=0, refit_on_full=False,
+).fit_predict(
+    Pipeline([EmpiricalDistribution()], name="emp"), X, y, ids=ids, timestamps=ts,
 )
-base_result = base_pipeline.fit_predict(X, y, ids=ids, timestamps=ts)
 baseline_crps = base_result.score(y, metrics=["crps"])["emp"]["crps"]
 print(f"baseline Empirical CRPS = {baseline_crps:.4f}")
 
@@ -241,19 +240,17 @@ plt.show()
 
 # %%
 def _score_full(stage_name, forecaster):
-    p = ForecastPipeline(
-        steps=[(stage_name, forecaster)],
-        cv="kfold", n_folds=4, shuffle=True, random_state=0,
-        refit_on_full=False,
-    )
-    r = p.fit_predict(X, y, ids=ids, timestamps=ts)
-    return r.score(y, metrics=["crps"])[stage_name]["crps"]
+    m = forecaster if isinstance(forecaster, Pipeline) else Pipeline([forecaster], name=stage_name)
+    r = WalkForward(
+        cv="kfold", n_folds=4, shuffle=True, random_state=0, refit_on_full=False,
+    ).fit_predict(m, X, y, ids=ids, timestamps=ts)
+    return r.score(y, metrics=["crps"])[m.name]["crps"]
 
 
 lb = {
     "Empirical":           baseline_crps,
-    "Ridge+GR":            _score_full("ridge", LiftedForecaster(
-        SklearnPoint(RidgeCV()), GlobalResidual(), name="ridge",
+    "Ridge+GR":            _score_full("ridge", Pipeline(
+        [SklearnPoint(RidgeCV()), GlobalResidual()], name="ridge",
     )),
     "NGBoostNormal":       _score_full("ngb", NGBoostNormal(
         n_estimators=200, random_seed=0,
@@ -287,15 +284,16 @@ plt.show()
 from lightgbm import LGBMRegressor
 from sklearn.model_selection import KFold
 
-best_eval = ForecastPipeline(
-    steps=[("qreg", QuantileReg(
+best_eval = WalkForward(
+    cv="kfold", n_folds=4, shuffle=True, random_state=0, refit_on_full=False,
+).fit_predict(
+    Pipeline([QuantileReg(
         n_estimators=search.best_params_["qreg__n_estimators"],
         learning_rate=search.best_params_["qreg__learning_rate"],
         random_seed=0,
-    ))],
-    cv="kfold", n_folds=4, shuffle=True, random_state=0,
-    refit_on_full=False,
-).fit_predict(X, y, ids=ids, timestamps=ts)
+    )], name="qreg"),
+    X, y, ids=ids, timestamps=ts,
+)
 dist = best_eval["qreg"]
 y_oof = y[dist.ids.astype(int)]
 mu_best = to_point(dist, how="mean")

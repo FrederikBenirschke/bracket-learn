@@ -35,8 +35,9 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 import numpy as np
 
+from bracketlearn.compose import WalkForward
 from bracketlearn.lift import GlobalResidual
-from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster
+from bracketlearn.pipeline import Pipeline
 from bracketlearn.trainers import RNNHourly
 
 
@@ -81,21 +82,15 @@ def main() -> None:
     baseline = X[:, :, 0].max(axis=1)
     print(f"baseline (channel-0 max) MAE vs y: {np.mean(np.abs(baseline - y)):.2f}")
 
-    pipeline = ForecastPipeline(
-        steps=[
-            ("rnn_hourly", LiftedForecaster(
-                base=RNNHourly(epochs=40, hidden=24, embed=2, dropout=0.1),
-                lifter=GlobalResidual(),
-                name="rnn_hourly",
-            )),
-        ],
-        cv="expanding-window",
-        n_folds=3,
-        embargo=0,
+    rnn_hourly = Pipeline(
+        [RNNHourly(epochs=40, hidden=24, embed=2, dropout=0.1), GlobalResidual()],
+        name="rnn_hourly",
     )
 
-    print("\nfitting pipeline (3-fold expanding window, 3-D X)...")
-    result = pipeline.fit_predict(X, y, ids=ids, timestamps=ts)
+    print("\nfitting (3-fold expanding window, 3-D X)...")
+    result = WalkForward(
+        cv="expanding-window", n_folds=3, embargo=0,
+    ).fit_predict(rnn_hourly, X, y, ids=ids, timestamps=ts)
     print(f"got OOF dists for: {result.stages}")
 
     print("\n[distribution metrics]")

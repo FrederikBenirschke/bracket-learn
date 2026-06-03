@@ -51,8 +51,9 @@ from _style import (
 )
 from bracketlearn.adapters import BracketLadder
 from bracketlearn.baselines import EmpiricalDistribution, Persistence
+from bracketlearn.compose import WalkForward
 from bracketlearn.lift import GlobalResidual, Isotonic
-from bracketlearn.pipeline import CalibratedForecaster, ForecastPipeline, LiftedForecaster
+from bracketlearn.pipeline import Pipeline
 from bracketlearn.score import pit, to_point
 from bracketlearn.trainers import EMOS, QuantileReg
 from sklearn.metrics import mean_absolute_error, mean_squared_error
@@ -123,21 +124,16 @@ print(f"{len(edges)-1} brackets covering {edges[0]:.0f}–{edges[-1]:.0f} bikes/
 # so persistence-style leakage across the boundary is ruled out.
 
 # %%
-pipeline = ForecastPipeline(
-    steps=[
-        ("emp", EmpiricalDistribution()),
-        ("persist24", LiftedForecaster(
-            Persistence(lag=24), GlobalResidual(), name="persist24",
-        )),
-        ("emos_iso", CalibratedForecaster(
-            EMOS(), Isotonic(edges=edges), name="emos_iso",
-        )),
-        ("qreg", QuantileReg(n_estimators=200, learning_rate=0.05, random_seed=0)),
-    ],
-    cv="expanding-window", n_folds=5, embargo=24,
-    refit_on_full=False,
+model = [
+    Pipeline([EmpiricalDistribution()], name="emp"),
+    Pipeline([Persistence(lag=24), GlobalResidual()], name="persist24"),
+    Pipeline([EMOS(), Isotonic(pre_integrate_edges=edges)], name="emos_iso"),
+    Pipeline([QuantileReg(n_estimators=200, learning_rate=0.05, random_seed=0)], name="qreg"),
+]
+wf = WalkForward(
+    cv="expanding-window", n_folds=5, embargo=24, refit_on_full=False,
 )
-result = pipeline.fit_predict(X_ens, y, ids=ids, timestamps=ts)
+result = wf.fit_predict(model, X_ens, y, ids=ids, timestamps=ts)
 print(result.to_table(y, metrics=["crps", "log_score", "pit"]))
 
 # %% [markdown]
@@ -308,29 +304,26 @@ cuts = edges[1:-1]
 
 
 def _score_one(stage_name, forecaster, x_in=None):
-    p = ForecastPipeline(
-        steps=[(stage_name, forecaster)],
-        cv="expanding-window", n_folds=5, embargo=24,
-        refit_on_full=False,
-    )
-    r = p.fit_predict(x_in if x_in is not None else X_ens,
-                      y, ids=ids, timestamps=ts)
-    return r.score(y, metrics=["crps"])[stage_name]["crps"]
+    m = forecaster if isinstance(forecaster, Pipeline) else Pipeline([forecaster], name=stage_name)
+    r = WalkForward(
+        cv="expanding-window", n_folds=5, embargo=24, refit_on_full=False,
+    ).fit_predict(m, x_in if x_in is not None else X_ens, y, ids=ids, timestamps=ts)
+    return r.score(y, metrics=["crps"])[m.name]["crps"]
 
 
 lb = {
     "Empirical":      _score_one("emp", EmpiricalDistribution()),
-    "Persist-1":      _score_one("p1", LiftedForecaster(
-        Persistence(lag=1), GlobalResidual(), name="p1",
+    "Persist-1":      _score_one("p1", Pipeline(
+        [Persistence(lag=1), GlobalResidual()], name="p1",
     )),
-    "Persist-24":     _score_one("p24", LiftedForecaster(
-        Persistence(lag=24), GlobalResidual(), name="p24",
+    "Persist-24":     _score_one("p24", Pipeline(
+        [Persistence(lag=24), GlobalResidual()], name="p24",
     )),
-    "Persist-168":    _score_one("p168", LiftedForecaster(
-        Persistence(lag=168), GlobalResidual(), name="p168",
+    "Persist-168":    _score_one("p168", Pipeline(
+        [Persistence(lag=168), GlobalResidual()], name="p168",
     )),
-    "EMOS+Iso":       _score_one("emos_iso", CalibratedForecaster(
-        EMOS(), Isotonic(edges=edges), name="emos_iso",
+    "EMOS+Iso":       _score_one("emos_iso", Pipeline(
+        [EMOS(), Isotonic(pre_integrate_edges=edges)], name="emos_iso",
     )),
     "QuantileReg":    _score_one("qreg", QuantileReg(
         n_estimators=200, learning_rate=0.05, random_seed=0,

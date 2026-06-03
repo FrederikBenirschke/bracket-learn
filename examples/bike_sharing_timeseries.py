@@ -13,8 +13,8 @@ What this script demonstrates:
 
 - ``cv="expanding-window"`` on a genuine time series — train always
   precedes test in calendar time, no look-ahead.
-- ``EMOS`` wrapped with ``Isotonic`` calibration via ``CalibratedForecaster``.
-  Calibration is fit per fold on a held-out tail of the train window.
+- ``Pipeline([EMOS(), Isotonic(...)])`` — EMOS with isotonic calibration,
+  fit per fold on a held-out tail of the train window.
 - A bracket ladder over realistic demand levels (0 → 1000 bikes/hour).
 - Demonstrates the user does NOT touch ``dist.ids`` — ``result.score(y)``
   aligns OOF coverage internally.
@@ -35,8 +35,9 @@ warnings.filterwarnings(
 
 from bracketlearn.adapters import BracketLadder
 from bracketlearn.baselines import EmpiricalDistribution, Persistence
+from bracketlearn.compose import WalkForward
 from bracketlearn.lift import GlobalResidual, Isotonic
-from bracketlearn.pipeline import CalibratedForecaster, ForecastPipeline, LiftedForecaster
+from bracketlearn.pipeline import Pipeline
 from bracketlearn.trainers import EMOS, QuantileReg
 
 
@@ -87,23 +88,23 @@ def main() -> None:
     ladder = BracketLadder(edges=edges)
     print(f"ladder: {len(edges)-1} brackets covering {edges[0]:.0f}–{edges[-1]:.0f} bikes/hour")
 
-    print("\nfitting pipeline (expanding-window, 5 folds) …")
-    pipeline = ForecastPipeline(
-        steps=[
-            # Baseline 1: marginal-y distribution, ignores everything.
-            ("emp", EmpiricalDistribution()),
-            # Baseline 2: same hour yesterday + global residual σ.
-            # On hourly bike demand the diurnal cycle is the dominant
-            # signal, so lag-24 persistence is a non-trivial bar to clear.
-            ("persist24", LiftedForecaster(
-                Persistence(lag=24), GlobalResidual(), name="persist24",
-            )),
-            ("emos_iso", CalibratedForecaster(
-                EMOS(), Isotonic(edges=edges), name="emos_iso",
-            )),
-            ("qreg", QuantileReg(n_estimators=200, learning_rate=0.05,
-                                 random_seed=0)),
-        ],
+    print("\nfitting (expanding-window, 5 folds) …")
+    model = [
+        # Baseline 1: marginal-y distribution, ignores everything.
+        Pipeline([EmpiricalDistribution()], name="emp"),
+        # Baseline 2: same hour yesterday + global residual σ.
+        # On hourly bike demand the diurnal cycle is the dominant
+        # signal, so lag-24 persistence is a non-trivial bar to clear.
+        Pipeline([Persistence(lag=24), GlobalResidual()], name="persist24"),
+        Pipeline(
+            [EMOS(), Isotonic(pre_integrate_edges=edges)], name="emos_iso",
+        ),
+        Pipeline(
+            [QuantileReg(n_estimators=200, learning_rate=0.05, random_seed=0)],
+            name="qreg",
+        ),
+    ]
+    wf = WalkForward(
         cv="expanding-window", n_folds=5, embargo=24,
         refit_on_full=False,    # demo: only OOF metrics, no retrain.
     )
@@ -111,7 +112,7 @@ def main() -> None:
     # ensemble columns. The pipeline as-shipped uses ONE X per call, so
     # for the demo we feed X_emos and let qreg model on it too — both
     # trainers happen to handle small-K dense input.
-    result = pipeline.fit_predict(X_emos, y, ids=ids, timestamps=ts)
+    result = wf.fit_predict(model, X_emos, y, ids=ids, timestamps=ts)
 
     print("\n=== distribution-level OOF metrics ===")
     print(result.to_table(y, metrics=["crps", "log_score", "pit"]))

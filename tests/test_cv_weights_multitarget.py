@@ -27,7 +27,7 @@ from sklearn.linear_model import LinearRegression
 from bracketlearn.compose import Stacker, WalkForward
 from bracketlearn.lift import GlobalResidual
 from bracketlearn.multitarget import MultiOutput
-from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster, Pipeline
+from bracketlearn.pipeline import Pipeline
 from bracketlearn.search import GridSearch
 from bracketlearn.trainers import EMOS, MixtureNormals, SklearnPoint
 
@@ -84,26 +84,27 @@ class TestCVVariants:
 
     def test_rolling_requires_window(self):
         with pytest.raises(ValueError, match="rolling_window"):
-            ForecastPipeline(steps=[("emos", EMOS())], cv="rolling-window")
+            WalkForward(cv="rolling-window")
 
     def test_expanding_rejects_shuffle(self):
         with pytest.raises(ValueError, match="shuffle"):
-            ForecastPipeline(steps=[("emos", EMOS())],
-                             cv="expanding-window", shuffle=True)
+            WalkForward(cv="expanding-window", shuffle=True)
 
     def test_kfold_end_to_end(self):
         X, y, ids, ts = _synthetic()
-        p = ForecastPipeline(steps=[("emos", EMOS())], cv="kfold", n_folds=4,
-                             refit_on_full=False)
-        result = p.fit_predict(X, y, ids=ids, timestamps=ts)
+        result = WalkForward(cv="kfold", n_folds=4, refit_on_full=False).fit_predict(
+            Pipeline([EMOS()], name="emos"), X, y, ids=ids, timestamps=ts,
+        )
         s = result.score(y, metrics=["crps"])
         assert np.isfinite(s["emos"]["crps"])
 
     def test_rolling_end_to_end(self):
         X, y, ids, ts = _synthetic(n=300)
-        p = ForecastPipeline(steps=[("emos", EMOS())], cv="rolling-window",
-                             n_folds=3, rolling_window=120, refit_on_full=False)
-        result = p.fit_predict(X, y, ids=ids, timestamps=ts)
+        result = WalkForward(
+            cv="rolling-window", n_folds=3, rolling_window=120, refit_on_full=False,
+        ).fit_predict(
+            Pipeline([EMOS()], name="emos"), X, y, ids=ids, timestamps=ts,
+        )
         s = result.score(y, metrics=["crps"])
         assert np.isfinite(s["emos"]["crps"])
 
@@ -140,12 +141,13 @@ class TestSampleWeights:
         X, y, ids, ts = _synthetic()
         w = np.full(y.shape[0], 1.0)
         w[:20] = 1e3  # bias toward early rows
-        p = ForecastPipeline(steps=[("emos", EMOS())], n_folds=3,
-                             refit_on_full=False)
-        r_weighted = p.fit_predict(X, y, ids=ids, timestamps=ts, sample_weight=w)
-        r_unweighted = ForecastPipeline(
-            steps=[("emos", EMOS())], n_folds=3, refit_on_full=False,
-        ).fit_predict(X, y, ids=ids, timestamps=ts)
+        r_weighted = WalkForward(n_folds=3, refit_on_full=False).fit_predict(
+            Pipeline([EMOS()], name="emos"), X, y, ids=ids, timestamps=ts,
+            sample_weight=w,
+        )
+        r_unweighted = WalkForward(n_folds=3, refit_on_full=False).fit_predict(
+            Pipeline([EMOS()], name="emos"), X, y, ids=ids, timestamps=ts,
+        )
         # OOF dists should differ.
         assert not np.allclose(
             r_weighted["emos"].params["mu"],
@@ -154,24 +156,24 @@ class TestSampleWeights:
 
     def test_pipeline_rejects_misshapen_weight(self):
         X, y, ids, ts = _synthetic()
-        p = ForecastPipeline(steps=[("emos", EMOS())], n_folds=3)
         with pytest.raises(ValueError, match="sample_weight length"):
-            p.fit_predict(X, y, ids=ids, timestamps=ts,
-                          sample_weight=np.ones(10))
+            WalkForward(n_folds=3).fit_predict(
+                Pipeline([EMOS()], name="emos"), X, y, ids=ids, timestamps=ts,
+                sample_weight=np.ones(10),
+            )
 
     def test_sklearnpoint_forwards_to_estimator(self):
         """SklearnPoint(LinearRegression()) accepts sample_weight."""
         X, y, ids, ts = _synthetic()
         w = np.ones(y.shape[0])
         w[:10] = 1e3
-        p = ForecastPipeline(
-            steps=[("ridge", LiftedForecaster(
-                SklearnPoint(LinearRegression()), GlobalResidual(),
-                name="ridge"))],
-            n_folds=3, refit_on_full=False,
+        ridge = Pipeline(
+            [SklearnPoint(LinearRegression()), GlobalResidual()], name="ridge",
         )
         # Should run without TypeError despite weights.
-        result = p.fit_predict(X, y, ids=ids, timestamps=ts, sample_weight=w)
+        result = WalkForward(n_folds=3, refit_on_full=False).fit_predict(
+            ridge, X, y, ids=ids, timestamps=ts, sample_weight=w,
+        )
         assert "ridge" in result.forecasts
 
     def test_mixture_weights_change_sigma_v(self):

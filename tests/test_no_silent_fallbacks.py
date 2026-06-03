@@ -180,9 +180,9 @@ def test_stacking_raises_on_misaligned_upstream_ids():
     d2 = DistributionForecast.from_normal(
         mu=np.zeros(N), sigma=np.ones(N), ids=ids[::-1], timestamps=ts, provenance=_prov(),
     )
-    stack = StackedParametric(deps=("a", "b"))
+    stack = StackedParametric()
     with pytest.raises(ValueError, match="does not match"):
-        stack.fit(np.zeros((N, 2)), np.zeros(N), deps_oof={"a": d1, "b": d2})
+        stack.fit(np.zeros((N, 2)), np.zeros(N), upstream=[d1, d2])
 
 
 def test_stacking_raises_on_degenerate_sigma():
@@ -197,9 +197,9 @@ def test_stacking_raises_on_degenerate_sigma():
     d = DistributionForecast.from_normal(
         mu=y.copy(), sigma=np.ones(N), ids=ids, timestamps=ts, provenance=_prov(),
     )
-    stack = StackedParametric(deps=("a",))
+    stack = StackedParametric()
     with pytest.raises(ValueError, match="degenerate"):
-        stack.fit(np.zeros((N, 2)), y, deps_oof={"a": d})
+        stack.fit(np.zeros((N, 2)), y, upstream=[d])
 
 
 def test_emos_falls_back_to_constant_sigma_when_mom_gives_negative_coef():

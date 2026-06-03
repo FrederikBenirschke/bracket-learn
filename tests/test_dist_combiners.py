@@ -144,14 +144,12 @@ class TestDistAsFeatures:
         d2 = _normal_dist(rng.normal(0, 1, 10), np.full(10, 2.0), prov, ids, ts)
         from sklearn.linear_model import LinearRegression
         node = DistAsFeatures(
-            deps=("a", "b"),
             downstream=SklearnPoint(LinearRegression()),
             feature_taus=(0.1, 0.5, 0.9),
             tail_cutpoints=(-1.0, 1.0),
         )
-        deps = {"a": d1, "b": d2}
-        node.fit(np.zeros((10, 1)), y, deps_oof=deps)
-        # 2 deps × (3 taus + mean + var + 2 cutpoints) = 14
+        node.fit(np.zeros((10, 1)), y, upstream=[d1, d2])
+        # 2 upstreams × (3 taus + mean + var + 2 cutpoints) = 14
         assert node._n_features_ == 2 * (3 + 1 + 1 + 2)
 
     def test_predict_round_trips(self, prov, ids_ts):
@@ -162,23 +160,19 @@ class TestDistAsFeatures:
         d2 = _normal_dist(rng.normal(0, 1, 20), np.full(20, 1.0), prov, ids, ts)
         from sklearn.linear_model import LinearRegression
         node = DistAsFeatures(
-            deps=("a", "b"),
             downstream=SklearnPoint(LinearRegression()),
         )
-        deps = {"a": d1, "b": d2}
-        node.fit(np.zeros((20, 1)), y, deps_oof=deps)
-        pf = node.predict(np.zeros((20, 1)), ids=ids, timestamps=ts, deps_oof=deps)
+        node.fit(np.zeros((20, 1)), y, upstream=[d1, d2])
+        pf = node.predict(np.zeros((20, 1)), ids=ids, timestamps=ts, upstream=[d1, d2])
         assert pf.mu.shape == (20,)
 
-    def test_missing_dep_raises(self, prov, ids_ts):
-        ids, ts = ids_ts(5)
+    def test_missing_upstream_raises(self, prov, ids_ts):
         from sklearn.linear_model import LinearRegression
         node = DistAsFeatures(
-            deps=("a", "b"),
             downstream=SklearnPoint(LinearRegression()),
         )
-        with pytest.raises(ValueError, match="deps_oof"):
-            node.fit(np.zeros((5, 1)), np.zeros(5), deps_oof={"a": None})
+        with pytest.raises(ValueError, match="upstream"):
+            node.fit(np.zeros((5, 1)), np.zeros(5))
 
 
 # ---------------------------------------------------------------------------
@@ -197,8 +191,8 @@ class TestLinearPoolDist:
                            prov, ids, ts)
         # B: N(10, 1) — far off.
         d_b = _normal_dist(np.full(100, 10.0), np.full(100, 1.0), prov, ids, ts)
-        pool = LinearPoolDist(deps=("a", "b"), n_samples=50)
-        pool.fit(np.zeros((100, 1)), y, deps_oof={"a": d_a, "b": d_b})
+        pool = LinearPoolDist(n_samples=50)
+        pool.fit(np.zeros((100, 1)), y, upstream=[d_a, d_b])
         assert pool.weights_[0] > 0.9
         assert pool.weights_[1] < 0.1
 
@@ -208,11 +202,11 @@ class TestLinearPoolDist:
         y = rng.normal(0, 1, 30)
         d_a = _normal_dist(rng.normal(0, 1, 30), np.full(30, 1.0), prov, ids, ts)
         d_b = _normal_dist(rng.normal(0, 1, 30), np.full(30, 1.5), prov, ids, ts)
-        pool = LinearPoolDist(deps=("a", "b"), n_samples=50)
-        pool.fit(np.zeros((30, 1)), y, deps_oof={"a": d_a, "b": d_b})
+        pool = LinearPoolDist(n_samples=50)
+        pool.fit(np.zeros((30, 1)), y, upstream=[d_a, d_b])
         out = pool.predict_dist(
             np.zeros((30, 1)), ids=ids, timestamps=ts,
-            deps_oof={"a": d_a, "b": d_b},
+            upstream=[d_a, d_b],
         )
         assert out.qvals.shape == (30, 99)
         # Monotone non-decreasing along τ.
@@ -228,14 +222,16 @@ class TestLinearPoolDist:
         d_mix = m.predict_dist(X, ids=ids, timestamps=ts)
         e = EMOS().fit(X, y)
         d_emos = e.predict_dist(X, ids=ids, timestamps=ts)
-        pool = LinearPoolDist(deps=("mix", "emos"), n_samples=40)
-        pool.fit(X, y, deps_oof={"mix": d_mix, "emos": d_emos})
+        pool = LinearPoolDist(n_samples=40)
+        pool.fit(X, y, upstream=[d_mix, d_emos])
         # Weights sum to 1.
         np.testing.assert_allclose(pool.weights_.sum(), 1.0)
 
-    def test_rejects_single_dep(self):
+    def test_rejects_single_upstream(self, prov, ids_ts):
+        ids, ts = ids_ts(10)
+        d_a = _normal_dist(np.zeros(10), np.full(10, 1.0), prov, ids, ts)
         with pytest.raises(ValueError, match="≥2"):
-            LinearPoolDist(deps=("only_one",))
+            LinearPoolDist().fit(np.zeros((10, 1)), np.zeros(10), upstream=[d_a])
 
 
 # ---------------------------------------------------------------------------
@@ -255,12 +251,12 @@ class TestCDFBoostBracket:
         edges = np.array([-3.0, -1.0, 0.0, 1.0, 3.0])
         brackets_by_id = {int(k): edges for k in ids}
         node = CDFBoostBracket(
-            deps=("a", "b"), brackets_by_id=brackets_by_id,
+            brackets_by_id=brackets_by_id,
             n_estimators=30, num_leaves=7, min_child_samples=5,
         )
-        node.fit(X, y, ids=ids, deps_oof={"a": d_a, "b": d_b})
+        node.fit(X, y, ids=ids, upstream=[d_a, d_b])
         out = node.predict_dist(
-            X, ids=ids, timestamps=ts, deps_oof={"a": d_a, "b": d_b},
+            X, ids=ids, timestamps=ts, upstream=[d_a, d_b],
         )
         assert out.probs.shape == (120, 4)
         np.testing.assert_allclose(out.probs.sum(axis=1), 1.0, atol=1e-9)
@@ -277,11 +273,11 @@ class TestCDFBoostBracket:
         edges = np.array([-2.0, 0.0, 2.0])      # 2 bins
         brackets_by_id = {int(k): edges for k in ids}
         node = CDFBoostBracket(
-            deps=("a", "b"), brackets_by_id=brackets_by_id,
+            brackets_by_id=brackets_by_id,
             n_estimators=20, min_child_samples=5,
             include_raw_X=True,
         )
-        node.fit(X, y, ids=ids, deps_oof={"a": d_a, "b": d_b})
+        node.fit(X, y, ids=ids, upstream=[d_a, d_b])
         # Feature width = X.shape[1] + K * (B+1) = 2 + 2*3 = 8.
         # Check via the first trained head (skip the "const" sentinel case).
         for kind, model in node.clfs_:
@@ -291,49 +287,24 @@ class TestCDFBoostBracket:
 
     def test_rejects_bad_edges(self):
         with pytest.raises(ValueError, match="strictly increasing"):
-            CDFBoostBracket(deps=("a",), brackets_by_id={0: np.array([0.0, 2.0, 1.0])})
+            CDFBoostBracket(brackets_by_id={0: np.array([0.0, 2.0, 1.0])})
         with pytest.raises(ValueError, match=r"≥2 bins"):
-            CDFBoostBracket(deps=("a",), brackets_by_id={0: np.array([0.0, 1.0])})
+            CDFBoostBracket(brackets_by_id={0: np.array([0.0, 1.0])})
 
     def test_rejects_ragged_B(self):
         with pytest.raises(ValueError, match="uniform bin count"):
             CDFBoostBracket(
-                deps=("a",),
                 brackets_by_id={
                     0: np.array([0.0, 1.0, 2.0]),
                     1: np.array([0.0, 1.0, 2.0, 3.0]),
                 },
             )
 
-    def test_missing_dep_raises_at_fit(self, prov, ids_ts):
+    def test_missing_upstream_raises_at_fit(self, prov, ids_ts):
         _skip_if_no_lightgbm()
         node = CDFBoostBracket(
-            deps=("a", "b"),
             brackets_by_id={int(i): np.array([0.0, 1.0, 2.0, 3.0]) for i in range(5)},
             n_estimators=10,
         )
-        with pytest.raises(ValueError, match="deps_oof"):
-            node.fit(np.zeros((5, 1)), np.zeros(5), ids=np.arange(5), deps_oof={"a": None})
-
-    def test_positional_upstream_matches_deps_oof(self, prov, ids_ts):
-        """The Stacker positional contract (upstream=[...], no deps names)
-        reproduces the legacy name-keyed deps_oof path bit-for-bit."""
-        _skip_if_no_lightgbm()
-        ids, ts = ids_ts(120)
-        rng = np.random.default_rng(7)
-        X = rng.normal(0, 1, (120, 3))
-        y = X.mean(axis=1) + rng.normal(0, 0.5, 120)
-        d_a = _normal_dist(X.mean(axis=1), np.full(120, 1.0), prov, ids, ts)
-        d_b = _normal_dist(X.mean(axis=1) + 0.5, np.full(120, 1.5), prov, ids, ts)
-        edges = np.array([-3.0, -1.0, 0.0, 1.0, 3.0])
-        brackets_by_id = {int(k): edges for k in ids}
-        kw = dict(n_estimators=30, num_leaves=7, min_child_samples=5)
-        # Legacy: deps names + deps_oof.
-        legacy = CDFBoostBracket(deps=("a", "b"), brackets_by_id=brackets_by_id, **kw)
-        legacy.fit(X, y, ids=ids, deps_oof={"a": d_a, "b": d_b})
-        out_l = legacy.predict_dist(X, ids=ids, timestamps=ts, deps_oof={"a": d_a, "b": d_b})
-        # Positional: no deps, upstream list in declared order.
-        pos = CDFBoostBracket(brackets_by_id=brackets_by_id, **kw)
-        pos.fit(X, y, ids=ids, upstream=[d_a, d_b])
-        out_p = pos.predict_dist(X, ids=ids, timestamps=ts, upstream=[d_a, d_b])
-        np.testing.assert_allclose(out_l.probs, out_p.probs, rtol=1e-12, atol=1e-12)
+        with pytest.raises(ValueError, match="upstream"):
+            node.fit(np.zeros((5, 1)), np.zeros(5), ids=np.arange(5))

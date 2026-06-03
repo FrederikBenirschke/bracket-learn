@@ -20,7 +20,7 @@
 # then price a ladder of binary contracts ("will this house sell above
 # $X?") against the forecast distribution.
 #
-# 1. Fit three forecasters inside a `ForecastPipeline`: `Empirical`
+# 1. Fit three forecasters under one `WalkForward`: `Empirical`
 #    (baseline), `Ridge + GlobalResidual`, `QuantileReg`.
 # 2. Score them on distribution-level (CRPS, PIT) and contract-level
 #    (Brier, log-loss) metrics.
@@ -57,8 +57,9 @@ from _style import (
 )
 from bracketlearn.adapters import BracketLadder
 from bracketlearn.baselines import EmpiricalDistribution
+from bracketlearn.compose import WalkForward
 from bracketlearn.lift import GlobalResidual
-from bracketlearn.pipeline import ForecastPipeline, LiftedForecaster
+from bracketlearn.pipeline import Pipeline
 from bracketlearn.score import pit, to_point
 from bracketlearn.trainers import QuantileReg, SklearnPoint
 from sklearn.metrics import mean_absolute_error, mean_squared_error
@@ -95,18 +96,15 @@ print(f"{len(edges)-1} brackets covering ${edges[0]*100:.0f}k–${edges[-1]*100:
 # ## Fit the headline pipeline
 
 # %%
-pipeline = ForecastPipeline(
-    steps=[
-        ("emp", EmpiricalDistribution()),
-        ("ridge", LiftedForecaster(
-            SklearnPoint(RidgeCV()), GlobalResidual(), name="ridge",
-        )),
-        ("qreg", QuantileReg(n_estimators=200, learning_rate=0.05, random_seed=0)),
-    ],
-    cv="kfold", n_folds=5, shuffle=True, random_state=0,
-    refit_on_full=True,
+model = [
+    Pipeline([EmpiricalDistribution()], name="emp"),
+    Pipeline([SklearnPoint(RidgeCV()), GlobalResidual()], name="ridge"),
+    Pipeline([QuantileReg(n_estimators=200, learning_rate=0.05, random_seed=0)], name="qreg"),
+]
+wf = WalkForward(
+    cv="kfold", n_folds=5, shuffle=True, random_state=0, refit_on_full=True,
 )
-result = pipeline.fit_predict(X, y, ids=ids, timestamps=ts)
+result = wf.fit_predict(model, X, y, ids=ids, timestamps=ts)
 print(result.to_table(y, metrics=["crps", "log_score", "pit"]))
 
 # %% [markdown]
@@ -247,7 +245,7 @@ example_ids = [int(np.argmin(np.abs(y - q))) for q in q_targets]
 print(f"example house indices: {example_ids}  realised: "
       + ", ".join(f"${y[i]*100:.0f}k" for i in example_ids))
 
-pred = pipeline.predict(
+pred = wf.predict(
     X[example_ids],
     ids=np.arange(len(example_ids)),
     timestamps=np.arange(len(example_ids), dtype=float),
@@ -309,14 +307,13 @@ from bracketlearn.trainers import NGBoostNormal, QuantileForest
 
 
 def _score_one(stage_name, forecaster):
-    p = ForecastPipeline(
-        steps=[(stage_name, forecaster)],
-        cv="kfold", n_folds=5, shuffle=True, random_state=0,
-        refit_on_full=False,
-    )
-    r = p.fit_predict(X, y, ids=ids, timestamps=ts)
-    metrics = r.score(y, metrics=["crps", "log_score"])[stage_name]
-    dist = r[stage_name]
+    model = forecaster if isinstance(forecaster, Pipeline) else Pipeline([forecaster], name=stage_name)
+    key = model.name
+    r = WalkForward(
+        cv="kfold", n_folds=5, shuffle=True, random_state=0, refit_on_full=False,
+    ).fit_predict(model, X, y, ids=ids, timestamps=ts)
+    metrics = r.score(y, metrics=["crps", "log_score"])[key]
+    dist = r[key]
     y_oof = y[dist.ids.astype(int)]
     mu = to_point(dist, how="mean")
     return {
@@ -329,8 +326,8 @@ def _score_one(stage_name, forecaster):
 
 leaderboard = {
     "Empirical":     _score_one("emp", EmpiricalDistribution()),
-    "Ridge+GR":      _score_one("ridge", LiftedForecaster(
-        SklearnPoint(RidgeCV()), GlobalResidual(), name="ridge",
+    "Ridge+GR":      _score_one("ridge", Pipeline(
+        [SklearnPoint(RidgeCV()), GlobalResidual()], name="ridge",
     )),
     "NGBoostNormal": _score_one("ngb", NGBoostNormal(
         n_estimators=200, random_seed=0,
@@ -389,9 +386,9 @@ lgb_pred = _sklearn_oof(lambda: LGBMRegressor(
 # Three probabilistic models (best of family) + two classical regressors.
 point_panels = []
 for name, mu, y_ref in [
-    ("Ridge+GR", to_point(pipeline.predict(
+    ("Ridge+GR", to_point(wf.predict(
         X, ids=ids, timestamps=ts)["ridge"], how="mean"), y),
-    ("QReg", to_point(pipeline.predict(
+    ("QReg", to_point(wf.predict(
         X, ids=ids, timestamps=ts)["qreg"], how="mean"), y),
     ("sklearn RidgeCV", ridge_pred, y),
     ("LightGBM",        lgb_pred,    y),

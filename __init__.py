@@ -9,9 +9,8 @@ transformer stages.
 Quick start::
 
     from bracketlearn import (
-        ForecastPipeline, BracketLadder,
-        EMOS, QuantileReg, SklearnPoint,
-        LiftedForecaster, GlobalResidual,
+        Pipeline, Stacker, WalkForward, BracketLadder,
+        EMOS, QuantileReg, SklearnPoint, GlobalResidual,
     )
 
 Less commonly used symbols live in their submodules:
@@ -63,9 +62,6 @@ from bracketlearn.multitarget import (
 )
 from bracketlearn.compose import Stacker, WalkForward
 from bracketlearn.pipeline import (
-    CalibratedForecaster,
-    ForecastPipeline,
-    LiftedForecaster,
     Pipeline,
     PipelineResult,
 )
@@ -155,11 +151,7 @@ __all__ = [
     "Isotonic",
     "PITCalibrate",
     "StudentTResidual",
-    # composites
-    "CalibratedForecaster",
-    "LiftedForecaster",
-    # pipeline
-    "ForecastPipeline",
+    # composition
     "Pipeline",
     "PipelineResult",
     "Stacker",

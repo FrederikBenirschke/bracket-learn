@@ -42,29 +42,26 @@ class DistAsFeatures(BaseEstimator):
     If you also want raw X, build a separate node — keeping this class
     single-purpose is intentional.
 
-    The downstream's own ``depends_on`` is ignored; ``DistAsFeatures`` owns
-    the dep contract via its ``deps`` argument.
+    Upstream forecasts arrive **positionally** via ``upstream=[dist, ...]``
+    (the `Stacker` contract); ``DistAsFeatures`` featurizes them in that order.
 
     Requires each upstream backing to support ``ppf`` for the requested
     ``feature_taus``. v0.1 ppf coverage: parametric-normal, mixture-normal,
     quantile, bracket.
     """
 
-    deps: tuple[str, ...] = ()
     downstream: Any = None
     feature_taus: tuple[float, ...] = _DIST_FEATURE_TAUS
     tail_cutpoints: tuple[float, ...] = ()
     include_mean: bool = True
     include_variance: bool = True
     name: str = "DistAsFeatures"
+    depends_on: tuple[str, ...] = ()
     _n_features_: int | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if self.downstream is None:
             raise ValueError("DistAsFeatures requires a downstream forecaster")
-        # ``deps`` is optional: empty under the positional ``upstream=`` contract
-        # (Stacker), non-empty for legacy name-keyed callers.
-        self.depends_on = tuple(self.deps)
 
     def _featurize(self, ups: list[Any]) -> np.ndarray:
         taus = np.asarray(self.feature_taus, dtype=float)
@@ -86,17 +83,14 @@ class DistAsFeatures(BaseEstimator):
         y: np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
         upstream: list[Any] | None = None,
     ) -> Self:
-        ups = resolve_upstream(
-            self.depends_on, deps_oof, upstream, where="DistAsFeatures.fit",
-        )
+        ups = resolve_upstream(upstream, where="DistAsFeatures.fit")
         Z = self._featurize(ups)
         # Forward sample_weight only if downstream accepts it; matches the
         # SklearnPoint convention.
         try:
-            self.downstream.fit(Z, y, sample_weight=sample_weight, deps_oof=None)
+            self.downstream.fit(Z, y, sample_weight=sample_weight)
         except TypeError:
             self.downstream.fit(Z, y)
         self._n_features_ = Z.shape[1]
@@ -108,10 +102,9 @@ class DistAsFeatures(BaseEstimator):
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
-        deps_oof: dict[str, Any] | None = None,
         upstream: list[Any] | None = None,
     ) -> PointForecast:
-        Z = self._predict_features(deps_oof, upstream)
+        Z = self._predict_features(upstream)
         return self.downstream.predict(Z, ids=ids, timestamps=timestamps)
 
     def predict_dist(
@@ -120,18 +113,13 @@ class DistAsFeatures(BaseEstimator):
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
-        deps_oof: dict[str, Any] | None = None,
         upstream: list[Any] | None = None,
     ) -> DistributionForecast:
-        Z = self._predict_features(deps_oof, upstream)
+        Z = self._predict_features(upstream)
         return self.downstream.predict_dist(Z, ids=ids, timestamps=timestamps)
 
-    def _predict_features(
-        self, deps_oof: dict[str, Any] | None, upstream: list[Any] | None,
-    ) -> np.ndarray:
-        ups = resolve_upstream(
-            self.depends_on, deps_oof, upstream, where="DistAsFeatures.predict",
-        )
+    def _predict_features(self, upstream: list[Any] | None) -> np.ndarray:
+        ups = resolve_upstream(upstream, where="DistAsFeatures.predict")
         Z = self._featurize(ups)
         if Z.shape[1] != self._n_features_:
             raise RuntimeError(
@@ -175,30 +163,28 @@ class BracketStacking(BaseEstimator):
 
     Contract:
 
-    * All ``deps_oof[name]`` must be ``BracketForecast`` with matching
-      per-row edges (same K, same boundaries). Rows where deps disagree
-      on edges are caller-resolved upstream — typically by filtering to
-      the modal K and dropping non-conforming rows.
+    * All upstreams must be ``BracketForecast`` with matching per-row edges
+      (same K, same boundaries). Rows where upstreams disagree on edges are
+      caller-resolved — typically by filtering to the modal K and dropping
+      non-conforming rows.
     * ``estimator`` must be sklearn-compatible with ``predict_proba``.
       ``num_class`` is auto-set from observed K when the estimator
       accepts that parameter (LightGBM, sklearn classifiers); otherwise
       caller pre-configures it.
 
-    Predict-time edges are taken from the first dep — since the contract
-    requires all deps share edges, any one is canonical.
+    Predict-time edges are taken from the first upstream — since the contract
+    requires all upstreams share edges, any one is canonical.
     """
 
-    deps: tuple[str, ...] = ()
     estimator: Any = None
     name: str = "BracketStacking"
+    depends_on: tuple[str, ...] = ()
     K_: int | None = field(default=None, init=False)
     edges_template_: np.ndarray | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if self.estimator is None:
             raise ValueError("BracketStacking requires an estimator")
-        # ``deps`` optional: empty under the positional ``upstream=`` contract.
-        self.depends_on = tuple(self.deps)
 
     def _assemble(
         self, ups: list[Any], N: int,
@@ -213,7 +199,7 @@ class BracketStacking(BaseEstimator):
         K: int | None = None
         edges_ref: np.ndarray | None = None
         for i, d in enumerate(ups):
-            label = upstream_label(self.depends_on, i)
+            label = upstream_label(i)
             if not isinstance(d, BracketForecast):
                 raise NotImplementedError(
                     f"BracketStacking expects bracket-backed upstream; "
@@ -249,7 +235,7 @@ class BracketStacking(BaseEstimator):
                 upstream_ids = d.ids
             elif not np.array_equal(upstream_ids, d.ids):
                 raise ValueError(
-                    f"BracketStacking: upstream {upstream_label(self.depends_on, i)}.ids "
+                    f"BracketStacking: upstream {upstream_label(i)}.ids "
                     "does not match the first upstream's ids — rows would be misaligned"
                 )
         if (
@@ -258,7 +244,7 @@ class BracketStacking(BaseEstimator):
             and not np.array_equal(np.asarray(caller_ids), upstream_ids)
         ):
             raise ValueError(
-                "BracketStacking: caller's ids do not match deps_oof ids — "
+                "BracketStacking: caller's ids do not match upstream ids — "
                 "rows would be misaligned"
             )
 
@@ -269,23 +255,20 @@ class BracketStacking(BaseEstimator):
         *,
         ids: np.ndarray | None = None,
         sample_weight: np.ndarray | None = None,
-        deps_oof: dict[str, Any] | None = None,
         upstream: list[Any] | None = None,
         labels: np.ndarray | None = None,
     ) -> Self:
         """Fit the multiclass head.
 
         ``labels`` (optional) overrides the default ``realized_bin(y)``
-        derivation. Use it when the upstream dep's edges don't reflect
+        derivation. Use it when the upstream's edges don't reflect
         the true bin assignment — e.g. Kalshi overlapping brackets,
         where multiple brackets contain y and the caller has its own
-        "first match" tie-breaker. When omitted, the first dep's
+        "first match" tie-breaker. When omitted, the first upstream's
         ``realized_bin(y)`` provides the labels and rows with
         non-finite y are dropped.
         """
-        ups = resolve_upstream(
-            self.depends_on, deps_oof, upstream, where="BracketStacking.fit",
-        )
+        ups = resolve_upstream(upstream, where="BracketStacking.fit")
         y = np.asarray(y, dtype=float)
         N = y.shape[0]
         self._validate_ids(ups, ids)
@@ -338,15 +321,11 @@ class BracketStacking(BaseEstimator):
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
-        deps_oof: dict[str, Any] | None = None,
         upstream: list[Any] | None = None,
     ) -> BracketForecast:
         if self.K_ is None:
             raise RuntimeError("BracketStacking.predict_dist called before fit")
-        ups = resolve_upstream(
-            self.depends_on, deps_oof, upstream,
-            where="BracketStacking.predict_dist",
-        )
+        ups = resolve_upstream(upstream, where="BracketStacking.predict_dist")
         N = len(ids)
         self._validate_ids(ups, np.asarray(ids))
         Z, K, edges_ref = self._assemble(ups, N)
