@@ -83,47 +83,6 @@ def test_ragged_rows_with_nan_padding(prov, ids_ts):
     assert bins.tolist() == [2, 0, 1]
 
 
-def test_shared_edges_returns_1d_when_uniform(prov, ids_ts, rng):
-    n, B = 6, 4
-    ids, ts = ids_ts(n)
-    edges = np.linspace(0, 1, B + 1)
-    probs = rng.dirichlet(np.ones(B), size=n)
-    d = DistributionForecast.from_brackets(
-        edges=edges, probs=probs, ids=ids, timestamps=ts, provenance=prov,
-    )
-    out = d.shared_edges()
-    assert out.shape == (B + 1,)
-    np.testing.assert_array_equal(out, edges)
-
-
-def test_shared_edges_raises_on_per_row(prov, ids_ts, rng):
-    n, B = 4, 3
-    ids, ts = ids_ts(n)
-    edges = np.array([np.linspace(i, i + 1, B + 1) for i in range(n)])
-    probs = rng.dirichlet(np.ones(B), size=n)
-    d = BracketForecast.from_arrays(
-        edges=edges, probs=probs, ids=ids, timestamps=ts, provenance=prov,
-    )
-    with pytest.raises(ValueError, match="distinct edge vectors"):
-        d.shared_edges()
-
-
-def test_shared_edges_raises_on_ragged(prov, ids_ts):
-    n = 2
-    ids, ts = ids_ts(n)
-    edges = np.full((n, 4), np.nan)
-    probs = np.full((n, 3), np.nan)
-    edges[0, :4] = [0.0, 1.0, 2.0, 3.0]
-    probs[0, :3] = [0.3, 0.3, 0.4]
-    edges[1, :3] = [0.0, 1.0, 2.0]
-    probs[1, :2] = [0.5, 0.5]
-    d = BracketForecast.from_arrays(
-        edges=edges, probs=probs, ids=ids, timestamps=ts, provenance=prov,
-    )
-    with pytest.raises(ValueError, match="NaN-padded"):
-        d.shared_edges()
-
-
 # ---------------------------------------------------------------------------
 # integrate() lift — per subclass.
 # ---------------------------------------------------------------------------

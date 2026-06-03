@@ -30,10 +30,6 @@ class BracketForecast(DistributionForecast):
     the matching one-shorter prefix in ``probs``). All accessor methods
     mask NaN-padded positions out and return finite results for valid
     rows.
-
-    The ``shared_edges`` helper returns the 1-D edge vector iff every
-    row has identical edges (and no NaN padding); otherwise it raises.
-    Use it from legacy callers that still assume a shared ladder.
     """
 
     edges: np.ndarray            # (N, B+1) with NaN padding for ragged rows
@@ -136,27 +132,6 @@ class BracketForecast(DistributionForecast):
     @property
     def tail_support(self) -> str:
         return "bounded"
-
-    def shared_edges(self) -> np.ndarray:
-        """Return the 1-D edge vector if every row shares the same edges.
-
-        Raises if rows have ragged lengths (any NaN padding) or numerically
-        distinct edge vectors. Use from legacy callers that still assume a
-        shared ladder; new code should consume ``self.edges`` (2-D) directly.
-        """
-        edges = self.edges
-        if np.isnan(edges).any():
-            raise ValueError(
-                "shared_edges: at least one row has NaN-padded edges — rows "
-                "are ragged. Update caller to consume per-row edges."
-            )
-        first = edges[0]
-        if not np.allclose(edges, first[None, :]):
-            raise ValueError(
-                "shared_edges: rows have distinct edge vectors. Update caller "
-                "to consume per-row edges."
-            )
-        return first.copy()
 
     # ---------- internal helpers ----------
 
