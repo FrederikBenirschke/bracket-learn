@@ -86,7 +86,6 @@ from bracketlearn.trainers import (
     RNNHourly,
     SklearnPoint,
     StackedParametric,
-    Stacking,
     TailSpecialist,
 )
 from bracketlearn.transform import GroupByZScore, IdentityTransformer
@@ -138,7 +137,6 @@ __all__ = [
     "RNNHourly",
     "SklearnPoint",
     "StackedParametric",
-    "Stacking",  # legacy alias for StackedParametric
     "TailSpecialist",
     # transformers
     "BracketExpander",

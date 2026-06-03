@@ -1,8 +1,7 @@
 """Native parametric-distribution forecasters.
 
 EMOS, NGBoostNormal, MixtureNormals (parametric normal / mixture);
-StackedParametric (parametric meta-learner over positional ``upstream=``;
-legacy name ``Stacking`` is preserved as a module-level alias for back-compat).
+StackedParametric (parametric meta-learner over positional ``upstream=``).
 """
 
 from __future__ import annotations
@@ -517,7 +516,7 @@ class HeteroscedasticNormal(BaseEstimator):
 # ---------------------------------------------------------------------------
 # StackedParametric — DistForecaster meta-learner over upstream μ (and
 # optionally σ), received positionally via ``upstream=[...]`` under a
-# ``Stacker``. Legacy name ``Stacking`` aliased below.
+# ``Stacker``.
 # ---------------------------------------------------------------------------
 
 
@@ -525,7 +524,7 @@ class HeteroscedasticNormal(BaseEstimator):
 class StackedParametric(BaseEstimator):
     """Meta-learner over upstream forecasters' parametric outputs.
 
-    Defaults reproduce v0.1 ``Stacking`` behaviour exactly: OLS over
+    Defaults reproduce v0.1 ``StackedParametric`` behaviour exactly: OLS over
     upstream μ with intercept (unconstrained), constant σ̂ from residual
     std, Gaussian output. The optional knobs below widen the surface.
 
@@ -824,12 +823,6 @@ class StackedParametric(BaseEstimator):
         )
 
 
-# Legacy alias. Pre-rename callers used ``Stacking``; keep the name
-# resolvable so external scripts / notebooks don't break. Internal
-# bracketlearn code should use ``StackedParametric`` going forward.
-Stacking = StackedParametric
-
-
 # ---------------------------------------------------------------------------
 # BMAStacking — Bayesian model averaging meta-learner. Mixture-of-Normals output.
 # ---------------------------------------------------------------------------
@@ -839,7 +832,7 @@ Stacking = StackedParametric
 class BMAStacking(BaseEstimator):
     """Bayesian model averaging meta-learner. DistForecaster over upstreams.
 
-    Replaces ``Stacking``'s OLS-of-μ with a posterior over the mixture
+    Replaces ``StackedParametric``'s OLS-of-μ with a posterior over the mixture
     weight vector ``w`` on the K-simplex, and emits a true
     ``MixtureNormalForecast`` instead of a Normal collapsed onto a
     constant residual σ̂.
@@ -871,12 +864,12 @@ class BMAStacking(BaseEstimator):
     ``MixtureNormalForecast`` with weights = posterior mean w broadcast
     to (N, K).
 
-    Why this beats ``Stacking``:
+    Why this beats ``StackedParametric``:
 
     * Per-row output σ — the mixture's standard deviation grows wherever
-      upstream μ̂'s disagree on that row. ``Stacking``'s σ̂ is one scalar
+      upstream μ̂'s disagree on that row. ``StackedParametric``'s σ̂ is one scalar
       from training residuals.
-    * No σ̂ → 0 collapse (the v0.1 ``Stacking`` pathology). The mixture
+    * No σ̂ → 0 collapse (the v0.1 ``StackedParametric`` pathology). The mixture
       σ is bounded below by min_k σ_{k,i}.
     * Weights live on the simplex (no extrapolation pathology from
       unconstrained OLS coefficients).
@@ -932,7 +925,7 @@ class BMAStacking(BaseEstimator):
         ups = resolve_upstream(upstream, where="BMAStacking.fit")
         y = np.asarray(y, dtype=float)
         N = y.shape[0]
-        # Row-alignment guard. Same contract as Stacking — upstream ids
+        # Row-alignment guard. Same contract as StackedParametric — upstream ids
         # must agree with each other and with the caller's ids (if given).
         upstream_ids = None
         for i, d in enumerate(ups):
@@ -1092,7 +1085,7 @@ class BayesianRidge(BaseEstimator):
     The (1 + x*ᵀ V_n x*) factor is the posterior-uncertainty inflation:
     rows whose features sit far from the training set get wider
     predictive intervals automatically — that's the regime-conditional σ
-    that ``Stacking``'s constant residual σ̂ cannot give you.
+    that ``StackedParametric``'s constant residual σ̂ cannot give you.
 
     Features are standardised by default (subtract train mean, divide by
     train std) before fitting. The prior precision then applies on a
