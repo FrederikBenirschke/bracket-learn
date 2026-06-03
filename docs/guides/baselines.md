@@ -3,8 +3,8 @@
 Every probabilistic-forecasting paper compares against trivial baselines.
 If your fancy quantile-regression-stacked-ensemble ties one of these,
 the features aren't predictive or the validation is leaking. bracketlearn
-ships two — both `BaseEstimator` subclasses that slot into
-`ForecastPipeline` unchanged.
+ships two — both `BaseEstimator` subclasses that slot into a `Pipeline`
+(run under `WalkForward`) unchanged.
 
 ## `EmpiricalDistribution` — climatology floor
 
@@ -74,16 +74,12 @@ shuffled rows makes "last y" meaningless and the metric becomes a
 random number.
 
 ```python
-from bracketlearn import ForecastPipeline, LiftedForecaster
+from bracketlearn import Pipeline, WalkForward
 from bracketlearn.lift import GlobalResidual
 
-pipeline = ForecastPipeline(
-    steps=[
-        ("persist24", LiftedForecaster(
-            Persistence(lag=24), GlobalResidual(), name="persist24",
-        )),
-    ],
-    cv="expanding-window", n_folds=5,
+persist24 = Pipeline([Persistence(lag=24), GlobalResidual()], name="persist24")
+result = WalkForward(cv="expanding-window", n_folds=5).fit_predict(
+    persist24, X, y, ids=ids, timestamps=ts,
 )
 ```
 
@@ -94,6 +90,6 @@ pipeline = ForecastPipeline(
 - **Hourly / daily time series with a strong seasonal cycle**:
   `Persistence(lag=24)` or `Persistence(lag=168)` is the floor — beating
   it means you learned more than the cycle.
-- **Both** are cheap to fit and add to a `ForecastPipeline` as named
-  steps; that way your `result.score(y)` table prints baselines and
+- **Both** are cheap to fit and add to a `WalkForward` run as named
+  models; that way your `result.score(y)` table prints baselines and
   models side by side and the reader can read off skill scores.

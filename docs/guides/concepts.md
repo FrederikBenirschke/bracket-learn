@@ -10,9 +10,13 @@ Five protocols, no inheritance maze:
 | `Calibrator`        | `DistributionForecast → DistributionForecast` | `Isotonic`, `ConformalCalibrate` |
 | `ContractAdapter`   | `DistributionForecast → ContractForecast`     | `BracketLadder` |
 
-Compose `PointForecaster + Lifter` with `LiftedForecaster`, and
-`DistForecaster + Calibrator` with `CalibratedForecaster`. Pipeline stays a
-flat `[(name, forecaster)]` list — sklearn-style.
+Compose stages by listing them in a `Pipeline`: a `PointForecaster`
+followed by a `Lifter` becomes a `DistForecaster`, and a `DistForecaster`
+followed by a `Calibrator` stays a `DistForecaster`. The chain is wired
+left→right by protocol type — `Pipeline([SklearnPoint(Ridge()),
+GlobalResidual(), Isotonic(...)])` — and *is* the forecaster. Parallel
+ensembling is a `Stacker` over upstream `Pipeline` objects; `WalkForward`
+drives the CV/OOF. Names are leaderboard labels, never wiring.
 
 ## Distribution backings
 

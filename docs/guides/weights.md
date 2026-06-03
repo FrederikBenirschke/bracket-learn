@@ -1,7 +1,7 @@
 # Sample weights
 
-`fit_predict(X, y, ids=..., timestamps=..., sample_weight=w)` threads `w`
-through every stage. Common uses:
+`WalkForward(...).fit_predict(model, X, y, ids=..., timestamps=...,
+sample_weight=w)` threads `w` through every stage. Common uses:
 
 - **Time-decay weighting**: more recent rows count more.
 - **Importance reweighting**: market regimes that matter most get boosted.
@@ -14,7 +14,7 @@ import numpy as np
 # Exponential time-decay: half-life of 60 rows.
 w = np.exp(-np.arange(n)[::-1] / 60.0)
 
-result = pipeline.fit_predict(X, y, ids=ids, timestamps=ts, sample_weight=w)
+result = wf.fit_predict(model, X, y, ids=ids, timestamps=ts, sample_weight=w)
 ```
 
 ## Which trainers honor weights
@@ -22,7 +22,7 @@ result = pipeline.fit_predict(X, y, ids=ids, timestamps=ts, sample_weight=w)
 Native weighted fits:
 
 - `EMOS` — weighted OLS for both (a, b) and (c, d).
-- `Stacking` — weighted OLS over upstream μ.
+- `StackedParametric` — weighted OLS over upstream μ.
 - `MixtureNormals` — weighted per-vendor RMSE.
 - `SklearnPoint(estimator)` — forwarded to estimator's `fit(sample_weight=...)`
   if the estimator supports it.

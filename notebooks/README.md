@@ -11,7 +11,7 @@ ranking multiple trainers against trivial baselines.
 | [`housing_brackets.ipynb`](housing_brackets.ipynb) | sklearn California housing | k-fold CV; bracket pricing $50k–$500k; 6-model leaderboard |
 | [`bike_sharing_timeseries.ipynb`](bike_sharing_timeseries.ipynb) | OpenML Bike_Sharing_Demand (17k rows) | expanding-window CV; **two** baselines (marginal + lag-24 seasonal); 7-model leaderboard |
 | [`grid_search_demo.ipynb`](grid_search_demo.ipynb) | sklearn California housing | 3×3 grid heatmap; competing-models leaderboard |
-| [`leaderboard_zoo.ipynb`](leaderboard_zoo.ipynb) | both | **Exhaustive zoo:** 16+ models across baselines, single-stage dists, point+lifter combos, calibrated wrappers, multi-stage DAGs (`Stacking`, `DistAsFeatures`, `LinearPoolDist`, `CDFBoostBracket`). Distributional-vs-point skill scatter. |
+| [`leaderboard_zoo.ipynb`](leaderboard_zoo.ipynb) | both | **Exhaustive zoo:** 16+ models across baselines, single-stage dists, point+lifter combos, calibrated wrappers, multi-stage DAGs (`StackedParametric`, `DistAsFeatures`, `LinearPoolDist`, `CDFBoostBracket`). Distributional-vs-point skill scatter. |
 
 ## Running the notebooks
 

@@ -16,7 +16,7 @@ then price a ladder of 8 binary contracts ($50k–$500k).
 python -m bracketlearn.examples.housing_brackets
 ```
 
-Shows: `LiftedForecaster(SklearnPoint(RidgeCV()), GlobalResidual())`,
+Shows: `Pipeline([SklearnPoint(RidgeCV()), GlobalResidual()])`,
 `QuantileReg`, `BracketLadder`, k-fold CV, side-by-side
 distribution-level and contract-level metrics. Runs in ~30 s.
 
@@ -29,10 +29,10 @@ series — first run downloads the dataset (cached by sklearn afterward).
 python -m bracketlearn.examples.bike_sharing_timeseries
 ```
 
-Shows: `cv="expanding-window"` with `embargo`, `CalibratedForecaster(EMOS(),
-Isotonic(edges))` (per-fold tail calibration), a bracket ladder spanning
-0–1000 bikes/hour. Demonstrates that OOF alignment is invisible to the
-user — `result.score(y)` just works.
+Shows: `cv="expanding-window"` with `embargo`, `Pipeline([EMOS(),
+Isotonic(pre_integrate_edges=edges)])` (per-fold tail calibration), a
+bracket ladder spanning 0–1000 bikes/hour. Demonstrates that OOF alignment
+is invisible to the user — `result.score(y)` just works.
 
 ### `grid_search_demo.py`
 
@@ -44,7 +44,7 @@ python -m bracketlearn.examples.grid_search_demo
 ```
 
 Shows: nested `stage__field` param syntax, full results table sorted by
-CRPS, fitted `best_pipeline_` ready for `.predict()` on new data. Runs
+CRPS, fitted `best_wf_` ready for `.predict()` on new data. Runs
 in ~3 min.
 
 ## Notebooks (recommended)

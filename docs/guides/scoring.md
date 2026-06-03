@@ -19,7 +19,8 @@ has a definition that works.
 
 ## Bracket-contract metrics
 
-When you pass `ladder=BracketLadder(edges=...)`:
+When you pass `edges=...` (a shared 1-D edge vector; `score()` builds the
+per-row bracket ladder internally per stage):
 
 | metric | what it measures |
 |---|---|

@@ -198,9 +198,9 @@ need to align it with venue quotes, and provenance metadata. What you
 do with those fair prices — gate on edge, size by Kelly, hedge across a
 ladder — is the trading layer you write on top.
 
-Wrap this whole flow in `ForecastPipeline` to get CV, calibration, and
-conformal correction on the distribution before pricing — see the longer
-example below.
+Wrap this whole flow in a `Pipeline` (run under `WalkForward`) to get CV,
+calibration, and conformal correction on the distribution before pricing —
+see the longer example below.
 
 ## Pipeline quick start
 
@@ -208,42 +208,39 @@ example below.
 import numpy as np
 from sklearn.linear_model import RidgeCV
 
-from bracketlearn import (
-    BracketLadder, CalibratedForecaster, EMOS, ForecastPipeline,
-    GlobalResidual, Isotonic, LiftedForecaster, QuantileReg, SklearnPoint,
-)
+from bracketlearn import Pipeline, WalkForward
+from bracketlearn.lift import GlobalResidual, Isotonic
+from bracketlearn.trainers import EMOS, QuantileReg, SklearnPoint
 
 edges = np.linspace(0, 100, 11)   # 10 brackets
 
-pipeline = ForecastPipeline(
-    steps=[
-        ("ridge", LiftedForecaster(SklearnPoint(RidgeCV()), GlobalResidual())),
-        ("emos",  CalibratedForecaster(EMOS(), Isotonic(edges=edges))),
-        ("qreg",  QuantileReg(n_estimators=100)),
-    ],
-    cv="expanding-window", n_folds=5,
-)
+# Each model is a Pipeline (a sequential chain of stages); names are labels.
+ridge = Pipeline([SklearnPoint(RidgeCV()), GlobalResidual()], name="ridge")
+emos = Pipeline([EMOS(), Isotonic(pre_integrate_edges=edges)], name="emos")
+qreg = Pipeline([QuantileReg(n_estimators=100)], name="qreg")
 
-result = pipeline.fit_predict(X, y, ids=ids, timestamps=ts)
+# WalkForward is the CV/OOF driver. Pass one model or a list of them.
+wf = WalkForward(cv="expanding-window", n_folds=5, refit_on_full=True)
+result = wf.fit_predict([ridge, emos, qreg], X, y, ids=ids, timestamps=ts)
 
 # Distribution-level metrics on OOF predictions.
 print(result.to_table(y, metrics=["crps", "log_score", "pit"]))
 
-# Bracket-contract metrics.
-ladder = BracketLadder(edges=edges)
+# Bracket-contract metrics — pass the shared edge vector; the result builds
+# the per-row bracket ladder internally per stage.
 print(result.to_table(y, metrics=["log_loss_bracket", "brier_bracket"],
-                      ladder=ladder))
+                      edges=edges))
 
-# Predict on truly unseen data using each stage's full-train refit.
-new_dists = pipeline.predict(X_new, ids=new_ids, timestamps=new_ts)
+# Predict on truly unseen data using each model's full-train refit.
+new_dists = wf.predict(X_new, ids=new_ids, timestamps=new_ts)
 ```
 
 ## sklearn contract
 
 Every forecaster, lifter, and calibrator inherits from `BaseEstimator` and
-supports `get_params` / `set_params` / `clone()`. The pipeline clones each
-stage's forecaster before every fold's fit, so the user-supplied
-instances are never mutated and can be safely reused across pipelines.
+supports `get_params` / `set_params` / `clone()`. `WalkForward` clones each
+model before every fold's fit, so the user-supplied instances are never
+mutated and can be safely reused across runs.
 
 ## Concepts
 
@@ -257,9 +254,11 @@ Five protocols, no inheritance maze:
 | `Calibrator`      | `DistributionForecast → DistributionForecast` | `Isotonic`, `ConformalCalibrate`                               |
 | `ContractAdapter` | `DistributionForecast → ContractForecast`     | `BinaryAbove`, `BinaryBelow`, `Twin`, `ThresholdLadder`, `BracketLadder` |
 
-Compose `PointForecaster + Lifter` with `LiftedForecaster`, and
-`DistForecaster + Calibrator` with `CalibratedForecaster`. Pipeline stays a
-flat `[(name, forecaster)]` list — sklearn-style.
+Compose stages by listing them in a `Pipeline` (a sequential chain wired
+left→right by protocol type): a `PointForecaster` followed by a `Lifter`
+becomes a `DistForecaster`; add a `Calibrator` and it stays one. Parallel
+ensembling is a `Stacker` over upstream `Pipeline` objects, and
+`WalkForward` drives the CV/OOF. Names are leaderboard labels, never wiring.
 
 ## Distribution backings
 
@@ -300,10 +299,8 @@ probs.
 
 `BracketForecast.from_arrays` also accepts a 1-D shared edge vector,
 broadcasting it to all rows — so callers that genuinely use a shared
-ladder pay no ergonomic cost. `BracketForecast.shared_edges()` returns
-the 1-D vector iff every row's edges are identical and not NaN-padded;
-raises otherwise. Use it from legacy code that still assumes a shared
-ladder.
+ladder pay no ergonomic cost. Per-row `self.edges` (2-D, NaN-padded for
+ragged rows) is the canonical access path.
 
 ### The `integrate()` bridge
 
@@ -337,7 +334,7 @@ trade off linearity, priors, and compute.
 | **Parametric distribution** | `EMOS`, `HeteroscedasticNormal`, `NGBoostNormal`, `MixtureNormals`, `BayesianRidge`, `HierarchicalNormal` | a closed-form density (Normal / mixture) whose moments are functions of the features |
 | **Quantile / non-parametric** | `QuantileReg`, `QuantileForest` | a quantile function / empirical CDF — no distributional shape assumed |
 | **Bracket-native** | `CumulativeBinary`, `TailSpecialist`, `CDFBoostBracket` (+ the `BracketExpander` entry point) | bracket / cutpoint indicators directly on each row's own grid |
-| **Stacking / combiners** | `StackedParametric` (alias `Stacking`), `BMAStacking`, `BracketStacking`, `LinearPoolDist`, `DistAsFeatures` | a combination of upstream forecasts (parametric meta-learner, Bayesian average, opinion pool) |
+| **Stacking / combiners** | `StackedParametric`, `BMAStacking`, `BracketStacking`, `LinearPoolDist`, `DistAsFeatures` | a combination of upstream forecasts (parametric meta-learner, Bayesian average, opinion pool) |
 | **Baselines** | `Persistence`, `PersistenceDist`, `EmpiricalDistribution` | reference forecasts to beat; plus convenience factories `ridge`, `emos_calibrated` |
 
 Within the **parametric** family the mean/variance flexibility ladder is
@@ -363,9 +360,9 @@ Orthogonal to the families above, trainers split by **fit interface** into
 two modes:
 
 - **Distribution-first** (`EMOS`, `NGBoostNormal`, `MixtureNormals`,
-  `QuantileReg`, `QuantileForest`, `StackedParametric` (alias
-  `Stacking`), `BMAStacking`, `BayesianRidge`, `HierarchicalNormal`,
-  `OnlineAggregator`, `RNNHourly`, `ridge`, `emos_calibrated`):
+  `QuantileReg`, `QuantileForest`, `StackedParametric`, `BMAStacking`,
+  `BayesianRidge`, `HierarchicalNormal`, `OnlineAggregator`, `RNNHourly`,
+  `ridge`, `emos_calibrated`):
   never see brackets at fit time. Fit on `(X, y)`, emit a
   continuous-ish distribution. Call `.integrate(edges_per_row)` to
   price on a specific grid.
@@ -374,7 +371,7 @@ two modes:
   a `cutpoints_by_id` or `brackets_by_id` dict (id → 1-D edge array)
   at construction so per-row grids flow through fit and predict.
   Their `fit()` signatures require an explicit `ids=` kwarg; inside
-  `ForecastPipeline` this is forwarded automatically.
+  a `Pipeline` this is forwarded automatically.
 
   For the "use any sklearn classifier or regressor" entry point, use
   `BracketExpander` (in `bracketlearn.transformers`): it owns the
@@ -415,11 +412,12 @@ two modes:
 
 ## Sample weights
 
-`fit_predict(X, y, ids=..., timestamps=..., sample_weight=w)` threads `w`
-through every stage. Trainers whose `fit` signature accepts
-`sample_weight=` get it (EMOS, Stacking, NGBoost, LightGBM-based
-QuantileReg/QuantileForest/CumulativeBinary/TailSpecialist, MixtureNormals,
-SklearnPoint when the inner estimator supports it). Online/sequence
+`WalkForward(...).fit_predict(model, X, y, ids=..., timestamps=...,
+sample_weight=w)` threads `w` through every stage. Trainers whose `fit`
+signature accepts `sample_weight=` get it (EMOS, StackedParametric, NGBoost,
+LightGBM-based QuantileReg/QuantileForest/CumulativeBinary/TailSpecialist,
+MixtureNormals, SklearnPoint when the inner estimator supports it).
+Online/sequence
 trainers without weight support (OnlineAggregator, RNNHourly) are detected
 by signature and pass through unweighted — no silent crash.
 
@@ -431,11 +429,13 @@ across players — pass a per-row site label via `groups=` and use
 `HierarchicalNormal`:
 
 ```python
-from bracketlearn import ForecastPipeline, HierarchicalNormal
+from bracketlearn import Pipeline, WalkForward
+from bracketlearn.trainers import HierarchicalNormal
 
-p = ForecastPipeline(steps=[("hn", HierarchicalNormal())], cv="kfold", n_folds=5)
-res = p.fit_predict(X, y, ids=ids, timestamps=ts, groups=city_id)
-hn_pred = p.predict(X_new, ids=..., timestamps=..., groups=city_id_new)["hn"]
+hn = Pipeline([HierarchicalNormal()], name="hn")
+wf = WalkForward(cv="kfold", n_folds=5, refit_on_full=True)
+res = wf.fit_predict(hn, X, y, ids=ids, timestamps=ts, groups=city_id)
+hn_pred = wf.predict(X_new, ids=..., timestamps=..., groups=city_id_new)["hn"]
 ```
 
 Each city gets its own coefficient vector β_s, all shrunk toward a
@@ -445,43 +445,61 @@ cities with lots of history stay close to their own data. Predictive
 σ inflates automatically for cities not seen at fit (raises by
 default — set `allow_unseen_sites=True` to opt in).
 
-`groups=` routes through the pipeline by signature introspection:
+`groups=` routes through `WalkForward` by signature introspection:
 trainers without a `groups` kwarg silently ignore it, so mixing
 `HierarchicalNormal` with site-blind stages (EMOS, ridge, …) just
 works.
 
 ## Multi-target
 
-For `y` of shape `(N, M)`, wrap a single-target pipeline:
+For `y` of shape `(N, M)`, wrap a single-target model + its `WalkForward`
+driver in `MultiOutput`:
 
 ```python
-from bracketlearn.multitarget import MultiOutputForecastPipeline
+from bracketlearn import MultiOutput, Pipeline, WalkForward
+from bracketlearn.trainers import EMOS
 
-mt = MultiOutputForecastPipeline(pipeline, target_names=["high", "low"])
+mt = MultiOutput(
+    Pipeline([EMOS()], name="emos"),
+    WalkForward(n_folds=5),
+    target_names=["high", "low"],
+)
 result = mt.fit_predict(X, Y, ids=ids, timestamps=ts)
 print(result.score(Y, metrics=["crps"]))   # per-target × per-stage
 ```
 
-Each target gets its own cloned pipeline — no cross-target sharing.
+Each target gets its own cloned model — no cross-target sharing.
 
 ## Hyperparameter search
 
-`GridSearch` enumerates a param grid against the pipeline's own CV (we
-do not reuse `sklearn.GridSearchCV` because its KFold would destroy time
-ordering). Use `stage__field` syntax for nested params:
+`GridSearch` enumerates a param grid, cloning the model **and** its
+`WalkForward` driver per grid point (we do not reuse
+`sklearn.GridSearchCV` because its KFold would destroy time ordering).
+Use `node__field` syntax for nested params; `WalkForward` params (`n_folds`,
+`cv`, …) appear unprefixed:
 
 ```python
+from bracketlearn import Pipeline, WalkForward
 from bracketlearn.search import GridSearch
+from bracketlearn.trainers import EMOS
 
-gs = GridSearch(pipeline,
+gs = GridSearch(Pipeline([EMOS()], name="emos"),
+                WalkForward(cv="expanding-window", n_folds=5),
                 param_grid={"emos__sigma_floor": [0.3, 0.5, 1.0],
                             "n_folds": [3, 5]},
-                scoring="crps", refit_stage="emos")
+                scoring="crps", refit_node="emos")
 gs.fit(X, y, ids=ids, timestamps=ts)
 print(gs.best_params_, gs.best_score_)
 ```
 
 ## Status
+
+Unreleased — **composition API unified** into `Pipeline` (sequential chain),
+`Stacker` (parallel combiner over upstream objects), and `WalkForward`
+(CV/OOF driver). The old `ForecastPipeline` / `LiftedForecaster` /
+`CalibratedForecaster` wrappers and the name-keyed `deps`/`deps_oof` stacker
+contract are removed; names are leaderboard labels, never wiring. See
+[CHANGELOG.md](CHANGELOG.md) for the full migration recipe.
 
 Unreleased — `HeteroscedasticNormal` added to the parametric family:
 distributional linear regression with a feature-driven mean **and**

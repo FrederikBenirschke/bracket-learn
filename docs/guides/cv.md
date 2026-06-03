@@ -1,6 +1,6 @@
 # Cross-validation
 
-`ForecastPipeline(cv=...)` accepts three modes:
+`WalkForward(cv=...)` accepts three modes:
 
 ## `cv="expanding-window"` (default)
 
@@ -20,8 +20,7 @@ Fixed-width train window slides forward. Requires `rolling_window=<int>`.
 Older rows fall out — use when regime drift makes old data harmful.
 
 ```python
-ForecastPipeline(steps=[...], cv="rolling-window",
-                 rolling_window=120, n_folds=4)
+WalkForward(cv="rolling-window", rolling_window=120, n_folds=4)
 ```
 
 ```
@@ -39,14 +38,19 @@ Plain k-fold. Splits rows into `n_folds` disjoint test sets. Pass
 where it would silently train on future rows and inflate OOF metrics.
 
 ```python
-ForecastPipeline(steps=[...], cv="kfold", n_folds=5,
-                 shuffle=True, random_state=0)
+WalkForward(cv="kfold", n_folds=5, shuffle=True, random_state=0)
 ```
 
-## Disabling refit-on-full
+## Enabling refit-on-full
 
-By default, `fit_predict` ends with a full-data refit per stage so
-`pipeline.predict(X_new)` works on unseen rows. If you only want OOF
-metrics and want to skip the refit, pass `refit_on_full=False`. Calling
-`predict()` afterward then raises (loud failure rather than silently
-producing OOF-style predictions).
+By default (`refit_on_full=False`) `fit_predict` produces OOF predictions
+only. To call `wf.predict(X_new)` on unseen rows, pass
+`refit_on_full=True` — `fit_predict` then ends with a full-data refit per
+model and stores it. Calling `predict()` without it raises (loud failure
+rather than silently producing OOF-style predictions).
+
+```python
+wf = WalkForward(cv="expanding-window", n_folds=5, refit_on_full=True)
+wf.fit_predict(model, X, y, ids=ids, timestamps=ts)
+wf.predict(X_new, ids=new_ids, timestamps=new_ts)
+```

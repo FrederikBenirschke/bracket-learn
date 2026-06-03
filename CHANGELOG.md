@@ -4,6 +4,77 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions
 follow semver: MAJOR.MINOR.PATCH. Pre-1.0 the public API can break in any
 minor release; patch releases are bug-fixes and additive tests.
 
+## [Unreleased]
+
+**Breaking — composition API unified.** The two old composition syntaxes
+(inside-out `LiftedForecaster`/`CalibratedForecaster` wrappers for chains;
+a name-keyed `ForecastPipeline(steps=[(name, fc)], cv=…)` for CV + stacking)
+collapse into three homogeneous, object-composed primitives:
+
+- `Pipeline([stage, …], *, name=…)` — a sequential chain wired left→right by
+  protocol type. Subsumes `LiftedForecaster` and `CalibratedForecaster`: a
+  lifter or calibrator is just another stage in the list. A `Pipeline` *is* a
+  `DistForecaster`.
+- `Stacker([upstream, …], meta, *, name=…)` — a parallel combiner over
+  upstream `Pipeline`/`Stacker` **objects**. The dependency *is* the nesting;
+  there is no name-string `deps`/`deps_oof`. Meta-combiners receive their
+  upstreams' OOF distributions positionally via `upstream=[…]`.
+- `WalkForward(*, cv, n_folds, embargo, refit_on_full, …)` — the CV/OOF
+  driver, split out of the old `ForecastPipeline`. `fit_predict(model, X, y,
+  ids=…, timestamps=…)` returns a `PipelineResult`; `predict(…)` requires
+  `refit_on_full=True`.
+
+Names are now leaderboard labels only, never wiring.
+
+Migration::
+
+    # Old:
+    from bracketlearn import (
+        ForecastPipeline, LiftedForecaster, CalibratedForecaster,
+    )
+    pipe = ForecastPipeline(
+        steps=[
+            ("ridge", LiftedForecaster(SklearnPoint(RidgeCV()), GlobalResidual())),
+            ("emos",  CalibratedForecaster(EMOS(), Isotonic(edges=edges))),
+        ],
+        cv="expanding-window", n_folds=5,
+    )
+    result = pipe.fit_predict(X, y, ids=ids, timestamps=ts)
+    result.to_table(y, metrics=["log_loss_bracket"], ladder=BracketLadder(edges=edges))
+    pipe.predict(X_new, ids=…, timestamps=…)
+
+    # New:
+    from bracketlearn import Pipeline, WalkForward
+    ridge = Pipeline([SklearnPoint(RidgeCV()), GlobalResidual()], name="ridge")
+    emos  = Pipeline([EMOS(), Isotonic(pre_integrate_edges=edges)], name="emos")
+    wf = WalkForward(cv="expanding-window", n_folds=5, refit_on_full=True)
+    result = wf.fit_predict([ridge, emos], X, y, ids=ids, timestamps=ts)
+    result.to_table(y, metrics=["log_loss_bracket"], edges=edges)  # shared 1-D vector
+    wf.predict(X_new, ids=…, timestamps=…)
+
+Stacker migration — upstreams are objects, weights arrive positionally::
+
+    # Old:  StackedParametric(deps=("ridge", "ngboost"))  + pipe injects deps_oof
+    # New:
+    stack = Stacker([ridge, ngboost], StackedParametric(), name="stack")
+    wf.fit_predict(stack, X, y, ids=ids, timestamps=ts)
+
+Multi-target / search migrate the same way: `MultiOutput(model, WalkForward(…))`
+replaces `MultiOutputForecastPipeline(proto)`; `GridSearch(model, wf, …)` takes
+the model and driver separately, with `refit_node=` (was `refit_stage=`) and
+`edges=` (was `ladder=`) for bracket scoring.
+
+### Removed
+- `bracketlearn.pipeline.ForecastPipeline`, `LiftedForecaster`,
+  `CalibratedForecaster`
+- the name-keyed `deps` / `deps_oof` stacker contract (and the dead
+  `Forecaster.depends_on` field)
+- `Stacking` (legacy alias for `StackedParametric` — use the canonical name)
+- `BracketForecast.shared_edges()` (consume per-row `self.edges` directly)
+- `Isotonic(edges=…)` constructor arg → `Isotonic(pre_integrate_edges=…)`
+- bracket-metric `ladder=BracketLadder(edges=…)` → `edges=` (a shared 1-D
+  edge vector; the score path builds the per-row ladder internally)
+
 ## [0.6.0] — 2026-05-28
 
 **Breaking**: ``Backing`` and ``ParametricFamily`` enums removed, along

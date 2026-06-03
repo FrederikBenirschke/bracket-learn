@@ -36,7 +36,7 @@ info = envelope_info("ridge.pkl")
 # {'format_version': 1,
 #  'bracketlearn_version': '0.2.0',
 #  'note': 'prod-2026-05',
-#  'payload_type': 'ForecastPipeline'}
+#  'payload_type': 'WalkForward'}
 ```
 
 ## Security note
