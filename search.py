@@ -70,7 +70,8 @@ class GridSearch:
             Lower is better for all four (this is a *loss*).
         refit_node: name of the node whose OOF metric is the objective. If
             ``None``, the *mean* across all nodes is used.
-        ladder: required if ``scoring`` is a bracket metric.
+        edges: shared 1-D bracket ladder ``(B+1,)``; required if ``scoring``
+            is a bracket metric.
         greater_is_better: defaults to ``False`` (built-in metrics are losses).
     """
 
@@ -82,7 +83,7 @@ class GridSearch:
         param_grid: dict[str, Sequence[Any]],
         scoring: str = "crps",
         refit_node: str | None = None,
-        ladder: Any = None,
+        edges: Any = None,
         greater_is_better: bool = False,
     ):
         if not param_grid:
@@ -90,14 +91,14 @@ class GridSearch:
         _ALLOWED = {"crps", "log_score", "log_loss_bracket", "brier_bracket"}
         if scoring not in _ALLOWED:
             raise ValueError(f"scoring={scoring!r} not in {_ALLOWED}")
-        if scoring in ("log_loss_bracket", "brier_bracket") and ladder is None:
-            raise ValueError(f"scoring={scoring!r} requires ladder=...")
+        if scoring in ("log_loss_bracket", "brier_bracket") and edges is None:
+            raise ValueError(f"scoring={scoring!r} requires edges=...")
         self.model = model
         self.wf = wf
         self.param_grid = {k: list(v) for k, v in param_grid.items()}
         self.scoring = scoring
         self.refit_node = refit_node
-        self.ladder = ladder
+        self.edges = edges
         self.greater_is_better = greater_is_better
         self.results_: list[dict[str, Any]] = []
         self.best_params_: dict[str, Any] | None = None
@@ -132,7 +133,7 @@ class GridSearch:
                 model, X, y, ids=ids, timestamps=timestamps,
                 sample_weight=sample_weight, groups=groups,
             )
-            scores = result.score(y, metrics=[self.scoring], ladder=self.ladder)
+            scores = result.score(y, metrics=[self.scoring], edges=self.edges)
             if self.refit_node is not None:
                 if self.refit_node not in scores:
                     raise ValueError(

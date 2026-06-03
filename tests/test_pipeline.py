@@ -128,13 +128,35 @@ def test_score_unknown_metric_raises():
         result.score(y, metrics=["not_a_metric"])
 
 
-def test_score_bracket_metrics_without_ladder_raise():
+def test_score_bracket_metrics_without_edges_raise():
     X, y, ids, ts = _synthetic()
     result = WalkForward(n_folds=3).fit_predict(
         Pipeline([EMOS()], name="emos"), X, y, ids=ids, timestamps=ts,
     )
-    with pytest.raises(ValueError, match="require ladder"):
+    with pytest.raises(ValueError, match="require edges"):
         result.score(y, metrics=["log_loss_bracket"])
+
+
+def test_bracket_metrics_score_finite_with_edges():
+    """log_loss_bracket / brier_bracket run end-to-end given a shared edges
+    vector — score() builds the per-row ragged ladder internally per stage."""
+    X, y, ids, ts = _synthetic()
+    result = WalkForward(n_folds=3).fit_predict(
+        Pipeline([EMOS()], name="emos"), X, y, ids=ids, timestamps=ts,
+    )
+    # Wide outer bins so the dist's full support is covered (no coverage warn).
+    edges = np.array([-1e3, 6.0, 8.0, 10.0, 12.0, 14.0, 1e3])
+    scores = result.score(
+        y, metrics=["log_loss_bracket", "brier_bracket"], edges=edges,
+    )
+    assert np.isfinite(scores["emos"]["log_loss_bracket"])
+    assert np.isfinite(scores["emos"]["brier_bracket"])
+    assert scores["emos"]["log_loss_bracket"] > 0
+    # Brier of a proper categorical forecast is in [0, 2].
+    assert 0.0 <= scores["emos"]["brier_bracket"] <= 2.0
+    # to_table with bracket metrics renders too.
+    out = result.to_table(y, metrics=["log_loss_bracket"], edges=edges)
+    assert "log_loss_bracket" in out
 
 
 # ---------------------------------------------------------------------------

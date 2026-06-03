@@ -50,7 +50,6 @@ warnings.filterwarnings(
 
 from sklearn.linear_model import LinearRegression
 
-from bracketlearn.adapters import BracketLadder
 from bracketlearn.compose import Stacker, WalkForward
 from bracketlearn.lift import ConformalCalibrate, GlobalResidual
 from bracketlearn.pipeline import Pipeline
@@ -164,9 +163,8 @@ def main() -> None:
     print("\n[distribution metrics]")
     print(result.to_table(y, metrics=["crps", "log_score", "pit"]))
 
-    ladder = BracketLadder(edges=edges)
     print(f"\n[bracket metrics — {len(edges) - 1} bins on [{edges[0]:.0f}, {edges[-1]:.0f}]]")
-    print(result.to_table(y, metrics=["log_loss_bracket", "brier_bracket"], ladder=ladder))
+    print(result.to_table(y, metrics=["log_loss_bracket", "brier_bracket"], edges=edges))
 
     print("\ndone.")
 

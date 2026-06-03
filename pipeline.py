@@ -36,10 +36,14 @@ from bracketlearn.forecast import (
 
 
 def _compute_metric(
-    metric: str, dist, y, *, ladder, scoremod,
+    metric: str, dist, y, *, edges, scoremod,
 ) -> dict[str, float]:
     """Dispatch one (metric, distribution) pair to a scalar value, or to
     a small dict (PIT contributes both mean and std).
+
+    ``edges`` is a shared 1-D bracket ladder ``(B+1,)`` for the bracket
+    metrics (None otherwise). The per-row ragged ``BracketLadder`` is built
+    here, sized to the dist, so the caller passes only the edge vector.
     """
     if metric == "crps":
         return {"crps": float(dist.crps(y).mean())}
@@ -48,16 +52,14 @@ def _compute_metric(
     if metric in ("pit", "pit_mean", "pit_std"):
         pits = dist.pit(y)
         return {"pit_mean": float(pits.mean()), "pit_std": float(pits.std())}
-    if metric == "log_loss_bracket":
+    if metric in ("log_loss_bracket", "brier_bracket"):
+        from bracketlearn.adapters import BracketLadder
+
+        edges_arr = np.asarray(edges, dtype=float)
+        ladder = BracketLadder(edges_per_row=[edges_arr] * dist.ids.shape[0])
         contracts = ladder.price(dist)
-        return {"log_loss_bracket": scoremod.log_loss_bracket(
-            contracts, ladder.edges, y,
-        )}
-    if metric == "brier_bracket":
-        contracts = ladder.price(dist)
-        return {"brier_bracket": scoremod.brier_bracket(
-            contracts, ladder.edges, y,
-        )}
+        fn = getattr(scoremod, metric)
+        return {metric: fn(contracts, edges_arr, y)}
     raise ValueError(f"unknown metric: {metric!r}")
 
 
@@ -77,7 +79,7 @@ class PipelineResult:
 
     Scoring (the user never touches dist.ids):
         result.score(y, metrics=["crps", "log_score"])
-        result.score(y, metrics=["log_loss_bracket", "brier"], ladder=ladder)
+        result.score(y, metrics=["log_loss_bracket", "brier_bracket"], edges=edges)
     """
 
     forecasts: dict[str, DistributionForecast]
@@ -100,7 +102,7 @@ class PipelineResult:
         y: np.ndarray,
         *,
         metrics: Sequence[str] = ("crps", "log_score", "pit"),
-        ladder: Any = None,
+        edges: np.ndarray | None = None,
     ) -> dict[str, dict[str, float]]:
         """Return {stage_name: {metric_name: value}}.
 
@@ -109,8 +111,11 @@ class PipelineResult:
           - "log_score"        — mean predictive negative log-likelihood
           - "pit_mean"         — mean PIT (≈ 0.5 if calibrated)
           - "pit_std"          — std of PIT
-          - "log_loss_bracket" — requires ladder
-          - "brier_bracket"    — requires ladder
+          - "log_loss_bracket" — requires ``edges`` (shared (B+1,) ladder)
+          - "brier_bracket"    — requires ``edges`` (shared (B+1,) ladder)
+
+        ``edges`` is a single 1-D bracket ladder shared across rows; the
+        per-row ragged ``BracketLadder`` is built internally per stage.
 
         y is the full original target vector; PipelineResult slices it to
         match each stage's OOF coverage via dist.ids.
@@ -120,17 +125,18 @@ class PipelineResult:
         y = np.asarray(y, dtype=float)
         out: dict[str, dict[str, float]] = {}
 
-        needs_ladder = {"log_loss_bracket", "brier_bracket"}
-        if needs_ladder & set(metrics) and ladder is None:
+        needs_edges = {"log_loss_bracket", "brier_bracket"}
+        if needs_edges & set(metrics) and edges is None:
             raise ValueError(
-                f"metrics {needs_ladder & set(metrics)} require ladder=..."
+                f"metrics {needs_edges & set(metrics)} require edges=... "
+                f"(a shared (B+1,) bracket ladder)"
             )
 
         for name, dist in self.forecasts.items():
             y_oof = y[dist.ids.astype(int)]
             row: dict[str, float] = {"n_oof": int(dist.ids.shape[0])}
             for m in metrics:
-                row.update(_compute_metric(m, dist, y_oof, ladder=ladder, scoremod=scoremod))
+                row.update(_compute_metric(m, dist, y_oof, edges=edges, scoremod=scoremod))
             out[name] = row
         return out
 
@@ -139,10 +145,10 @@ class PipelineResult:
         y: np.ndarray,
         *,
         metrics: Sequence[str] = ("crps", "log_score", "pit"),
-        ladder: Any = None,
+        edges: np.ndarray | None = None,
     ) -> str:
         """Render score() output as an aligned text table."""
-        scores = self.score(y, metrics=metrics, ladder=ladder)
+        scores = self.score(y, metrics=metrics, edges=edges)
         # Collect columns by union across stages, preserving insertion order.
         cols: list[str] = []
         for row in scores.values():

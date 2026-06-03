@@ -63,7 +63,7 @@ class MultiOutputResult:
         Y: np.ndarray,
         *,
         metrics: Sequence[str] = ("crps", "log_score", "pit"),
-        ladder: Any = None,
+        edges: np.ndarray | None = None,
     ) -> dict[str, dict[str, dict[str, float]]]:
         """Score every target against its column of Y. Returns
         ``{target_name: {node: {metric: value}}}``."""
@@ -78,7 +78,7 @@ class MultiOutputResult:
         out: dict[str, dict[str, dict[str, float]]] = {}
         for j, name in enumerate(self.target_names):
             out[name] = self.per_target[name].score(
-                Y[:, j], metrics=metrics, ladder=ladder,
+                Y[:, j], metrics=metrics, edges=edges,
             )
         return out
 

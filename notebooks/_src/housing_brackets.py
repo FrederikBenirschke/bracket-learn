@@ -55,7 +55,6 @@ from _style import (
     predicted_vs_realized_grid,
     reliability_with_histogram,
 )
-from bracketlearn.adapters import BracketLadder
 from bracketlearn.baselines import EmpiricalDistribution
 from bracketlearn.compose import WalkForward
 from bracketlearn.lift import GlobalResidual
@@ -89,7 +88,6 @@ print(f"X shape: {X.shape}   y range: ${y.min()*100:.0f}k–${y.max()*100:.0f}k"
 
 # %%
 edges = np.array([0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0])
-ladder = BracketLadder(edges=edges)
 print(f"{len(edges)-1} brackets covering ${edges[0]*100:.0f}k–${edges[-1]*100:.0f}k")
 
 # %% [markdown]
@@ -264,11 +262,11 @@ plt.show()
 # ## Reliability — bracket probabilities calibrated?
 
 # %%
-def _reliability(dist, ladder, y_oof, n_bins=10):
-    cdf_hi = dist.cdf(ladder.edges[1:])
-    cdf_lo = dist.cdf(ladder.edges[:-1])
+def _reliability(dist, edges, y_oof, n_bins=10):
+    cdf_hi = dist.cdf(edges[1:])
+    cdf_lo = dist.cdf(edges[:-1])
     probs = np.clip(cdf_hi - cdf_lo, 0, 1)
-    bin_idx = np.searchsorted(ladder.edges, y_oof, side="right") - 1
+    bin_idx = np.searchsorted(edges, y_oof, side="right") - 1
     bin_idx = np.clip(bin_idx, 0, probs.shape[1] - 1)
     realized = np.zeros_like(probs)
     realized[np.arange(probs.shape[0]), bin_idx] = 1.0
@@ -289,7 +287,7 @@ series = []
 for name in ["emp", "ridge", "qreg"]:
     dist = result[name]
     y_oof = y[dist.ids.astype(int)]
-    mp, hr = _reliability(dist, ladder, y_oof)
+    mp, hr = _reliability(dist, edges, y_oof)
     series.append((name, mp, hr))
 fig = reliability_with_histogram(
     series, title="Bracket-probability reliability (all rows × all brackets pooled)",

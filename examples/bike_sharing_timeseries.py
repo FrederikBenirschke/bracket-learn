@@ -85,7 +85,6 @@ def main() -> None:
 
     # Bracket ladder spanning the observed range: 0 → 1000 in 100-bike steps.
     edges = np.array([0., 50., 100., 200., 350., 500., 750., 1000.])
-    ladder = BracketLadder(edges=edges)
     print(f"ladder: {len(edges)-1} brackets covering {edges[0]:.0f}–{edges[-1]:.0f} bikes/hour")
 
     print("\nfitting (expanding-window, 5 folds) …")
@@ -119,7 +118,7 @@ def main() -> None:
 
     print("\n=== bracket-contract OOF metrics ===")
     print(result.to_table(
-        y, metrics=["log_loss_bracket", "brier_bracket"], ladder=ladder,
+        y, metrics=["log_loss_bracket", "brier_bracket"], edges=edges,
     ))
 
     # Skill scores vs each baseline. Two anchors are useful here: the
@@ -151,7 +150,9 @@ def main() -> None:
                             for s in sample_idx]).flatten()
         if oof_pos.size != sample_idx.size:
             continue        # row not covered by this stage's OOF
-        # Slice the dist for those rows via to-bracket conversion.
+        # Slice the dist for those rows via to-bracket conversion. The ragged
+        # ladder shares one edge vector across all OOF rows of this stage.
+        ladder = BracketLadder(edges_per_row=[edges] * dist.ids.shape[0])
         contracts = ladder.price(dist)
         prices = contracts.fair_price.reshape(-1, B)
         for s, p in zip(sample_idx, oof_pos, strict=True):

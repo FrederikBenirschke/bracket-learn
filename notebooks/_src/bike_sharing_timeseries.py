@@ -49,7 +49,6 @@ from _style import (
     predicted_vs_realized_grid,
     reliability_with_histogram,
 )
-from bracketlearn.adapters import BracketLadder
 from bracketlearn.baselines import EmpiricalDistribution, Persistence
 from bracketlearn.compose import WalkForward
 from bracketlearn.lift import GlobalResidual, Isotonic
@@ -114,7 +113,6 @@ plt.show()
 
 # %%
 edges = np.array([0., 50., 100., 200., 350., 500., 750., 1000.])
-ladder = BracketLadder(edges=edges)
 print(f"{len(edges)-1} brackets covering {edges[0]:.0f}–{edges[-1]:.0f} bikes/hour")
 
 # %% [markdown]
@@ -262,11 +260,11 @@ plt.show()
 # ## Reliability — bracket probabilities calibrated?
 
 # %%
-def _reliability(dist, ladder, y_oof, n_bins=10):
-    cdf_hi = dist.cdf(ladder.edges[1:])
-    cdf_lo = dist.cdf(ladder.edges[:-1])
+def _reliability(dist, edges, y_oof, n_bins=10):
+    cdf_hi = dist.cdf(edges[1:])
+    cdf_lo = dist.cdf(edges[:-1])
     probs = np.clip(cdf_hi - cdf_lo, 0, 1)
-    bin_idx = np.searchsorted(ladder.edges, y_oof, side="right") - 1
+    bin_idx = np.searchsorted(edges, y_oof, side="right") - 1
     bin_idx = np.clip(bin_idx, 0, probs.shape[1] - 1)
     realized = np.zeros_like(probs)
     realized[np.arange(probs.shape[0]), bin_idx] = 1.0
@@ -287,7 +285,7 @@ series = []
 for name in ["emp", "persist24", "emos_iso", "qreg"]:
     dist = result[name]
     y_oof = y[dist.ids.astype(int)]
-    mp, hr = _reliability(dist, ladder, y_oof)
+    mp, hr = _reliability(dist, edges, y_oof)
     series.append((name, mp, hr))
 fig = reliability_with_histogram(
     series, title="Reliability — all rows × all brackets pooled",

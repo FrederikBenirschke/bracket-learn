@@ -55,7 +55,6 @@ from _style import (
     color_for,
     leaderboard_bar,
 )
-from bracketlearn.adapters import BracketLadder
 from bracketlearn.baselines import EmpiricalDistribution
 from bracketlearn.compose import Stacker, WalkForward
 from bracketlearn.lift import ConformalCalibrate, GlobalResidual, Isotonic, StudentTResidual
@@ -111,7 +110,6 @@ print(f"ensemble-style X: shape {X_ens.shape}  "
 
 # %%
 edges = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 10.0])
-ladder = BracketLadder(edges=edges)
 cutpoints = edges[1:-1]   # for CumulativeBinary
 
 # %% [markdown]

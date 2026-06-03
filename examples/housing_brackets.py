@@ -65,7 +65,6 @@ def main() -> None:
     edges = np.array(
         [-100.0, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 100.0]
     )
-    ladder = BracketLadder(edges=edges)
     print(f"ladder: {len(edges)-1} brackets covering "
           f"${edges[0]*100:.0f}k to ${edges[-1]*100:.0f}k "
           f"(outer bins absorb tail mass)")
@@ -90,7 +89,7 @@ def main() -> None:
 
     print("\n=== bracket-contract OOF metrics ===")
     print(result.to_table(
-        y, metrics=["log_loss_bracket", "brier_bracket"], ladder=ladder,
+        y, metrics=["log_loss_bracket", "brier_bracket"], edges=edges,
     ))
 
     # Skill score vs the EmpiricalDistribution baseline. CRPSS = 1 - CRPS/CRPS_emp;
@@ -116,6 +115,7 @@ def main() -> None:
     pred = wf.predict(X[:3], ids=np.arange(3),
                       timestamps=np.arange(3, dtype=float))
     B = edges.shape[0] - 1
+    ladder = BracketLadder(edges_per_row=[edges] * 3)
     for stage_name, dist in pred.items():
         contracts = ladder.price(dist)
         prices = contracts.fair_price.reshape(-1, B)
