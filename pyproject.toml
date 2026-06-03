@@ -75,7 +75,7 @@ Issues = "https://github.com/FrederikBenirschke/bracketlearn/issues"
 # explicitly to "." so setuptools picks up adapters.py / forecast.py / ...
 # as bracketlearn.adapters / bracketlearn.forecast / ... .
 [tool.setuptools]
-packages = ["bracketlearn", "bracketlearn.trainers"]
+packages = ["bracketlearn", "bracketlearn.forecast", "bracketlearn.trainers"]
 license-files = ["LICENSE"]
 
 [tool.setuptools.package-dir]
