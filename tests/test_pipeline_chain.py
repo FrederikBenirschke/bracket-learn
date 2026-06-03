@@ -20,7 +20,6 @@ from bracketlearn import EMOS, GroupByZScore, IdentityTransformer, Pipeline
 class _PointStub:
     """Minimal PointForecaster-shaped stage (has predict, no predict_dist)."""
     name = "point_stub"
-    depends_on = ()
 
     def fit(self, X, y, **kw):
         return self

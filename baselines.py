@@ -21,7 +21,7 @@ Both inherit ``BaseEstimator`` so they slot into a ``Pipeline`` (run under
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Self
+from typing import Self
 
 import numpy as np
 
@@ -51,7 +51,6 @@ class EmpiricalDistribution(BaseEstimator):
 
     taus: tuple[float, ...] = _DEFAULT_TAUS
     name: str = "Empirical"
-    depends_on: tuple[str, ...] = ()
     quantiles_: np.ndarray | None = field(default=None, init=False)
 
     def fit(
@@ -127,7 +126,6 @@ class Persistence(BaseEstimator):
 
     lag: int = 1
     name: str = "Persistence"
-    depends_on: tuple[str, ...] = ()
     tail_y_: np.ndarray | None = field(default=None, init=False)
 
     def fit(
@@ -188,7 +186,6 @@ class PersistenceDist(BaseEstimator):
 
     lag: int = 1
     name: str = "PersistenceDist"
-    depends_on: tuple[str, ...] = ()
     tail_y_: np.ndarray | None = field(default=None, init=False)
     sigma_: float | None = field(default=None, init=False)
 

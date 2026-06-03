@@ -76,7 +76,6 @@ class QuantileReg(BaseEstimator):
     random_seed: int | None = None
     isotonic_method: Literal["maximum_accumulate", "sklearn_pava"] = "maximum_accumulate"
     name: str = "QuantileReg"
-    depends_on: tuple[str, ...] = ()
     models_: dict[float, Any] = field(default_factory=dict, init=False)
 
     def fit(
@@ -150,7 +149,6 @@ class QuantileForest(BaseEstimator):
     min_samples_leaf: int = 10
     random_seed: int | None = 0
     name: str = "QuantileForest"
-    depends_on: tuple[str, ...] = ()
     model_: Any = field(default=None, init=False)
 
     def fit(

@@ -70,8 +70,6 @@ class Stacker:
         self.upstreams = ups
         self.meta = meta
         self.name = name or getattr(meta, "name", type(meta).__name__)
-        # A Stacker has no external feature deps; its dependency is its nesting.
-        self.depends_on = ()
 
 
 def _flatten(model) -> list[dict]:

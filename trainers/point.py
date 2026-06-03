@@ -41,7 +41,6 @@ class SklearnPoint(BaseEstimator):
 
     estimator: Any
     name: str | None = None
-    depends_on: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.name is None:
@@ -125,7 +124,6 @@ class OnlineAggregator(BaseEstimator):
 
     min_experts: int = 2
     name: str = "OnlineAggregator"
-    depends_on: tuple[str, ...] = ()
     final_w_: np.ndarray | None = field(default=None, init=False)
     K_: int | None = field(default=None, init=False)
     # Populated when ``groups`` is provided at fit; ``group_key → final_w``.
@@ -407,7 +405,6 @@ class RNNHourly(BaseEstimator):
     baseline_channel: int = 0
     seed: int = 17
     name: str = "RNNHourly"
-    depends_on: tuple[str, ...] = ()
     model_: Any = field(default=None, init=False)
     mean_: np.ndarray | None = field(default=None, init=False)
     std_: np.ndarray | None = field(default=None, init=False)

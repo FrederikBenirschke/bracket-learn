@@ -92,7 +92,6 @@ class EMOS(BaseEstimator):
     """
 
     name: str = "EMOS"
-    depends_on: tuple[str, ...] = ()
     fit_method: Literal["ols", "crps_nelder_mead"] = "ols"
     input_form: Literal["members", "aggregates"] = "members"
     a_: float | None = field(default=None, init=False)
@@ -376,7 +375,6 @@ class HeteroscedasticNormal(BaseEstimator):
     standardize: bool = True
     maxiter: int = 5000
     name: str = "HeteroscedasticNormal"
-    depends_on: tuple[str, ...] = ()
     beta_mu_: np.ndarray | None = field(default=None, init=False)
     beta_sigma_: np.ndarray | None = field(default=None, init=False)
     _x_mean_: np.ndarray | None = field(default=None, init=False)
@@ -517,8 +515,9 @@ class HeteroscedasticNormal(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# StackedParametric — DistForecaster with depends_on. Parametric meta-learner
-# over upstream μ (and optionally σ). Legacy name ``Stacking`` aliased below.
+# StackedParametric — DistForecaster meta-learner over upstream μ (and
+# optionally σ), received positionally via ``upstream=[...]`` under a
+# ``Stacker``. Legacy name ``Stacking`` aliased below.
 # ---------------------------------------------------------------------------
 
 
@@ -570,7 +569,6 @@ class StackedParametric(BaseEstimator):
     sigma_method: Literal["constant", "geometric_mean_upstream"] = "constant"
     dist_family: Literal["normal", "student_t"] = "normal"
     student_t_df: float = 5.0
-    depends_on: tuple[str, ...] = ()
     weights_: np.ndarray | None = field(default=None, init=False)
     intercept_: float | None = field(default=None, init=False)
     sigma_: float | None = field(default=None, init=False)
@@ -839,7 +837,7 @@ Stacking = StackedParametric
 
 @dataclass
 class BMAStacking(BaseEstimator):
-    """Bayesian model averaging meta-learner. DistForecaster with ``depends_on``.
+    """Bayesian model averaging meta-learner. DistForecaster over upstreams.
 
     Replaces ``Stacking``'s OLS-of-μ with a posterior over the mixture
     weight vector ``w`` on the K-simplex, and emits a true
@@ -888,7 +886,6 @@ class BMAStacking(BaseEstimator):
     max_iter: int = 500
     tol: float = 1e-6
     name: str = "BMAStacking"
-    depends_on: tuple[str, ...] = ()
     weights_: np.ndarray | None = field(default=None, init=False)
     alpha_n_: np.ndarray | None = field(default=None, init=False)
     n_iter_: int | None = field(default=None, init=False)
@@ -1109,7 +1106,6 @@ class BayesianRidge(BaseEstimator):
     b_0: float = 1e-3
     standardize: bool = True
     name: str = "BayesianRidge"
-    depends_on: tuple[str, ...] = ()
     # fitted state
     m_n_: np.ndarray | None = field(default=None, init=False)
     V_n_: np.ndarray | None = field(default=None, init=False)
@@ -1300,7 +1296,6 @@ class HierarchicalNormal(BaseEstimator):
     tau2_init: float = 1.0
     max_iter: int = 500
     name: str = "HierarchicalNormal"
-    depends_on: tuple[str, ...] = ()
     # fitted state
     sigma2_: float | None = field(default=None, init=False)
     tau2_: float | None = field(default=None, init=False)
@@ -1595,7 +1590,6 @@ class NGBoostNormal(BaseEstimator):
     random_seed: int | None = None
     base_random_state: int | None = None
     name: str = "NGBoostNormal"
-    depends_on: tuple[str, ...] = ()
     model_: Any = field(default=None, init=False)
 
     def fit(
@@ -1690,7 +1684,6 @@ class MixtureNormals(BaseEstimator):
     """
 
     name: str = "MixtureNormals"
-    depends_on: tuple[str, ...] = ()
     sigma_floor: float = 0.5
     sigma_v_: np.ndarray | None = field(default=None, init=False)
     K_: int | None = field(default=None, init=False)

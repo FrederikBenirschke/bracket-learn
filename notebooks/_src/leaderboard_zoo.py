@@ -178,7 +178,7 @@ for name, (fc, X_in, fam) in SINGLE_TRAINERS.items():
 # %% [markdown]
 # ## Multi-stage DAGs
 #
-# Trainers that consume *upstream* distributions via `depends_on`.
+# Trainers that consume *upstream* distributions positionally via `Stacker`.
 
 # %%
 print("fitting multi-stage DAGs …")

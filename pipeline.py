@@ -404,8 +404,6 @@ class Pipeline:
         self.name = name or "->".join(
             getattr(s, "name", type(s).__name__) for s in stages
         )
-        core = self._model if self._model is not None else self._point
-        self.depends_on = tuple(getattr(core, "depends_on", ()))
 
     # ---- fit ----
 

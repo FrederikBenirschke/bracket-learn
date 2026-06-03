@@ -56,7 +56,6 @@ class DistAsFeatures(BaseEstimator):
     include_mean: bool = True
     include_variance: bool = True
     name: str = "DistAsFeatures"
-    depends_on: tuple[str, ...] = ()
     _n_features_: int | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
@@ -178,7 +177,6 @@ class BracketStacking(BaseEstimator):
 
     estimator: Any = None
     name: str = "BracketStacking"
-    depends_on: tuple[str, ...] = ()
     K_: int | None = field(default=None, init=False)
     edges_template_: np.ndarray | None = field(default=None, init=False)
 

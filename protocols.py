@@ -31,14 +31,12 @@ if TYPE_CHECKING:
 class Forecaster(Protocol):
     """Anything that can be used as a stage in a `Pipeline` / `Stacker`.
 
-    `depends_on` is retained for back-compat (default empty tuple = no deps);
-    under the object-graph surface the dependency IS the `Stacker` nesting, so
+    Under the object-graph surface the dependency IS the `Stacker` nesting, so
     upstream forecasts arrive positionally via ``upstream=[...]`` rather than
-    by name.
+    by name. `name` is a leaderboard label, never wiring.
     """
 
     name: str
-    depends_on: tuple[str, ...]
 
 
 # ---------------------------------------------------------------------------

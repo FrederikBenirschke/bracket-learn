@@ -76,7 +76,6 @@ class CumulativeBinary(BaseEstimator):
     min_child_samples: int = 100
     monotone: bool = True
     name: str = "CumulativeBinary"
-    depends_on: tuple[str, ...] = ()
     model_: Any = field(default=None, init=False)
 
     def __post_init__(self) -> None:
@@ -275,7 +274,6 @@ class TailSpecialist(BaseEstimator):
     num_leaves: int = 15
     min_child_samples: int = 20
     name: str = "TailSpecialist"
-    depends_on: tuple[str, ...] = ()
     clf_lo_: Any = field(default=None, init=False)
     clf_hi_: Any = field(default=None, init=False)
 
@@ -458,7 +456,6 @@ class LinearPoolDist(BaseEstimator):
 
     n_samples: int = 200
     name: str = "LinearPoolDist"
-    depends_on: tuple[str, ...] = ()
     weights_: np.ndarray | None = field(default=None, init=False)
 
     def _sample_grid(self) -> np.ndarray:
@@ -629,7 +626,6 @@ class CDFBoostBracket(BaseEstimator):
     min_child_samples: int = 20
     include_raw_X: bool = False
     name: str = "CDFBoostBracket"
-    depends_on: tuple[str, ...] = ()
     clfs_: list[Any] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:

@@ -50,7 +50,6 @@ class TestGetParams:
         e = EMOS()
         params = e.get_params()
         assert "name" in params
-        assert "depends_on" in params
 
     def test_mixture_normals_exposes_sigma_floor(self):
         m = MixtureNormals(sigma_floor=1.5)
