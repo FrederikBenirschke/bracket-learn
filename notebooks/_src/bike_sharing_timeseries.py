@@ -299,6 +299,10 @@ plt.show()
 from bracketlearn.trainers import CumulativeBinary
 
 cuts = edges[1:-1]
+# CumulativeBinary takes per-row grids (v0.3 per-row brackets); bike uses one
+# shared grid, so map every row id to the same cutpoints / outer-edge pair.
+_cut_by_id = {int(i): cuts for i in ids}
+_outer_by_id = {int(i): (float(edges[0]), float(edges[-1])) for i in ids}
 
 
 def _score_one(stage_name, forecaster, x_in=None):
@@ -327,7 +331,7 @@ lb = {
         n_estimators=200, learning_rate=0.05, random_seed=0,
     ), x_in=X),
     "CumBinary":      _score_one("cum", CumulativeBinary(
-        cutpoints=cuts, outer_edges=(float(edges[0]), float(edges[-1])),
+        cutpoints_by_id=_cut_by_id, outer_edges_by_id=_outer_by_id,
         n_estimators=80,
     ), x_in=X),
 }
