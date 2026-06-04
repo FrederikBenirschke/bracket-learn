@@ -13,6 +13,7 @@ score margin, asset return) and need to price a ladder of binary contracts
 
 guides/quickstart
 guides/concepts
+guides/catalog
 guides/package_map
 guides/cv
 guides/weights

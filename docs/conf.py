@@ -64,3 +64,6 @@ intersphinx_mapping = {
 
 # -- myst ------------------------------------------------------------------
 myst_enable_extensions = ["colon_fence", "deflist"]
+# Generate GitHub-style anchor slugs for headings up to level 3 so in-page
+# links like [Forecasters](#forecasters) resolve (used by guides/catalog.md).
+myst_heading_anchors = 3

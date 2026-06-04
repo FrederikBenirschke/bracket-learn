@@ -333,8 +333,8 @@ trade off linearity, priors, and compute.
 | **Point** | `SklearnPoint`, `OnlineAggregator`, `RNNHourly` | a single μ̂ per row; lift to a distribution with a residual σ (or a calibration stage) |
 | **Parametric distribution** | `EMOS`, `HeteroscedasticNormal`, `NGBoostNormal`, `MixtureNormals`, `BayesianRidge`, `HierarchicalNormal` | a closed-form density (Normal / mixture) whose moments are functions of the features |
 | **Quantile / non-parametric** | `QuantileReg`, `QuantileForest` | a quantile function / empirical CDF — no distributional shape assumed |
-| **Bracket-native** | `CumulativeBinary`, `TailSpecialist`, `CDFBoostBracket` (+ the `BracketExpander` entry point) | bracket / cutpoint indicators directly on each row's own grid |
-| **Stacking / combiners** | `StackedParametric`, `BMAStacking`, `BracketStacking`, `LinearPoolDist`, `DistAsFeatures` | a combination of upstream forecasts (parametric meta-learner, Bayesian average, opinion pool) |
+| **Bracket-native** | `CumulativeBinary` (+ the `BracketExpander` entry point) | bracket / cutpoint indicators directly on each row's own grid |
+| **Stacking / combiners** | `StackedParametric`, `BMAStacking`, `BracketStacking`, `LinearPoolDist`, `TailSpecialist`, `CDFBoostBracket`, `DistAsFeatures` | a combination of upstream forecasts (parametric meta-learner, Bayesian average, opinion pool, tail specialist) |
 | **Baselines** | `Persistence`, `PersistenceDist`, `EmpiricalDistribution` | reference forecasts to beat; plus convenience factories `ridge`, `emos_calibrated` |
 
 Within the **parametric** family the mean/variance flexibility ladder is
