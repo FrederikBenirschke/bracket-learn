@@ -1,8 +1,11 @@
 """GridSearch over a QuantileReg pipeline on California housing.
 
-Searches a small 2-D grid of LightGBM hyperparameters using bracketlearn's
-own time-aware CV inside each grid point (see ``bracketlearn.search`` —
-sklearn's ``GridSearchCV`` would silently destroy time ordering).
+The underlying is the California house value. As in the other examples we model
+its full predictive distribution and price brackets over it; see
+``housing_brackets.py`` for that framing. This script's focus is the search:
+sweeping a small 2-D grid of LightGBM hyperparameters with bracketlearn's own
+time-aware CV inside each grid point (sklearn's ``GridSearchCV`` would break
+time ordering, see ``bracketlearn.search``).
 
 Run::
 
@@ -13,10 +16,10 @@ What this script demonstrates:
 - ``GridSearch`` over a (model graph, WalkForward) pair with two node-level
   params (``qreg__n_estimators`` and ``qreg__learning_rate``) using sklearn's
   ``__``-nested syntax.
-- The result table sorted by CRPS so the user can see the whole landscape,
-  not just the winner.
+- The result table sorted by CRPS so you see the whole landscape, not just the
+  winner.
 - ``best_wf_`` is a fitted ``WalkForward`` (refit_on_full=True) ready for
-  ``.predict()`` on new rows — no extra refit needed.
+  ``.predict()`` on new rows, with no extra refit needed.
 """
 
 from __future__ import annotations

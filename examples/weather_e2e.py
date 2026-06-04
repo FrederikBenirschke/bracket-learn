@@ -1,37 +1,42 @@
 """End-to-end PoC: tier-1 + tier-2 trainers on synthetic weather-like data.
 
+The synthetic target is a continuous, temperature-like quantity. As in every
+example here, we treat it as a prediction-market underlying: model its full
+predictive distribution rather than a point estimate, then price a bracket
+ladder over it, where each bracket is a YES/NO contract on "the value lands in
+this range". This script's job is breadth, exercising most trainers and
+backings in one run.
+
 Run:
     conda run -n weathermarkets python -m bracketlearn.examples.weather_e2e
 
-Trainers exercising the major code paths:
-
 Composition is the native surface: each model is a `Pipeline` (chain) or a
-`Stacker` (parallel combiner over upstream objects); the whole list is run by
+`Stacker` (parallel combiner over upstream objects); the whole list runs under
 one `WalkForward` (the CV/OOF driver). Names are leaderboard labels only.
 
 Tier 1 (parametric / mixture backings):
-  - ridge            — Pipeline([SklearnPoint(RidgeCV), GlobalResidual])
-  - lin_ols          — Pipeline([SklearnPoint(LinearRegression), GlobalResidual]);
-                       same shape as `ridge` with α=0, written out explicitly.
-  - emos             — native parametric-normal DistForecaster
-  - emos_calibrated  — Pipeline([EMOS, Isotonic(edges)])
-  - ngboost          — non-linear EMOS via NGBoost (native parametric normal)
-  - mixture          — per-vendor Gaussian mixture (native parametric mixture)
-  - stack            — Stacker([ridge, emos], StackedParametric())
+  - ridge:            Pipeline([SklearnPoint(RidgeCV), GlobalResidual])
+  - lin_ols:          Pipeline([SklearnPoint(LinearRegression), GlobalResidual]),
+                      the same shape as ridge with α=0, written out explicitly.
+  - emos:             native parametric-normal DistForecaster
+  - emos_calibrated:  Pipeline([EMOS, Isotonic(edges)])
+  - ngboost:          non-linear EMOS via NGBoost (native parametric normal)
+  - mixture:          per-vendor Gaussian mixture (native parametric mixture)
+  - stack:            Stacker([ridge, emos], StackedParametric())
 
 Tier 2 (quantile / bracket backings, conformal calibration, tail specialist):
-  - qreg             — LightGBM per-τ quantile heads (quantile-backed)
-  - qreg_conformal   — Pipeline([QuantileReg, ConformalCalibrate])
-  - qforest          — Random Forest quantile regression (quantile-backed)
-  - cumbin           — cumulative-binary classifier (bracket-backed)
-  - tail_specialist  — Stacker([emos], TailSpecialist()): EMOS body + LightGBM tails
+  - qreg:             LightGBM per-τ quantile heads (quantile-backed)
+  - qreg_conformal:   Pipeline([QuantileReg, ConformalCalibrate])
+  - qforest:          Random Forest quantile regression (quantile-backed)
+  - cumbin:           cumulative-binary classifier (bracket-backed)
+  - tail_specialist:  Stacker([emos], TailSpecialist()): EMOS body + LightGBM tails
 
 Tier 3 (online aggregation):
-  - online_agg       — sleeping-experts AdaHedge over the K columns of X,
-                       lifted to parametric normal via GlobalResidual.
-                       (RNNHourly needs 3-D X — see weather_rnn_e2e.py.)
+  - online_agg:       sleeping-experts AdaHedge over the K columns of X, lifted
+                      to parametric normal via GlobalResidual. (RNNHourly needs
+                      3-D X; see weather_rnn_e2e.py.)
 
-PipelineResult.score() owns OOF alignment so the user never touches dist.ids.
+PipelineResult.score() owns OOF alignment, so you never touch dist.ids.
 """
 
 from __future__ import annotations

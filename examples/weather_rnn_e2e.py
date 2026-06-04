@@ -1,25 +1,29 @@
 """RNN-on-hourly-tensor end-to-end PoC.
 
-Standalone because RNNHourly requires X.ndim == 3 (the (N, T, C) hourly
-tensor convention) and the main weather_e2e demo runs on 2-D feature
-matrices. Pipeline slicing on axis 0 works identically — the only
-restriction is that you can't mix 2-D and 3-D trainers in one pipeline.
+The target is a daily HIGH temperature, a continuous quantity. As in every
+example here, we model its full predictive distribution and price a bracket
+ladder over it rather than predicting a single number. This script's focus is
+the sequence model, RNNHourly on a 3-D hourly tensor.
+
+Standalone because RNNHourly requires X.ndim == 3 (the (N, T, C) hourly tensor
+convention), while the main weather_e2e demo runs on 2-D feature matrices.
+Pipeline slicing on axis 0 works identically; the one restriction is that you
+can't mix 2-D and 3-D trainers in one pipeline.
 
 Run::
 
     conda run -n weathermarkets python -m bracketlearn.examples.weather_rnn_e2e
 
 Trainers:
-  - rnn_hourly  — GRU(32) on the 24-hour, 6-channel tensor + station
-                  embedding, lifted to parametric normal via
-                  GlobalResidual.
+  - rnn_hourly:  GRU(32) on the 24-hour, 6-channel tensor + station embedding,
+                 lifted to parametric normal via GlobalResidual.
 
-Synthetic data mirrors the real HRRR hourly tensor shape (N, 24, 6):
-channels = (temperature_f, dewpoint_f, RH, wind, cloud, CAPE). Target
-= daily HIGH ≈ max(T) − 0.3·mean(cloud) + warm-season term + noise.
+Synthetic data mirrors the real HRRR hourly tensor shape (N, 24, 6): channels =
+(temperature_f, dewpoint_f, RH, wind, cloud, CAPE). Target = daily HIGH ≈
+max(T) − 0.3·mean(cloud) + warm-season term + noise.
 
-The RNN learns the cloud-correction residual; ridge can't because it
-sees a flat 6-D mean and misses the cloud signal.
+The RNN learns the cloud-correction residual; ridge can't, because it sees a
+flat 6-D mean and misses the cloud signal.
 """
 
 from __future__ import annotations

@@ -14,18 +14,29 @@
 # ---
 
 # %% [markdown]
-# # California housing → bracket-contract prices
+# # California housing as a forecasting and pricing problem
 #
-# Take a regression dataset, predict a **distribution** over house prices,
-# then price a ladder of binary contracts ("will this house sell above
-# $X?") against the forecast distribution.
+# ## Turning a regression target into a market problem
 #
-# 1. Fit three forecasters under one `WalkForward`: `Empirical`
-#    (baseline), `Ridge + GlobalResidual`, `QuantileReg`.
-# 2. Score them on distribution-level (CRPS, PIT) and contract-level
-#    (Brier, log-loss) metrics.
-# 3. Show *what those numbers actually mean* with diagnostic plots that
-#    each carry their own conclusion.
+# Predicting a house value is a plain point-regression task: one number per
+# row. To price contracts on it you trade ranges instead, and "will this house
+# sell between \$300k and \$400k?" pays \$1 if it does. So we reframe the value
+# three ways:
+#
+# 1. The house value becomes the continuous underlying.
+# 2. In place of a single number, we model a full predictive distribution over
+#    it.
+# 3. We lay a bracket ladder over the price axis; each bracket is one YES/NO
+#    contract, priced as the distribution's mass in that range.
+#
+# The standard three steps then play out below:
+#
+# 1. Fit three forecasters under one `WalkForward`: `Empirical` (baseline),
+#    `Ridge + GlobalResidual`, and `QuantileReg`.
+# 2. Score them on distribution-level (CRPS, PIT) and contract-level (Brier,
+#    log-loss) metrics.
+# 3. Show what those numbers mean with diagnostic plots that each carry their
+#    own conclusion.
 # 4. Run a wider **leaderboard** and rank everything.
 
 # %%

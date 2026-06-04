@@ -1,11 +1,26 @@
-"""California housing → bracket-contract prices.
+"""California housing as a probabilistic-forecasting and pricing problem.
 
-The pitch in one script: take a regression dataset, predict a *distribution*
-over the target, then price a ladder of binary contracts ("will this house
-sell above $250k?", "between $300k and $400k?").
+Dataset: sklearn's ``fetch_california_housing`` (20 640 rows, 8 numeric
+features). The raw target is the median house value in units of $100k (so
+2.5 = $250k).
 
-Dataset: sklearn's ``fetch_california_housing`` — 20 640 rows, 8 numeric
-features, target = median house value in units of $100k (so 2.5 = $250k).
+Turning a regression target into a market problem
+-------------------------------------------------
+Predicting a house value is a plain point-regression task: one number per row.
+To price contracts on it you trade ranges instead, and "will this house sell
+between $300k and $400k?" pays $1 if it does. So the script reframes the value
+three ways:
+
+1. The house value becomes the continuous underlying.
+2. In place of a single predicted number, we model a full predictive
+   distribution over the value. A lifted ridge model and QuantileReg each
+   produce one; an EmpiricalDistribution baseline gives a floor.
+3. We lay a bracket ladder over the price axis ($0 to $500k). Each bracket is
+   one YES/NO contract, priced as the distribution's mass in that range.
+
+From there the standard three steps: forecast the distribution, price the
+brackets, score both the distribution (CRPS, log-score) and the contracts
+(bracket log-loss, Brier).
 
 Run::
 
@@ -13,13 +28,13 @@ Run::
 
 What this script demonstrates:
 
-- ``Pipeline([SklearnPoint(RidgeCV()), GlobalResidual()])`` —
-  a sklearn regressor lifted to a parametric-normal distribution.
-- ``QuantileReg`` — LightGBM per-τ heads; quantile-backed distribution
-  that captures heteroscedasticity ridge cannot.
-- ``BracketLadder`` prices each distribution on a $0–$500k ladder.
-- ``PipelineResult.score`` reports distribution-level metrics (CRPS,
-  log-score) and bracket-contract metrics (log loss, Brier) side by side.
+- ``Pipeline([SklearnPoint(RidgeCV()), GlobalResidual()])``: a sklearn
+  regressor lifted to a parametric-normal distribution.
+- ``QuantileReg``: LightGBM per-τ heads, a quantile-backed distribution that
+  captures the heteroscedasticity ridge cannot.
+- ``BracketLadder`` prices each distribution on a $0 to $500k ladder.
+- ``PipelineResult.score`` reports distribution-level metrics (CRPS, log-score)
+  and bracket-contract metrics (log-loss, Brier) side by side.
 """
 
 from __future__ import annotations

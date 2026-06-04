@@ -14,22 +14,25 @@
 # ---
 
 # %% [markdown]
-# # The full bracketlearn zoo — exhaustive leaderboard
+# # The full bracketlearn zoo: exhaustive leaderboard
 #
 # Every applicable trainer × wrapper combination from `bracketlearn`,
-# benchmarked on California housing with a separate time-series mini
-# section on bike-sharing demand.
+# benchmarked on California housing with a separate time-series mini section on
+# bike-sharing demand. Both targets are continuous underlyings modelled as
+# distributions and priced on bracket ladders; see the housing and bike
+# notebooks for that framing. Here the focus is breadth and ranking.
 #
 # Categories covered:
 #
-# 1. **Baselines** — `EmpiricalDistribution`, `Persistence` variants.
-# 2. **Native dist trainers** — `EMOS`, `NGBoostNormal`, `MixtureNormals`,
+# 1. **Baselines**: `EmpiricalDistribution`, `Persistence` variants.
+# 2. **Native dist trainers**: `EMOS`, `NGBoostNormal`, `MixtureNormals`,
 #    `QuantileReg`, `QuantileForest`, `CumulativeBinary`.
-# 3. **Point + lifter combos** — sklearn regressors lifted via
-#    `GlobalResidual`, `StudentTResidual`, `GARCHResidual`.
-# 4. **Calibrated wrappers** — `Isotonic`, `ConformalCalibrate`.
-# 5. **Multi-stage DAGs** — `StackedParametric`, `DistAsFeatures`, `LinearPoolDist`,
-#    `CDFBoostBracket`, `TailSpecialist` over a shared upstream set.
+# 3. **Point + lifter combos**: sklearn regressors lifted via `GlobalResidual`,
+#    `StudentTResidual`, `GARCHResidual`.
+# 4. **Calibrated wrappers**: `Isotonic`, `ConformalCalibrate`.
+# 5. **Multi-stage DAGs**: `StackedParametric`, `DistAsFeatures`,
+#    `LinearPoolDist`, `CDFBoostBracket`, `TailSpecialist` over a shared
+#    upstream set.
 
 # %%
 import sys
