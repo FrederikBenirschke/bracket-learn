@@ -14,18 +14,37 @@
 # ---
 
 # %% [markdown]
-# # Hourly bike-sharing demand — time-series probabilistic forecast
+# # Hourly bike-sharing demand as a forecasting and pricing problem
 #
 # Real time series: 17 379 hourly rows from a DC bike-share system
-# (2011–2012). Target = hourly rental count. We use **expanding-window
-# CV** (train always precedes test in calendar time) and compare two
-# baselines against learned models:
+# (2011–2012), in chronological order. The raw target is the hourly rental
+# count.
 #
-# 1. `EmpiricalDistribution` — marginal of y; ignores features.
-# 2. `Persistence(lag=24)` — same hour yesterday; captures diurnal cycle.
+# ## Turning a regression target into a market problem
 #
-# The interesting question isn't beating the marginal (most models do).
-# It's beating the **seasonal** one.
+# Predicting "how many bikes this hour" is a plain point-regression task: one
+# number per row. A prediction market never trades the exact number. It trades
+# ranges, and "will this hour's count land in 200–350?" pays \$1 if it does. So
+# we reframe the count three ways:
+#
+# 1. The hourly count becomes the continuous underlying.
+# 2. In place of a single predicted number, we model a full predictive
+#    distribution over the count.
+# 3. We lay a bracket ladder over the count axis. Each bracket is one YES/NO
+#    contract, priced as the distribution's mass in that range.
+#
+# Then the standard three steps: forecast the distribution, price the brackets,
+# score both. We use **expanding-window CV** (train always precedes test in
+# calendar time) and compare two baselines against two learned models:
+#
+# 1. `EmpiricalDistribution`: the marginal of y, ignoring features.
+# 2. `Persistence(lag=24)`: same hour yesterday, which captures the diurnal
+#    cycle.
+# 3. `QuantileReg`: quantile functions on the full feature matrix.
+# 4. A LightGBM point model lifted to a Normal by `GlobalResidual`.
+#
+# The interesting question isn't beating the marginal (the learned models do
+# it easily). It's beating the **seasonal** one.
 
 # %%
 import sys
@@ -51,10 +70,11 @@ from _style import (
 )
 from bracketlearn.baselines import EmpiricalDistribution, Persistence
 from bracketlearn.compose import WalkForward
-from bracketlearn.lift import GlobalResidual, Isotonic
+from bracketlearn.lift import GlobalResidual
 from bracketlearn.pipeline import Pipeline
 from bracketlearn.score import pit, to_point
-from bracketlearn.trainers import EMOS, QuantileReg
+from bracketlearn.trainers import QuantileReg, SklearnPoint
+from lightgbm import LGBMRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 # %% [markdown]
@@ -64,10 +84,12 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 print("loading Bike_Sharing_Demand …")
 ds = fetch_openml("Bike_Sharing_Demand", version=2,
                   as_frame=True, parser="pandas")
-df: pd.DataFrame = ds.data
-y_raw = ds.target.to_numpy(dtype=float)
-df = df.sort_values(["year", "month", "hour"]).reset_index(drop=True)
-y = y_raw[df.index.to_numpy()]
+# The dataset ships in chronological (hourly) order, and there is no
+# day-of-month column to re-sort on, so keep the rows as-loaded: the row index
+# is the time index. Sorting on (year, month, hour) would group all same-hour
+# rows together and destroy that order (and the diurnal-cycle plot below).
+df: pd.DataFrame = ds.data.reset_index(drop=True)
+y = ds.target.to_numpy(dtype=float)
 
 
 def _prepare(df: pd.DataFrame) -> np.ndarray:
@@ -85,18 +107,9 @@ ids = np.arange(n)
 ts = ids.astype(float)
 print(f"  rows={n}  features={X.shape[1]}  y in [{y.min():.0f}, {y.max():.0f}]")
 
-# Synthetic "ensemble" for EMOS (which expects rows × experts).
-rng = np.random.default_rng(0)
-temp_col = df["temp"].to_numpy(dtype=float)
-X_ens = np.column_stack([
-    temp_col + rng.normal(0, 1, n),
-    temp_col + rng.normal(0, 2, n),
-    temp_col + rng.normal(0, 0.5, n),
-]) * 8.0 + 50.0
-
 # %% [markdown]
-# **Diurnal + weekly cycle** — first 14 days. This is why lag-24
-# persistence is a meaningful baseline, not a strawman.
+# **Diurnal + weekly cycle**, first 14 days. This is why lag-24 persistence is
+# a meaningful baseline, not a strawman.
 
 # %%
 fig, ax = plt.subplots(figsize=(11, 3.6))
@@ -119,19 +132,23 @@ print(f"{len(edges)-1} brackets covering {edges[0]:.0f}–{edges[-1]:.0f} bikes/
 # ## Pipeline: 2 baselines + 2 learned models
 #
 # `embargo=24` puts a 24-row buffer between train and test in each fold,
-# so persistence-style leakage across the boundary is ruled out.
+# so persistence-style leakage across the boundary is ruled out. Every model
+# reads the same real feature matrix `X`; the learned models use the
+# hour-of-day column that drives the cycle.
 
 # %%
 model = [
     Pipeline([EmpiricalDistribution()], name="emp"),
     Pipeline([Persistence(lag=24), GlobalResidual()], name="persist24"),
-    Pipeline([EMOS(), Isotonic(pre_integrate_edges=edges)], name="emos_iso"),
     Pipeline([QuantileReg(n_estimators=200, learning_rate=0.05, random_seed=0)], name="qreg"),
+    Pipeline([SklearnPoint(LGBMRegressor(n_estimators=200, learning_rate=0.05,
+                                         verbose=-1, random_state=0)),
+              GlobalResidual()], name="lgbm_normal"),
 ]
 wf = WalkForward(
     cv="expanding-window", n_folds=5, embargo=24, refit_on_full=False,
 )
-result = wf.fit_predict(model, X_ens, y, ids=ids, timestamps=ts)
+result = wf.fit_predict(model, X, y, ids=ids, timestamps=ts)
 print(result.to_table(y, metrics=["crps", "log_score", "pit"]))
 
 # %% [markdown]
@@ -139,14 +156,13 @@ print(result.to_table(y, metrics=["crps", "log_score", "pit"]))
 #
 # Same sklearn-style scatter grid as the housing notebook, four panels.
 # `emp` collapses onto one horizontal stripe. `persist24` clusters along
-# the diagonal but with wide noise (yesterday isn't tomorrow). `qreg`
-# tracks the diagonal across the full range; `emos_iso` is limited
-# because its input is a temperature-jitter ensemble, not features.
+# the diagonal but with wide noise (yesterday isn't tomorrow). `qreg` and
+# `lgbm_normal` both track the diagonal across the full range.
 
 # %%
 crps_scores = result.score(y, metrics=["crps"])
 panels = []
-for name in ["emp", "persist24", "emos_iso", "qreg"]:
+for name in ["emp", "persist24", "qreg", "lgbm_normal"]:
     dist = result[name]
     y_oof = y[dist.ids.astype(int)]
     mu = to_point(dist, how="mean")
@@ -168,7 +184,7 @@ plt.show()
 
 # %%
 fig, axes = plt.subplots(1, 4, figsize=(13, 3.4), sharey=True)
-for ax, name in zip(axes, ["emp", "persist24", "emos_iso", "qreg"], strict=True):
+for ax, name in zip(axes, ["emp", "persist24", "qreg", "lgbm_normal"], strict=True):
     dist = result[name]
     y_oof = y[dist.ids.astype(int)]
     pit_vals = pit(dist, y_oof)
@@ -282,7 +298,7 @@ def _reliability(dist, edges, y_oof, n_bins=10):
 
 
 series = []
-for name in ["emp", "persist24", "emos_iso", "qreg"]:
+for name in ["emp", "persist24", "qreg", "lgbm_normal"]:
     dist = result[name]
     y_oof = y[dist.ids.astype(int)]
     mp, hr = _reliability(dist, edges, y_oof)
@@ -305,11 +321,11 @@ _cut_by_id = {int(i): cuts for i in ids}
 _outer_by_id = {int(i): (float(edges[0]), float(edges[-1])) for i in ids}
 
 
-def _score_one(stage_name, forecaster, x_in=None):
+def _score_one(stage_name, forecaster):
     m = forecaster if isinstance(forecaster, Pipeline) else Pipeline([forecaster], name=stage_name)
     r = WalkForward(
         cv="expanding-window", n_folds=5, embargo=24, refit_on_full=False,
-    ).fit_predict(m, x_in if x_in is not None else X_ens, y, ids=ids, timestamps=ts)
+    ).fit_predict(m, X, y, ids=ids, timestamps=ts)
     return r.score(y, metrics=["crps"])[m.name]["crps"]
 
 
@@ -324,16 +340,18 @@ lb = {
     "Persist-168":    _score_one("p168", Pipeline(
         [Persistence(lag=168), GlobalResidual()], name="p168",
     )),
-    "EMOS+Iso":       _score_one("emos_iso", Pipeline(
-        [EMOS(), Isotonic(pre_integrate_edges=edges)], name="emos_iso",
-    )),
     "QuantileReg":    _score_one("qreg", QuantileReg(
         n_estimators=200, learning_rate=0.05, random_seed=0,
-    ), x_in=X),
+    )),
+    "LGBM+Normal":    _score_one("lgbm", Pipeline(
+        [SklearnPoint(LGBMRegressor(n_estimators=200, learning_rate=0.05,
+                                    verbose=-1, random_state=0)),
+         GlobalResidual()], name="lgbm",
+    )),
     "CumBinary":      _score_one("cum", CumulativeBinary(
         cutpoints_by_id=_cut_by_id, outer_edges_by_id=_outer_by_id,
-        n_estimators=80,
-    ), x_in=X),
+        n_estimators=120,
+    )),
 }
 
 rows = sorted(lb.items(), key=lambda kv: kv[1])
@@ -402,7 +420,7 @@ lgb_pred = _sklearn_oof(
 )
 
 point_panels = []
-for name in ["persist24", "emos_iso", "qreg"]:
+for name in ["persist24", "qreg", "lgbm_normal"]:
     dist = result[name]
     y_oof = y[dist.ids.astype(int)]
     mu = to_point(dist, how="mean")
