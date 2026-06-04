@@ -53,3 +53,15 @@ jobs:
 
       - name: Twine metadata check
         run: twine check dist/*
+
+      - name: Clean-install wheel + import smoke
+        # Guards the packaging bug that shipped once: a stale `packages` list
+        # omitted bracketlearn.forecast, so the wheel imported fine in the dev
+        # editable install but crashed on a clean `pip install`. Install only
+        # the wheel into a fresh venv (no source tree on path) and import the
+        # full public surface.
+        run: |
+          python -m venv /tmp/wheelcheck
+          /tmp/wheelcheck/bin/pip install --upgrade pip
+          /tmp/wheelcheck/bin/pip install "$(ls dist/*.whl)[boosting,quantile-forest]"
+          /tmp/wheelcheck/bin/python -c "import bracketlearn; from bracketlearn import Pipeline, Stacker, WalkForward; from bracketlearn.forecast import DistributionForecast, NormalForecast, BracketForecast; print('import OK', bracketlearn.__version__)"
