@@ -1,28 +1,71 @@
 # bracketlearn
 
-**Train a calibrated probabilistic forecast for a continuous quantity,
-then price the prediction-market contracts (Kalshi / Polymarket binaries,
-brackets, spreads, totals) that pay off on it.**
+**A scikit-learn-style toolkit for forecasting a continuous number, then
+pricing the prediction-market contracts that pay out on it.**
 
-`bracketlearn` is an sklearn-style framework that does three things:
+## What's a prediction market — and what problem does this solve?
 
-1. **Forecast a distribution** — `EMOS`, `NGBoostNormal`, `QuantileReg`,
-   `MixtureNormals`, `CumulativeBinary`, `TailSpecialist` and friends,
-   with sklearn-compatible CV, calibration, and conformal correction.
-2. **Convert that distribution into fair prices** for the venue's listed
-   contracts — single-threshold binaries, paired YES/NO twins, threshold
-   ladders, and bracket ladders with per-row varying edges (the
-   daily-rotating ladders Kalshi runs on temperature / GDP / Fed-decision
-   contracts; pass repeated edges if every row shares the same grid).
-3. **Score those fair prices** against realized outcomes with proper
-   scoring rules (CRPS, log-score, PIT) on the distribution side and
-   Brier / log-loss on the contract side.
+A *prediction market* lets people trade contracts that pay **$1 if some
+future event happens** and **$0 if it doesn't**. On venues like
+[Kalshi](https://kalshi.com) and [Polymarket](https://polymarket.com) you'll
+see markets such as:
 
-Most probabilistic-forecasting libraries stop at "predict a distribution."
-Here every forecast is a typed `DistributionForecast` that knows how to
-price the resulting contracts and how to be scored on them.
+> **"Will today's high temperature in New York be between 70°F and 72°F?"**
+> — YES is trading at 31¢.
 
-### Out of scope: trade decisions
+Because a YES contract pays exactly $1 when the event occurs, its price *is*
+the market's implied **probability**: 31¢ means the crowd thinks there's a
+~31% chance. Many of these markets come as **brackets** — a row of
+mutually-exclusive contracts (`68–70°F`, `70–72°F`, `72–74°F`, …) that carve
+up a continuous underlying quantity (here, the day's high temperature).
+Others are single **thresholds** ("high above 75°F"), or **spreads / totals**
+on a game ("Eagles −3.5", "over 47.5 points").
+
+To trade any of these you need two things the venue doesn't hand you:
+
+1. **Your own probability distribution** over the underlying number
+   (tomorrow's high temp, the final margin, the GDP print) — and ideally a
+   *calibrated* one, so that events you call 30%-likely happen about 30% of
+   the time.
+2. **A way to turn that one distribution into a fair price for every
+   contract** the venue lists. The same underlying gets sold many different
+   ways — brackets, thresholds, spreads — and each needs its own slice of
+   your distribution (a bucket probability, a tail probability, a survival
+   value).
+
+`bracketlearn` is the bridge from raw features to those fair prices.
+
+## What it does
+
+Three steps, all in an sklearn-style API:
+
+1. **Forecast a distribution** — fit a probabilistic model (`EMOS`,
+   `NGBoostNormal`, `QuantileReg`, `MixtureNormals`, `CumulativeBinary` and
+   friends) on your features, with sklearn-compatible cross-validation,
+   calibration, and conformal correction. The output is a typed
+   `DistributionForecast`, not just a point estimate.
+2. **Price the contracts** — convert that distribution into fair prices for
+   the venue's listed shapes: single-threshold binaries, paired YES/NO
+   twins, threshold ladders, and bracket ladders whose edges can rotate per
+   row (the daily-shifting ladders Kalshi runs on temperature / GDP /
+   Fed-decision contracts; pass repeated edges if every row shares one grid).
+3. **Score the fair prices** against realized outcomes with proper scoring
+   rules — CRPS, log-score, PIT on the distribution side; Brier / log-loss
+   on the contract side — so you can tell whether your prices were actually
+   calibrated.
+
+Most probabilistic-forecasting libraries stop at step 1, "predict a
+distribution." bracketlearn carries the *same* typed forecast all the way
+through pricing and scoring, so the contract math and the calibration check
+are first-class instead of glue code in your notebook.
+
+> **Not just weather.** The running example throughout these docs is
+> temperature (it's the cleanest continuous underlying), but nothing here is
+> weather-specific: any continuous quantity with bracket / threshold /
+> spread contracts — sports margins, index levels, economic releases —
+> drops into the same API.
+
+## Out of scope: trade decisions
 
 The conversion from `fair_price` to a position size is **not** in this
 library and won't be. That conversion is where private signal lives —

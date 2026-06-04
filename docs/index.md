@@ -1,11 +1,22 @@
 # bracketlearn
 
-Sklearn-style framework for **probabilistic forecasting** + **bracket-contract
-pricing**.
+An sklearn-style toolkit for **forecasting a continuous number**, then
+**pricing the prediction-market contracts that pay out on it**.
 
-Built for the case where you predict a continuous quantity (temperature,
-score margin, asset return) and need to price a ladder of binary contracts
-("HIGH > 75°F?", "score in [10, 20)?") against the forecast distribution.
+A *prediction market* sells contracts that pay $1 if an event happens and $0
+if not — so a contract's price is the market's implied probability (a YES at
+31¢ ⇒ a ~31% chance). On Kalshi / Polymarket the same underlying quantity
+(today's high temperature, a game's margin, the next GDP print) is sold many
+ways: **brackets** (`70–72°F`, `72–74°F`, …), single **thresholds** ("above
+75°F"), and **spreads / totals**. To trade them you need your own *calibrated*
+distribution over the underlying, and a way to turn that one distribution into
+a fair price for every contract shape. bracketlearn is that bridge: **forecast
+a distribution → price the contracts → score the prices**, all on one typed
+`DistributionForecast`.
+
+The running example in these guides is temperature (the cleanest continuous
+underlying), but nothing is weather-specific — any continuous quantity with
+bracket / threshold / spread contracts uses the same API.
 
 ```{toctree}
 :maxdepth: 2
