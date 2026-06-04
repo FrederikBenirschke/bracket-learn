@@ -569,19 +569,6 @@ the trainer families, the five contract adapters, and the distribution- and
 contract-level scoring. [CHANGELOG.md](CHANGELOG.md) records the version history
 and the migration recipes for past API changes.
 
-### Limitations
-
-Two capabilities are documented but not built. They raise on use rather than
-guess:
-
-- **Non-binary contracts.** bracketlearn prices prediction-market binaries
-  only. Vanilla options and option-spread adapters stay out of scope.
-- **Non-`clip` tail rules.** A quantile-backed `DistributionForecast` needs a
-  `TailPolicy` for `cdf`, `ppf`, `pdf`, `mean`, `variance`, and `sample`. Only
-  `TailRule.clip()` ships today; `gpd` and slope-matched Gaussian raise
-  `NotImplementedError`. The constructor demands the policy up front, so the
-  gap surfaces at construction instead of in silent tail mass.
-
 ## License
 
 MIT.
