@@ -4,9 +4,9 @@
 sample_weight=w)` threads `w` through every stage. Common uses:
 
 - **Time-decay weighting**: more recent rows count more.
-- **Importance reweighting**: market regimes that matter most get boosted.
-- **Cost-sensitive training**: rows where a wrong forecast is expensive
-  get higher weight.
+- **Importance reweighting**: the market regimes that matter most get boosted.
+- **Cost-sensitive training**: rows where a wrong forecast costs you get higher
+  weight.
 
 ```python
 import numpy as np
@@ -21,25 +21,25 @@ result = wf.fit_predict(model, X, y, ids=ids, timestamps=ts, sample_weight=w)
 
 Native weighted fits:
 
-- `EMOS` — weighted OLS for both (a, b) and (c, d).
-- `StackedParametric` — weighted OLS over upstream μ.
-- `MixtureNormals` — weighted per-vendor RMSE.
-- `SklearnPoint(estimator)` — forwarded to estimator's `fit(sample_weight=...)`
-  if the estimator supports it.
+- `EMOS`: weighted OLS for both (a, b) and (c, d).
+- `StackedParametric`: weighted OLS over upstream μ.
+- `MixtureNormals`: weighted per-vendor RMSE.
+- `SklearnPoint(estimator)`: forwards to the estimator's `fit(sample_weight=...)`
+  when the estimator supports it.
 
-Wrapped through the underlying gradient-boosting / forest library:
+Wrapped through the underlying gradient-boosting or forest library:
 
-- `NGBoostNormal`, `QuantileReg`, `QuantileForest`, `CumulativeBinary`,
-  `TailSpecialist` — `sample_weight=` forwarded to LightGBM / NGBoost /
+- `NGBoostNormal`, `QuantileReg`, `QuantileForest`, `CumulativeBinary`, and
+  `TailSpecialist` forward `sample_weight=` to LightGBM, NGBoost, or
   quantile-forest.
 
 Pass-through (no native weight support):
 
-- `OnlineAggregator` — online-learning loss accumulators don't have a
-  natural weight slot; the pipeline detects this via signature inspection
-  and skips the kwarg.
-- `RNNHourly` — same; sequence-batched SGD doesn't accept per-row weights
-  in the current implementation.
+- `OnlineAggregator`: online-learning loss accumulators hold no natural weight
+  slot, so the pipeline detects this by signature inspection and skips the
+  kwarg.
+- `RNNHourly`: sequence-batched SGD takes no per-row weights in the current
+  implementation, and the pipeline skips the kwarg the same way.
 
-The pass-through detection is signature-based, not TypeError-based, so a
-missing kwarg won't mask an unrelated bug in the trainer.
+The pass-through detection reads the signature instead of catching a
+`TypeError`, so a missing kwarg never masks an unrelated bug in the trainer.

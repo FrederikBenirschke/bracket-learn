@@ -1,12 +1,12 @@
 # Baselines
 
-Every probabilistic-forecasting paper compares against trivial baselines.
-If your fancy quantile-regression-stacked-ensemble ties one of these,
-the features aren't predictive or the validation is leaking. bracketlearn
-ships two — both `BaseEstimator` subclasses that slot into a `Pipeline`
-(run under `WalkForward`) unchanged.
+Every probabilistic-forecasting paper compares against trivial baselines. When
+your quantile-regression-stacked-ensemble only ties one of these, either the
+features carry no signal or the validation leaks. bracketlearn ships two, both
+`BaseEstimator` subclasses that drop into a `Pipeline` (run under `WalkForward`)
+unchanged.
 
-## `EmpiricalDistribution` — climatology floor
+## `EmpiricalDistribution`: the climatology floor
 
 Ignores `X` entirely; emits the empirical CDF of training `y` as a fixed
 quantile-backed forecast.
@@ -17,7 +17,7 @@ from bracketlearn import EmpiricalDistribution
 emp = EmpiricalDistribution()
 emp.fit(X_train, y_train)
 dist = emp.predict_dist(X_test)
-# dist.qvals is the same vector repeated N times — no X-conditioning.
+# dist.qvals is the same vector repeated N times, with no X-conditioning.
 ```
 
 The default τ-grid is `(0.05, 0.10, ..., 0.95)`. Pass `taus=(...)` to
@@ -25,10 +25,9 @@ override.
 
 ### Why this is the floor
 
-`EmpiricalDistribution` honors marginal calibration by construction —
-its CDF is the empirical CDF, so PIT values on i.i.d. holdout data are
-exactly uniform. A model that doesn't beat its CRPS isn't learning any
-conditional structure from `X`.
+`EmpiricalDistribution` honors marginal calibration by construction: its CDF is
+the empirical CDF, so PIT values on i.i.d. holdout data come out uniform. A
+model that fails to beat its CRPS has learned no conditional structure from `X`.
 
 ### sample_weight
 
@@ -41,7 +40,7 @@ sw = np.where(y_train > extreme_threshold, 10.0, 1.0)
 emp.fit(X_train, y_train, sample_weight=sw)
 ```
 
-## `Persistence` — autoregressive lag-k baseline
+## `Persistence`: the autoregressive lag-k baseline
 
 `mu_t = y_{t - lag}`. Records the last `lag` training y values at fit
 time; at predict time tiles them cyclically across the inference horizon.
@@ -56,8 +55,8 @@ pred = p.predict(X_test)   # constant: last training y everywhere
 
 ### Lag semantics
 
-`Persistence` is a `PointForecaster` — no σ. Pair with `GlobalResidual`
-(fit on OOF residuals) or another `Lifter` if you want distributional
+`Persistence` is a `PointForecaster`, so it carries no σ. Pair it with
+`GlobalResidual` (fit on OOF residuals) or another `Lifter` for distributional
 output.
 
 | `lag` | behaviour | natural use |
@@ -68,10 +67,9 @@ output.
 
 ### CV constraints
 
-`Persistence` only makes sense under time-aware CV. Combine with
-`cv="expanding-window"` or `cv="rolling-window"` — `cv="kfold"` on
-shuffled rows makes "last y" meaningless and the metric becomes a
-random number.
+`Persistence` only makes sense under time-aware CV. Combine it with
+`cv="expanding-window"` or `cv="rolling-window"`. On `cv="kfold"` with shuffled
+rows, "last y" loses meaning and the metric turns into a random number.
 
 ```python
 from bracketlearn import Pipeline, WalkForward
@@ -88,8 +86,8 @@ result = WalkForward(cv="expanding-window", n_folds=5).fit_predict(
 - **Tabular data with no time axis**: `EmpiricalDistribution` is the
   floor.
 - **Hourly / daily time series with a strong seasonal cycle**:
-  `Persistence(lag=24)` or `Persistence(lag=168)` is the floor — beating
-  it means you learned more than the cycle.
+  `Persistence(lag=24)` or `Persistence(lag=168)` is the floor; beating it
+  means you learned more than the cycle.
 - **Both** are cheap to fit and add to a `WalkForward` run as named
   models; that way your `result.score(y)` table prints baselines and
   models side by side and the reader can read off skill scores.

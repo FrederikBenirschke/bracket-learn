@@ -22,8 +22,8 @@ distribution-level and contract-level metrics. Runs in ~30 s.
 
 ### `bike_sharing_timeseries.py`
 
-Hourly bike-sharing demand from OpenML (17k rows, 2011–2012). Real time
-series — first run downloads the dataset (cached by sklearn afterward).
+Hourly bike-sharing demand from OpenML (17k rows, 2011–2012). A real time
+series; the first run downloads the dataset, and sklearn caches it afterward.
 
 ```bash
 python -m bracketlearn.examples.bike_sharing_timeseries
@@ -31,8 +31,8 @@ python -m bracketlearn.examples.bike_sharing_timeseries
 
 Shows: `cv="expanding-window"` with `embargo`, `Pipeline([EMOS(),
 Isotonic(pre_integrate_edges=edges)])` (per-fold tail calibration), a
-bracket ladder spanning 0–1000 bikes/hour. Demonstrates that OOF alignment
-is invisible to the user — `result.score(y)` just works.
+bracket ladder spanning 0–1000 bikes/hour. OOF alignment stays invisible to
+you: `result.score(y)` just works.
 
 ### `grid_search_demo.py`
 
@@ -50,9 +50,9 @@ in ~3 min.
 ## Notebooks (recommended)
 
 Each of the three public-dataset examples also ships as a Jupyter
-notebook with plots — PIT histograms, quantile fans, reliability
-diagrams, bracket-price bars, skill-score bars, and a **leaderboard**
-ranking multiple trainers against baselines.
+notebook with plots: PIT histograms, quantile fans, reliability diagrams,
+bracket-price bars, skill-score bars, and a **leaderboard** ranking multiple
+trainers against baselines.
 
 See [`bracketlearn/notebooks/`](https://github.com/FrederikBenirschke/bracketlearn/tree/main/bracketlearn/notebooks).
 Source for each notebook lives as a `.py` file under `notebooks/_src/`

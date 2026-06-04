@@ -20,14 +20,13 @@ print(scores["high"]["emos"]["crps"])
 print(scores["low"]["emos"]["crps"])
 ```
 
-## Design choice: wrap, don't thread
+## Design choice: wrap rather than thread
 
-Each target gets its own cloned model. There is no cross-target sharing.
+Each target gets its own cloned model, with no cross-target sharing.
 
-Why not natively make every `DistributionForecast` carry an `(N, M)`
-shape? It would multiply every backing's storage, break every scoring
-rule, and turn a niche feature into pervasive complexity. Users who
-genuinely want joint modelling can write a single trainer that consumes
+A native `(N, M)` shape on every `DistributionForecast` would multiply each
+backing's storage, break every scoring rule, and turn a niche feature into
+pervasive complexity. For joint modelling, write a single trainer that consumes
 `(N, M)` y and run it under an ordinary `WalkForward`.
 
 `predict()` on the multi-target wrapper returns

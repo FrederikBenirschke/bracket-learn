@@ -14,8 +14,8 @@ against classical regression metrics).
 | `log_score` | closed-form | closed-form | piecewise-linear CDF → constant density per bin | uniform-in-bin density |
 | `pit_mean` / `pit_std` | closed-form | numerical CDF | linear interpolation | linear interpolation |
 
-There are **no `nan` returns** for the v0.3+ metric set — every backing
-has a definition that works.
+Every backing in the v0.3+ metric set has a working definition, so the table
+never returns `nan`.
 
 ## Bracket-contract metrics
 

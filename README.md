@@ -3,81 +3,71 @@
 **A scikit-learn-style toolkit for forecasting a continuous number, then
 pricing the prediction-market contracts that pay out on it.**
 
-## What's a prediction market — and what problem does this solve?
+## Prediction markets and the pricing problem
 
-A *prediction market* lets people trade contracts that pay **$1 if some
-future event happens** and **$0 if it doesn't**. On venues like
-[Kalshi](https://kalshi.com) and [Polymarket](https://polymarket.com) you'll
-see markets such as:
+A prediction market sells contracts that pay **$1 when an event happens** and
+**$0 when it doesn't**. Browse [Kalshi](https://kalshi.com) or
+[Polymarket](https://polymarket.com) and you find markets like this:
 
-> **"Will today's high temperature in New York be between 70°F and 72°F?"**
-> — YES is trading at 31¢.
+> **"Will today's high temperature in New York land between 70°F and 72°F?"**
+> YES trades at 31¢.
 
-Because a YES contract pays exactly $1 when the event occurs, its price *is*
-the market's implied **probability**: 31¢ means the crowd thinks there's a
-~31% chance. Many of these markets come as **brackets** — a row of
-mutually-exclusive contracts (`68–70°F`, `70–72°F`, `72–74°F`, …) that carve
-up a continuous underlying quantity (here, the day's high temperature).
-Others are single **thresholds** ("high above 75°F"), or **spreads / totals**
-on a game ("Eagles −3.5", "over 47.5 points").
+A YES contract pays $1 when the event happens, so its price reads as a
+probability: 31¢ means traders put the chance near 31%. You meet the same
+underlying quantity sold three ways. Brackets split it into mutually-exclusive
+buckets (`68–70°F`, `70–72°F`, `72–74°F`). Thresholds ask one cutoff ("high
+above 75°F"). Spreads and totals settle a game ("Eagles −3.5", "over 47.5
+points").
 
-To trade any of these you need two things the venue doesn't hand you:
+Trading these contracts takes two things the venue won't give you. First, your
+own probability distribution over the underlying number: tomorrow's high, the
+final margin, the next GDP print. Calibrate it so the events you call
+30%-likely arrive about 30% of the time. Second, a way to read a fair price for
+every contract shape off that one distribution. A bracket needs a bucket
+probability, a threshold needs a tail probability, a ladder needs a survival
+value. bracketlearn turns your features into those fair prices.
 
-1. **Your own probability distribution** over the underlying number
-   (tomorrow's high temp, the final margin, the GDP print) — and ideally a
-   *calibrated* one, so that events you call 30%-likely happen about 30% of
-   the time.
-2. **A way to turn that one distribution into a fair price for every
-   contract** the venue lists. The same underlying gets sold many different
-   ways — brackets, thresholds, spreads — and each needs its own slice of
-   your distribution (a bucket probability, a tail probability, a survival
-   value).
+## The three steps
 
-`bracketlearn` is the bridge from raw features to those fair prices.
+You forecast, you price, you score, all through a scikit-learn-style API.
 
-## What it does
-
-Three steps, all in an sklearn-style API:
-
-1. **Forecast a distribution** — fit a probabilistic model (`EMOS`,
-   `NGBoostNormal`, `QuantileReg`, `MixtureNormals`, `CumulativeBinary` and
-   friends) on your features, with sklearn-compatible cross-validation,
-   calibration, and conformal correction. The output is a typed
-   `DistributionForecast`, not just a point estimate.
-2. **Price the contracts** — convert that distribution into fair prices for
-   the venue's listed shapes: single-threshold binaries, paired YES/NO
-   twins, threshold ladders, and bracket ladders whose edges can rotate per
-   row (the daily-shifting ladders Kalshi runs on temperature / GDP /
-   Fed-decision contracts; pass repeated edges if every row shares one grid).
-3. **Score the fair prices** against realized outcomes with proper scoring
-   rules — CRPS, log-score, PIT on the distribution side; Brier / log-loss
-   on the contract side — so you can tell whether your prices were actually
+1. **Forecast a distribution.** Fit a probabilistic model on your features:
+   `EMOS`, `NGBoostNormal`, `QuantileReg`, `MixtureNormals`, `CumulativeBinary`,
+   and more. Cross-validation, calibration, and conformal correction come built
+   in. You get back a typed `DistributionForecast` that carries the full
+   predictive density.
+2. **Price the contracts.** Convert that distribution into fair prices for each
+   venue shape: single-threshold binaries, paired YES/NO twins, threshold
+   ladders, and bracket ladders whose edges rotate per row. Kalshi reshuffles
+   its temperature, GDP, and Fed-decision ladders daily; pass repeated edges
+   when every row shares one grid.
+3. **Score the prices.** Check the fair prices against realized outcomes with
+   proper scoring rules: CRPS, log-score, and PIT on the distribution, Brier
+   and log-loss on the contracts. The numbers tell you whether your prices were
    calibrated.
 
-Most probabilistic-forecasting libraries stop at step 1, "predict a
-distribution." bracketlearn carries the *same* typed forecast all the way
-through pricing and scoring, so the contract math and the calibration check
-are first-class instead of glue code in your notebook.
+Most probabilistic-forecasting libraries stop at step 1. bracketlearn carries
+the same typed forecast through pricing and scoring, so the contract math and
+the calibration check live in the library instead of scattered glue in your
+notebook.
 
-> **Not just weather.** The running example throughout these docs is
-> temperature (it's the cleanest continuous underlying), but nothing here is
-> weather-specific: any continuous quantity with bracket / threshold /
-> spread contracts — sports margins, index levels, economic releases —
-> drops into the same API.
+> **Beyond weather.** These guides run on temperature because it makes the
+> cleanest continuous underlying. Nothing in the library knows about weather.
+> Any continuous quantity with bracket, threshold, or spread contracts uses the
+> same API: sports margins, index levels, economic releases.
 
 ## Out of scope: trade decisions
 
-The conversion from `fair_price` to a position size is **not** in this
-library and won't be. That conversion is where private signal lives —
-side selection on correlated ladders, liquidity-aware edge gates, group
-Kelly across a bracket, fee schedules, queue assumptions — and shipping
-a default would be either presumptuous (wrong for the next user) or
-alpha-leaking (right for one user who didn't want it public). `bracketlearn`
-gives you the calibrated fair price; the trading layer is yours.
+bracketlearn stops at the fair price. Turning `fair_price` into a position size
+stays out, by design. That step holds your private signal: side selection on
+correlated ladders, edge gates tuned to liquidity, group Kelly across a bracket,
+fee schedules, queue assumptions. Ship a default and it lands wrong for the next
+user or leaks the edge of the one who had it. You get the calibrated fair price.
+You write the trading layer.
 
 ## Install
 
-bracketlearn is not yet on PyPI. Install from source:
+bracketlearn has not reached PyPI yet. Install from source:
 
 ```bash
 git clone https://github.com/FrederikBenirschke/bracketlearn
@@ -87,10 +77,10 @@ pip install -e ./bracketlearn
 pip install -e "./bracketlearn[demo]"
 ```
 
-PyPI publication is planned; once live the install becomes
-`pip install bracketlearn` / `pip install "bracketlearn[demo]"`.
+After PyPI publication the install becomes `pip install bracketlearn` or
+`pip install "bracketlearn[demo]"`.
 
-## Adapter catalogue — venue → math
+## Adapters: venue shape to math
 
 | Adapter                | Pricing                            | Maps to (examples)                                          |
 |------------------------|------------------------------------|-------------------------------------------------------------|
@@ -100,16 +90,16 @@ PyPI publication is planned; once live the install becomes
 | `ThresholdLadder(ks)`  | `[P(X > k_i)]` per strike          | Kalshi multi-threshold temperature ladders                  |
 | `BracketLadder(edges_per_row)` | `[P(lo ≤ X < hi)]` per-row edges | Kalshi daily-rotating brackets; Polymarket weather brackets (pass `[edges]*N`) |
 
-All five adapters take any `DistributionForecast` (normal / student-t /
-mixture-normal / quantile / bracket backings) and emit a long-form
-`ContractForecast` with `fair_price`, `entity_ids`, `group_id`,
+All five adapters take any `DistributionForecast` (normal, student-t,
+mixture-normal, quantile, or bracket backing) and return a long-form
+`ContractForecast` carrying `fair_price`, `entity_ids`, `group_id`,
 `contract_spec`, and provenance.
 
-## Worked mapping — weather markets (Kalshi NYC temperature)
+## Worked mapping: Kalshi NYC temperature
 
-Kalshi lists a daily-rotating bracket ladder on NYC max temperature. The
-brackets shift each day — Monday's might be `{<60, 60–65, 65–70, …}`,
-Tuesday's `{<58, 58–62, 62–66, …}`. Library mapping:
+Kalshi runs a daily-rotating bracket ladder on NYC max temperature. The
+brackets shift every day: Monday lists `{<60, 60–65, 65–70, …}`, Tuesday
+`{<58, 58–62, 62–66, …}`. The mapping:
 
 | Venue                                       | Library                                                                  |
 |---------------------------------------------|--------------------------------------------------------------------------|
@@ -120,14 +110,14 @@ Tuesday's `{<58, 58–62, 62–66, …}`. Library mapping:
 | YES pays $1 if temp falls in bracket        | `fair_price` is `P(lo ≤ temp < hi)` for that row                         |
 | Calibration check after settlement          | `score.brier_bracket(contracts, edges, y)` on the realized temps         |
 
-If every day shares the same edges (Polymarket-style weekly weather
-contracts), pass `edges_per_row=[edges] * N` — the inner list holds N
-references to the same array, so there's no memory cost.
+When every day shares one edge set (Polymarket weekly weather contracts), pass
+`edges_per_row=[edges] * N`. The inner list holds N references to the same
+array, so it costs no extra memory.
 
-## Worked mapping — spread / total markets
+## Worked mapping: spread / total markets
 
-An NFL spread of "Eagles −3.5" pays YES if `(Eagles − opp) > 3.5`. A total
-of "Over 47.5" pays YES if `(Eagles + opp) > 47.5`. Both are single-strike
+An NFL spread of "Eagles −3.5" pays YES when `(Eagles − opp) > 3.5`. A total of
+"Over 47.5" pays YES when `(Eagles + opp) > 47.5`. Both are single-strike
 binaries with paired YES/NO sides:
 
 | Venue                                        | Library                                            |
@@ -139,17 +129,17 @@ binaries with paired YES/NO sides:
 | YES + NO sum to 1 by construction            | `Twin` rows always sum to 1 within a game          |
 | Calibration check after settlement           | `score.log_loss_bracket(...)` on the YES/NO ladder |
 
-For multi-strike lines ("Eagles −3, −3.5, −4"), price the same `dist`
-through several `Twin` instances at different strikes. For a one-sided
-multi-strike Kalshi temperature ladder ("above 70", "above 75", "above
-80"), use `ThresholdLadder(strikes=[70, 75, 80])` — survival probabilities
-at increasing strikes, monotone but not summing to 1.
+For multi-strike lines ("Eagles −3, −3.5, −4"), price the same `dist` through
+several `Twin` instances at different strikes. For a one-sided Kalshi
+temperature ladder ("above 70", "above 75", "above 80"), use
+`ThresholdLadder(strikes=[70, 75, 80])`. It returns survival probabilities at
+rising strikes: monotone, and they don't sum to 1.
 
-## Worked example — synthetic NYC max-temperature contracts
+## Worked example: synthetic NYC max-temperature contracts
 
-A short demo: synthetic weather features → fit EMOS → price the four
-prediction-market shapes you'd actually see on the venue → score the
-fair prices against realized outcomes.
+A short demo. Generate synthetic weather features, fit EMOS, price the four
+contract shapes you meet on the venue, then score the fair prices against
+realized outcomes.
 
 ```python
 import numpy as np
@@ -179,7 +169,7 @@ dist = emos.predict_dist(
 
 # (1) Single threshold: "high above 75°F today"
 fair_above_75 = BinaryAbove(strike=75.0).price(dist).fair_price
-# fair_above_75[i] = model P(high_i > 75) — feed this into your own
+# fair_above_75[i] = model P(high_i > 75); feed this into your own
 # trading layer alongside whatever quotes you scraped from the venue.
 
 # (2) Paired YES/NO at 70°F (spread / total style)
@@ -235,15 +225,13 @@ BracketLadder Brier:    0.4684
 BracketLadder log-loss: 0.7950
 ```
 
-The output of `.price(dist)` is a `ContractForecast` with a `fair_price`
-array, the typed `entity_ids` / `contract_ids` / `group_id` indexing you
-need to align it with venue quotes, and provenance metadata. What you
-do with those fair prices — gate on edge, size by Kelly, hedge across a
-ladder — is the trading layer you write on top.
+`.price(dist)` returns a `ContractForecast`: a `fair_price` array plus the typed
+`entity_ids`, `contract_ids`, and `group_id` indexing you need to line it up
+against venue quotes, with provenance attached. Gating on edge, sizing by Kelly,
+hedging across a ladder: that trading layer is yours to write.
 
-Wrap this whole flow in a `Pipeline` (run under `WalkForward`) to get CV,
-calibration, and conformal correction on the distribution before pricing —
-see the longer example below.
+Wrap the whole flow in a `Pipeline` and run it under `WalkForward` to add CV,
+calibration, and conformal correction before pricing. The next section shows it.
 
 ## Pipeline quick start
 
@@ -269,21 +257,21 @@ result = wf.fit_predict([ridge, emos, qreg], X, y, ids=ids, timestamps=ts)
 # Distribution-level metrics on OOF predictions.
 print(result.to_table(y, metrics=["crps", "log_score", "pit"]))
 
-# Bracket-contract metrics — pass the shared edge vector; the result builds
+# Bracket-contract metrics: pass the shared edge vector; the result builds
 # the per-row bracket ladder internally per stage.
 print(result.to_table(y, metrics=["log_loss_bracket", "brier_bracket"],
                       edges=edges))
 
-# Predict on truly unseen data using each model's full-train refit.
+# Predict on unseen data using each model's full-train refit.
 new_dists = wf.predict(X_new, ids=new_ids, timestamps=new_ts)
 ```
 
 ## sklearn contract
 
 Every forecaster, lifter, and calibrator inherits from `BaseEstimator` and
-supports `get_params` / `set_params` / `clone()`. `WalkForward` clones each
-model before every fold's fit, so the user-supplied instances are never
-mutated and can be safely reused across runs.
+supports `get_params`, `set_params`, and `clone()`. `WalkForward` clones each
+model before every fold's fit, so your instances stay unmutated and you reuse
+them across runs.
 
 ## Concepts
 
@@ -297,18 +285,17 @@ Five protocols, no inheritance maze:
 | `Calibrator`      | `DistributionForecast → DistributionForecast` | `Isotonic`, `ConformalCalibrate`                               |
 | `ContractAdapter` | `DistributionForecast → ContractForecast`     | `BinaryAbove`, `BinaryBelow`, `Twin`, `ThresholdLadder`, `BracketLadder` |
 
-Compose stages by listing them in a `Pipeline` (a sequential chain wired
-left→right by protocol type): a `PointForecaster` followed by a `Lifter`
-becomes a `DistForecaster`; add a `Calibrator` and it stays one. Parallel
-ensembling is a `Stacker` over upstream `Pipeline` objects, and
-`WalkForward` drives the CV/OOF. Names are leaderboard labels, never wiring.
+List stages in a `Pipeline` and it wires them left-to-right by protocol type. A
+`PointForecaster` followed by a `Lifter` becomes a `DistForecaster`; add a
+`Calibrator` and it stays one. For parallel ensembling, wrap upstream `Pipeline`
+objects in a `Stacker`. `WalkForward` drives the CV and OOF. Names label the
+leaderboard; they never wire anything.
 
 ## Distribution backings
 
-`DistributionForecast` is an `abc.ABC` base with five concrete
-subclasses. Each subclass owns typed storage and its own math; metrics
-and adapters dispatch via `isinstance` (or the compat `dist.backing`
-property).
+`DistributionForecast` is an `abc.ABC` base with five concrete subclasses. Each
+subclass owns typed storage and its own math; metrics and adapters dispatch
+through `isinstance` (or the compat `dist.backing` property).
 
 | Subclass                  | Storage                                | Math notes                                            |
 |---------------------------|----------------------------------------|-------------------------------------------------------|
@@ -318,7 +305,7 @@ property).
 | `QuantileForecast`        | shared `taus` + per-row `qvals` (N, Q) | Pinball-trapezoidal CRPS; `TailPolicy` required      |
 | `BracketForecast`         | per-row `edges` (N, B+1) + `probs`     | Uniform-within-bin; NaN-padded ragged rows supported |
 
-Construct via the subclass directly:
+Construct a subclass directly:
 
 ```python
 from bracketlearn import NormalForecast
@@ -328,29 +315,27 @@ d = NormalForecast.from_arrays(
 )
 ```
 
-The `DistributionForecast.from_*` classmethods are kept as routing
-shims (`from_normal` → `NormalForecast.from_arrays`, etc.).
+The `DistributionForecast.from_*` classmethods route to the subclasses
+(`from_normal` calls `NormalForecast.from_arrays`, and so on).
 
 ### Per-row brackets
 
-`BracketForecast.edges` is `(N, B+1)`. Each row has its own bracket
-grid — the Kalshi temperature contract listed on May 26 doesn't share
-edges with the one listed on May 27, and bracketlearn doesn't pretend
-it does. Ragged-row support is via NaN padding: row i's valid prefix
-is the first `B_i + 1` non-NaN edges and the first `B_i` non-NaN
-probs.
+`BracketForecast.edges` has shape `(N, B+1)`. Each row carries its own bracket
+grid. The Kalshi temperature contract listed on May 26 shares no edges with the
+May 27 listing, and bracketlearn stores them apart. Ragged rows ride on NaN
+padding: row i's valid prefix runs to the first `B_i + 1` non-NaN edges and the
+first `B_i` non-NaN probs.
 
-`BracketForecast.from_arrays` also accepts a 1-D shared edge vector,
-broadcasting it to all rows — so callers that genuinely use a shared
-ladder pay no ergonomic cost. Per-row `self.edges` (2-D, NaN-padded for
-ragged rows) is the canonical access path.
+`BracketForecast.from_arrays` also takes a 1-D shared edge vector and broadcasts
+it to every row, so callers on a genuine shared ladder pay no ergonomic cost.
+Per-row `self.edges` (2-D, NaN-padded for ragged rows) stays the canonical
+access path.
 
 ### The `integrate()` bridge
 
 Every `DistributionForecast` subclass implements
-`integrate(edges_per_row) → BracketForecast`. This is the single place
-where "continuous distribution" becomes "discrete distribution on a
-specific grid":
+`integrate(edges_per_row) → BracketForecast`. One method turns a continuous
+distribution into a discrete one on a specific grid:
 
 ```python
 # EMOS emits a NormalForecast; price it on per-row Kalshi ladders.
@@ -360,71 +345,65 @@ bracket_dist = normal_dist.integrate(edges_per_row)
 # its own grid (NaN-padded if rows differ in length).
 ```
 
-`edges_per_row` accepts: 1-D shared `(B+1,)`, 2-D dense `(N, B+1)`, or
-a length-N sequence of 1-D arrays (NaN-padded internally). Each row
-is renormalised to sum to 1; rows that land entirely outside the
-distribution's support raise (no silent uniform fabrication).
+`edges_per_row` takes three shapes: 1-D shared `(B+1,)`, 2-D dense `(N, B+1)`,
+or a length-N sequence of 1-D arrays (NaN-padded for you). Each row renormalises
+to sum to 1. A row that lands entirely outside the distribution's support raises
+rather than fabricate a silent uniform.
 
 ### Estimator families
 
-The trainers group into six families by **what they model**. Pick the
-family by the shape of the signal you have; within a family the members
-trade off linearity, priors, and compute.
+Six families group the trainers by **what they model**. Pick the family from the
+shape of your signal; inside a family the members trade off linearity, priors,
+and compute.
 
 | Family | Estimators | What it models |
 |---|---|---|
 | **Point** | `SklearnPoint`, `OnlineAggregator`, `RNNHourly` | a single μ̂ per row; lift to a distribution with a residual σ (or a calibration stage) |
 | **Parametric distribution** | `EMOS`, `HeteroscedasticNormal`, `NGBoostNormal`, `MixtureNormals`, `BayesianRidge`, `HierarchicalNormal` | a closed-form density (Normal / mixture) whose moments are functions of the features |
-| **Quantile / non-parametric** | `QuantileReg`, `QuantileForest` | a quantile function / empirical CDF — no distributional shape assumed |
+| **Quantile / non-parametric** | `QuantileReg`, `QuantileForest` | a quantile function / empirical CDF, no distributional shape assumed |
 | **Bracket-native** | `CumulativeBinary` (+ the `BracketExpander` entry point) | bracket / cutpoint indicators directly on each row's own grid |
 | **Stacking / combiners** | `StackedParametric`, `BMAStacking`, `BracketStacking`, `LinearPoolDist`, `TailSpecialist`, `CDFBoostBracket`, `DistAsFeatures` | a combination of upstream forecasts (parametric meta-learner, Bayesian average, opinion pool, tail specialist) |
 | **Baselines** | `Persistence`, `PersistenceDist`, `EmpiricalDistribution` | reference forecasts to beat; plus convenience factories `ridge`, `emos_calibrated` |
 
-Within the **parametric** family the mean/variance flexibility ladder is
-the thing to know:
+Within the parametric family, the mean/variance flexibility ladder is the part
+to learn:
 
-- `EMOS` — affine mean in `ens_mean`, scale a fixed function of `ens_std`.
-  Two hard-wired inputs.
-- `HeteroscedasticNormal` — the feature-driven generalisation: `μ = Xμ·βμ`,
-  `log σ = Xσ·βσ`, so *any* columns (cloud, wind, dewpoint, spread, …) can
-  drive **both** the location and the width, with readable linear
-  coefficients. `EMOS` is the special case `Xμ=[ens_mean]`,
-  `Xσ=[ens_std]`.
-- `NGBoostNormal` — same `(μ̂, σ̂)`-from-features target as
-  `HeteroscedasticNormal` but gradient-boosted (non-linear, higher
-  variance at low N, not interpretable).
-- `MixtureNormals` — multimodal, for bi-/multi-modal outcomes.
-- `BayesianRidge` / `HierarchicalNormal` — conjugate priors / cross-site
+- `EMOS` puts an affine mean on `ens_mean` and a fixed-function scale on
+  `ens_std`. Two hard-wired inputs.
+- `HeteroscedasticNormal` generalises it to the features: `μ = Xμ·βμ`,
+  `log σ = Xσ·βσ`. Any columns (cloud, wind, dewpoint, spread) drive both the
+  location and the width, with readable linear coefficients. `EMOS` is the
+  special case `Xμ=[ens_mean]`, `Xσ=[ens_std]`.
+- `NGBoostNormal` targets the same `(μ̂, σ̂)`-from-features but gradient-boosts
+  it: non-linear, noisier at low N, and you lose interpretability.
+- `MixtureNormals` handles bi- and multi-modal outcomes.
+- `BayesianRidge` and `HierarchicalNormal` bring conjugate priors and cross-site
   partial pooling for small samples.
 
 ### Distribution-first vs bracket-aware trainers
 
-Orthogonal to the families above, trainers split by **fit interface** into
-two modes:
+A second axis cuts across the families: what a trainer sees at fit time.
 
 - **Distribution-first** (`EMOS`, `NGBoostNormal`, `MixtureNormals`,
   `QuantileReg`, `QuantileForest`, `StackedParametric`, `BMAStacking`,
   `BayesianRidge`, `HierarchicalNormal`, `OnlineAggregator`, `RNNHourly`,
-  `ridge`, `emos_calibrated`):
-  never see brackets at fit time. Fit on `(X, y)`, emit a
-  continuous-ish distribution. Call `.integrate(edges_per_row)` to
-  price on a specific grid.
-- **Bracket-aware** (`CumulativeBinary`, `TailSpecialist`,
-  `CDFBoostBracket`): train on bracket-derived indicators. Each takes
-  a `cutpoints_by_id` or `brackets_by_id` dict (id → 1-D edge array)
-  at construction so per-row grids flow through fit and predict.
-  Their `fit()` signatures require an explicit `ids=` kwarg; inside
-  a `Pipeline` this is forwarded automatically.
+  `ridge`, `emos_calibrated`) never touch brackets at fit time. They fit on
+  `(X, y)`, emit a continuous-ish distribution, and you call
+  `.integrate(edges_per_row)` to price on a grid.
+- **Bracket-aware** (`CumulativeBinary`, `TailSpecialist`, `CDFBoostBracket`)
+  train on bracket-derived indicators. Each takes a `cutpoints_by_id` or
+  `brackets_by_id` dict (id to 1-D edge array) at construction, so per-row grids
+  flow through fit and predict. Their `fit()` signatures require an explicit
+  `ids=` kwarg; a `Pipeline` forwards it for you.
 
-  For the "use any sklearn classifier or regressor" entry point, use
-  `BracketExpander` (in `bracketlearn.transformers`): it owns the
-  per-row → per-(row, bracket) reshape, leaving model choice and
-  target construction to the caller. `fit_transform(X, y, ids=...)`
-  returns `(X_expanded, y_expanded)` where `X_expanded` is
-  `(M, F+2)` with `[..., lo, hi]` appended and `y_expanded` is the
-  default bracket-hit indicator `1[y ∈ [lo, hi))`. Fit any sklearn
-  estimator on those arrays; pack predictions back into a
-  row-renormalised `BracketForecast` via `assemble_dist`.
+  For the "fit any sklearn classifier or regressor on brackets" path, reach for
+  `BracketExpander` (in `bracketlearn.transformers`). It owns the per-row to
+  per-(row, bracket) reshape and leaves model choice and target construction to
+  you. `fit_transform(X, y, ids=...)` returns `(X_expanded, y_expanded)`:
+  `X_expanded` is `(M, F+2)` with `[..., lo, hi]` appended, and `y_expanded` is
+  the default bracket-hit indicator `1[y ∈ [lo, hi))`. Fit any sklearn estimator
+  on those arrays, then pack the predictions back into a row-renormalised
+  `BracketForecast` with `assemble_dist`.
 
   ```python
   from bracketlearn import BracketExpander
@@ -438,38 +417,37 @@ two modes:
   d = exp.assemble_dist(scores, ids=pred_ids, timestamps=ts)
   ```
 
-  For a custom per-(row, bracket) target (mispricing residual,
-  importance-weighted hit, etc.), build it on top of `fit_transform`
-  output — the expander has no opinion about the loss.
+  For a custom per-(row, bracket) target (a mispricing residual, an
+  importance-weighted hit), build it on top of `fit_transform` output. The
+  expander holds no opinion about the loss.
 
 ## CV variants
 
-`cv=` accepts three modes:
+`cv=` takes three modes:
 
-- `"expanding-window"` (default) — train window grows by one chunk per fold;
-  use for sequential / time-series data.
-- `"rolling-window"` — fixed-width train window slides forward; requires
-  `rolling_window=<int>`. Forgets old rows; useful for regime change.
-- `"kfold"` — i.i.d. k-fold; pass `shuffle=True, random_state=...` to
-  permute rows. Use only when rows are exchangeable.
+- `"expanding-window"` (default) grows the train window by one chunk per fold.
+  Use it for sequential and time-series data.
+- `"rolling-window"` slides a fixed-width train window forward and needs
+  `rolling_window=<int>`. It forgets old rows, which helps through regime change.
+- `"kfold"` runs i.i.d. k-fold. Pass `shuffle=True, random_state=...` to permute
+  rows. Use it only when rows are exchangeable.
 
 ## Sample weights
 
 `WalkForward(...).fit_predict(model, X, y, ids=..., timestamps=...,
 sample_weight=w)` threads `w` through every stage. Trainers whose `fit`
-signature accepts `sample_weight=` get it (EMOS, StackedParametric, NGBoost,
-LightGBM-based QuantileReg/QuantileForest/CumulativeBinary/TailSpecialist,
-MixtureNormals, SklearnPoint when the inner estimator supports it).
-Online/sequence
-trainers without weight support (OnlineAggregator, RNNHourly) are detected
-by signature and pass through unweighted — no silent crash.
+signature accepts `sample_weight=` receive it: EMOS, StackedParametric, NGBoost,
+the LightGBM-based QuantileReg / QuantileForest / CumulativeBinary /
+TailSpecialist, MixtureNormals, and SklearnPoint when its inner estimator
+supports it. `WalkForward` detects the online and sequence trainers without
+weight support (OnlineAggregator, RNNHourly) by signature and passes them
+through unweighted, so nothing crashes.
 
 ## Cross-site partial pooling
 
-For multi-city / multi-entity workloads — Kalshi weather contracts
-across NYC / CHI / LAX, NHL spreads across teams, fixture pricing
-across players — pass a per-row site label via `groups=` and use
-`HierarchicalNormal`:
+Multi-city and multi-entity workloads fit here: Kalshi weather across NYC, CHI,
+and LAX; NHL spreads across teams; fixture pricing across players. Pass a per-row
+site label through `groups=` and use `HierarchicalNormal`:
 
 ```python
 from bracketlearn import Pipeline, WalkForward
@@ -481,21 +459,19 @@ res = wf.fit_predict(hn, X, y, ids=ids, timestamps=ts, groups=city_id)
 hn_pred = wf.predict(X_new, ids=..., timestamps=..., groups=city_id_new)["hn"]
 ```
 
-Each city gets its own coefficient vector β_s, all shrunk toward a
-common β₀ with shrinkage strength learned from data (empirical-Bayes
-on τ²). Cities with little history borrow strength from the others;
-cities with lots of history stay close to their own data. Predictive
-σ inflates automatically for cities not seen at fit (raises by
-default — set `allow_unseen_sites=True` to opt in).
+Each city earns its own coefficient vector β_s, all shrunk toward a common β₀
+with the shrinkage strength learned from data (empirical-Bayes on τ²). A city
+with little history borrows strength from the rest; a city with deep history
+stays close to its own data. For a city unseen at fit, predictive σ inflates
+(and raises by default; set `allow_unseen_sites=True` to opt in).
 
-`groups=` routes through `WalkForward` by signature introspection:
-trainers without a `groups` kwarg silently ignore it, so mixing
-`HierarchicalNormal` with site-blind stages (EMOS, ridge, …) just
-works.
+`groups=` routes through `WalkForward` by signature introspection. A trainer
+without a `groups` kwarg ignores it, so you mix `HierarchicalNormal` with
+site-blind stages like EMOS or ridge and it runs.
 
 ## Multi-target
 
-For `y` of shape `(N, M)`, wrap a single-target model + its `WalkForward`
+For `y` of shape `(N, M)`, wrap a single-target model and its `WalkForward`
 driver in `MultiOutput`:
 
 ```python
@@ -511,15 +487,14 @@ result = mt.fit_predict(X, Y, ids=ids, timestamps=ts)
 print(result.score(Y, metrics=["crps"]))   # per-target × per-stage
 ```
 
-Each target gets its own cloned model — no cross-target sharing.
+Each target trains its own cloned model, with no cross-target sharing.
 
 ## Hyperparameter search
 
-`GridSearch` enumerates a param grid, cloning the model **and** its
-`WalkForward` driver per grid point (we do not reuse
-`sklearn.GridSearchCV` because its KFold would destroy time ordering).
-Use `node__field` syntax for nested params; `WalkForward` params (`n_folds`,
-`cv`, …) appear unprefixed:
+`GridSearch` enumerates a param grid, cloning the model and its `WalkForward`
+driver at each grid point. (It skips `sklearn.GridSearchCV` because that KFold
+would shred time ordering.) Use `node__field` syntax for nested params;
+`WalkForward` params like `n_folds` and `cv` appear unprefixed:
 
 ```python
 from bracketlearn import Pipeline, WalkForward
@@ -537,65 +512,60 @@ print(gs.best_params_, gs.best_score_)
 
 ## Status
 
-Unreleased — **composition API unified** into `Pipeline` (sequential chain),
-`Stacker` (parallel combiner over upstream objects), and `WalkForward`
-(CV/OOF driver). The old `ForecastPipeline` / `LiftedForecaster` /
-`CalibratedForecaster` wrappers and the name-keyed `deps`/`deps_oof` stacker
-contract are removed; names are leaderboard labels, never wiring. See
-[CHANGELOG.md](CHANGELOG.md) for the full migration recipe.
+**Unreleased.** The composition API unified into `Pipeline` (sequential chain),
+`Stacker` (parallel combiner over upstream objects), and `WalkForward` (CV/OOF
+driver). The old `ForecastPipeline`, `LiftedForecaster`, and
+`CalibratedForecaster` wrappers are gone, along with the name-keyed
+`deps`/`deps_oof` stacker contract. Names label the leaderboard; they never
+wire. [CHANGELOG.md](CHANGELOG.md) holds the full migration recipe.
 
-Unreleased — `HeteroscedasticNormal` added to the parametric family:
-distributional linear regression with a feature-driven mean **and**
-feature-driven (log) scale (`μ = Xμ·βμ`, `log σ = Xσ·βσ`), fit by MLE.
-The interpretable generalisation of `EMOS` and linear counterpart to
-`NGBoostNormal`. See the Estimator-families table above.
+**Unreleased.** `HeteroscedasticNormal` joined the parametric family:
+distributional linear regression with a feature-driven mean and a feature-driven
+(log) scale (`μ = Xμ·βμ`, `log σ = Xσ·βσ`), fit by MLE. It generalises `EMOS`
+with readable coefficients and gives `NGBoostNormal` a linear counterpart. See
+the estimator-families table above.
 
-v0.6.0 — `Backing` / `ParametricFamily` enums removed along with the
-`DistributionForecast.backing` / `.family` properties. The enums were
-compat shims carried over from v0.3.0 when the class became an
-`abc.ABC` base; `isinstance(dist, NormalForecast)` etc. is the
-supported dispatch. See [CHANGELOG.md](CHANGELOG.md) for the
+**v0.6.0.** Removed the `Backing` and `ParametricFamily` enums along with the
+`DistributionForecast.backing` and `.family` properties. Those enums were compat
+shims from v0.3.0, when the class became an `abc.ABC` base. Dispatch on
+`isinstance(dist, NormalForecast)` instead. [CHANGELOG.md](CHANGELOG.md) has the
 migration recipe.
 
-v0.5.0 — `BracketClassifier` / `BracketRegressor` removed; their two
-conflated concerns (per-row → per-(row, bracket) reshape, plus model
-fit on the augmented design) split into the new
-`bracketlearn.BracketExpander` transformer + plain sklearn `.fit` on
-the caller's chosen estimator. Custom per-(row, bracket) targets
-(mispricing residuals, importance-weighted hits) now compose by
-construction instead of requiring a fork. See
-[CHANGELOG.md](CHANGELOG.md) for the migration recipe.
+**v0.5.0.** Removed `BracketClassifier` and `BracketRegressor`. Their two
+conflated concerns split apart: the per-row to per-(row, bracket) reshape moved
+into the new `bracketlearn.BracketExpander` transformer, and the model fit runs
+on the caller's chosen sklearn estimator. Custom per-(row, bracket) targets
+(mispricing residuals, importance-weighted hits) now compose by construction, no
+fork required. [CHANGELOG.md](CHANGELOG.md) has the migration recipe.
 
-v0.4.0 — three Bayesian trainers added (`BayesianRidge`,
-`BMAStacking`, `HierarchicalNormal`); pipeline gains a `groups=` kwarg
-that routes site labels to trainers whose `fit` accepts them and is
-silently ignored by site-blind stages. Monolithic `forecast.py` and
-`trainers.py` split into typed subpackages.
+**v0.4.0.** Added three Bayesian trainers (`BayesianRidge`, `BMAStacking`,
+`HierarchicalNormal`). The pipeline gained a `groups=` kwarg that routes site
+labels to trainers whose `fit` accepts them and gets ignored by site-blind
+stages. Split the monolithic `forecast.py` and `trainers.py` into typed
+subpackages.
 
-v0.3.0 — `DistributionForecast` becomes an `abc.ABC` base with five
-concrete subclasses; `BracketForecast` stores per-row edges natively;
-bracket-aware trainers (`CumulativeBinary`, `TailSpecialist`,
-`CDFBoostBracket`) and the `Isotonic` calibrator switch to id-keyed
-dict APIs so each row carries its own bracket grid. New
-`DistributionForecast.integrate(edges_per_row)` lifts any subclass to
-a per-row `BracketForecast`.
+**v0.3.0.** `DistributionForecast` became an `abc.ABC` base with five concrete
+subclasses. `BracketForecast` stores per-row edges natively. The bracket-aware
+trainers (`CumulativeBinary`, `TailSpecialist`, `CDFBoostBracket`) and the
+`Isotonic` calibrator switched to id-keyed dict APIs, so each row carries its
+own bracket grid. New `DistributionForecast.integrate(edges_per_row)` lifts any
+subclass to a per-row `BracketForecast`.
 
-v0.2 baseline carries forward: protocols, three CV modes
-(expanding-window / rolling-window / kfold), sample-weight threading,
-multi-target wrapper, grid-search wrapper, 19 trainers, 6
-prediction-market adapters, full distribution and contract-level
-scoring. See `bracketlearn/examples/` for runnable demos.
+**v0.2 baseline** carries forward: protocols, three CV modes (expanding-window,
+rolling-window, kfold), sample-weight threading, the multi-target wrapper, the
+grid-search wrapper, 19 trainers, 5 prediction-market adapters, and full
+distribution- and contract-level scoring. See `bracketlearn/examples/` for
+runnable demos.
 
 Not yet:
-- Vanilla options / option-spread adapters (intentionally out of scope —
-  prediction-market binaries only)
-- Quantile-backed `DistributionForecast` requires a `TailPolicy` for
-  `cdf` / `ppf` / `pdf` / `mean` / `variance` / `sample`; calling those
-  without one raises `NotImplementedError`. Constructor demands the
-  policy explicitly, so the failure is at construction time, not silent.
-  Only `TailRule.clip()` is implemented; if your use case needs
-  smoother tail extrapolation (`gpd`, slope-matched Gaussian, ...)
-  open an issue with the contract shape that requires it.
+- Vanilla options and option-spread adapters stay out of scope; bracketlearn
+  prices prediction-market binaries only.
+- A quantile-backed `DistributionForecast` needs a `TailPolicy` for `cdf`,
+  `ppf`, `pdf`, `mean`, `variance`, and `sample`; calling those without one
+  raises `NotImplementedError`. The constructor demands the policy up front, so
+  the failure hits at construction, not later in silence. Only `TailRule.clip()`
+  ships today. For smoother tail extrapolation (`gpd`, slope-matched Gaussian),
+  open an issue with the contract shape that needs it.
 
 ## License
 

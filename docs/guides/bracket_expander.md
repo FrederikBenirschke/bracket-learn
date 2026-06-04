@@ -1,33 +1,33 @@
-# BracketExpander — any sklearn estimator on a bracket ladder
+# BracketExpander: any sklearn estimator on a bracket ladder
 
-`BracketExpander` is the "use any sklearn classifier or regressor"
-entry point for bracket-aware learning. It owns the per-row →
-per-(row, bracket) reshape and nothing else — model choice, loss
-function, and the per-(row, bracket) target stay in caller code.
+`BracketExpander` is the "use any sklearn classifier or regressor" entry point
+for bracket-aware learning. It owns the per-row → per-(row, bracket) reshape and
+nothing more. Model choice, loss function, and the per-(row, bracket) target
+stay in your code.
 
 ## Why this exists
 
-The pre-v0.5.0 classes `BracketClassifier` / `BracketRegressor`
-conflated two concerns inside `fit`:
+The pre-v0.5.0 classes `BracketClassifier` and `BracketRegressor` packed two
+concerns into `fit`:
 
-1. **Reshape** a per-row design `(N, F)` into a per-(row, bracket)
-   design `(M, F+2)` with `[..., lo, hi]` appended.
-2. **Fit** an sklearn estimator on that design with a hardcoded
-   bracket-hit target `1[y ∈ [lo, hi))`.
+1. **Reshape** a per-row design `(N, F)` into a per-(row, bracket) design
+   `(M, F+2)` with `[..., lo, hi]` appended.
+2. **Fit** an sklearn estimator on that design with a hardcoded bracket-hit
+   target `1[y ∈ [lo, hi))`.
 
-Any caller who wanted a different per-(row, bracket) target — a
-mispricing residual `hit − market_p`, an importance-weighted hit, a
-quantile loss — had to fork the class. v0.5.0 separates the two: the
-reshape lives in `BracketExpander`, the fit is plain sklearn.
+A caller who wanted a different per-(row, bracket) target (a mispricing residual
+`hit − market_p`, an importance-weighted hit, a quantile loss) had to fork the
+class. v0.5.0 splits the two: the reshape lives in `BracketExpander`, and the
+fit is plain sklearn.
 
-## Default flow — bracket-hit target
+## Default flow: bracket-hit target
 
 ```python
 from bracketlearn import BracketExpander
 from lightgbm import LGBMClassifier
 
 # brackets_by_id maps each entity id to its 1-D edge array.
-# Ragged edges across ids are fine — the expander handles them.
+# Ragged edges across ids are fine; the expander handles them.
 brackets_by_id = {
     "row_0": np.array([0.0, 60.0, 70.0, 80.0, 100.0]),
     "row_1": np.array([0.0, 55.0, 65.0, 75.0, 85.0, 100.0]),
@@ -49,13 +49,13 @@ dist = exp.assemble_dist(scores, ids=pred_ids, timestamps=pred_ts)
 # dist is a row-renormalised BracketForecast.
 ```
 
-`assemble_dist` row-renormalises so each predicted row sums to 1 — the
-raw per-bracket scores from `clf.predict_proba` won't, since each
-augmented row is scored independently.
+`assemble_dist` row-renormalises so each predicted row sums to 1. The raw
+per-bracket scores from `clf.predict_proba` won't sum to 1 on their own, since
+the model scores each augmented row independently.
 
 ## Custom per-(row, bracket) target
 
-Skip the default `y_exp`; build the target on top of `X_exp`:
+Skip the default `y_exp` and build the target on top of `X_exp`:
 
 ```python
 X_exp, y_hit = exp.fit_transform(X_train, y_train, ids=train_ids)
@@ -70,8 +70,8 @@ from lightgbm import LGBMRegressor
 reg = LGBMRegressor().fit(X_exp, y_target)
 ```
 
-The expander has no opinion about which estimator class fits the
-augmented design or what the target should be. That's the point.
+The expander holds no opinion about which estimator class fits the augmented
+design or what the target should be. That's the point.
 
 ## Comparison with the distribution-first trainers
 
@@ -86,7 +86,6 @@ augmented design or what the target should be. That's the point.
 | sklearn estimator         | caller-built target  | flexibility (MLP, ElasticNet, custom GAM) outside the built-in families.       |
 
 For straightforward bracket-hit problems on smooth data, prefer
-`CumulativeBinary` — its monotone-LGBM cumulative head gives
-calibration the unconstrained expander can't. Reach for the expander
-when (a) the target isn't a plain hit, or (b) the estimator you want
-isn't already wrapped.
+`CumulativeBinary`; its monotone-LGBM cumulative head gives calibration the
+unconstrained expander can't match. Reach for the expander when the target
+isn't a plain hit, or when the estimator you want isn't already wrapped.

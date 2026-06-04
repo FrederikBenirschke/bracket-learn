@@ -17,7 +17,7 @@ fold 2:  [train:0..120]                     [test:120..160]
 ## `cv="rolling-window"`
 
 Fixed-width train window slides forward. Requires `rolling_window=<int>`.
-Older rows fall out — use when regime drift makes old data harmful.
+Older rows fall out, which helps when regime drift makes old data harmful.
 
 ```python
 WalkForward(cv="rolling-window", rolling_window=120, n_folds=4)
@@ -34,8 +34,8 @@ fold 2:  [train:50..170]                    [test:170..195]
 Plain k-fold. Splits rows into `n_folds` disjoint test sets. Pass
 `shuffle=True, random_state=...` for a permuted split.
 
-**Use only when rows are exchangeable** — never for time-series data,
-where it would silently train on future rows and inflate OOF metrics.
+**Use only when rows are exchangeable.** On time-series data it trains on
+future rows and inflates OOF metrics, so keep it away from sequential data.
 
 ```python
 WalkForward(cv="kfold", n_folds=5, shuffle=True, random_state=0)
@@ -44,10 +44,10 @@ WalkForward(cv="kfold", n_folds=5, shuffle=True, random_state=0)
 ## Enabling refit-on-full
 
 By default (`refit_on_full=False`) `fit_predict` produces OOF predictions
-only. To call `wf.predict(X_new)` on unseen rows, pass
-`refit_on_full=True` — `fit_predict` then ends with a full-data refit per
-model and stores it. Calling `predict()` without it raises (loud failure
-rather than silently producing OOF-style predictions).
+only. To call `wf.predict(X_new)` on unseen rows, pass `refit_on_full=True`.
+`fit_predict` then ends with a full-data refit per model and stores it.
+Calling `predict()` without it raises, a loud failure that beats handing back
+OOF-style predictions in disguise.
 
 ```python
 wf = WalkForward(cv="expanding-window", n_folds=5, refit_on_full=True)

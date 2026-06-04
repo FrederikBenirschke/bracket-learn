@@ -38,12 +38,12 @@ result = wf.fit_predict([ridge, emos, qreg], X, y, ids=ids, timestamps=ts)
 # Distribution-level metrics on OOF predictions.
 print(result.to_table(y, metrics=["crps", "log_score", "pit"]))
 
-# Bracket-contract metrics — pass the shared edge vector; the result builds
+# Bracket-contract metrics: pass the shared edge vector; the result builds
 # the per-row bracket ladder internally per stage.
 print(result.to_table(y, metrics=["log_loss_bracket", "brier_bracket"],
                        edges=edges))
 
-# Predict on truly unseen data using each stage's full-train refit.
+# Predict on unseen data using each stage's full-train refit.
 new_dists = wf.predict(X_new, ids=new_ids, timestamps=new_ts)
 print(new_dists["qreg"].params)
 ```
@@ -62,7 +62,7 @@ print(new_dists["qreg"].params)
 4. `WalkForward` runs **expanding-window CV** under the hood: each model is
    cloned per fold, fit on the train slice, predicted on the test slice, and
    OOF predictions are stitched into one `DistributionForecast` per model.
-5. `result.score()` / `result.to_table()` align y to each model's OOF coverage
-   via `dist.ids` — you never touch row indices manually.
+5. `result.score()` and `result.to_table()` align y to each model's OOF
+   coverage via `dist.ids`, so you never touch row indices by hand.
 6. `wf.predict(X_new)` uses canonical full-train refits stored at the end of
    `fit_predict` (enabled by `refit_on_full=True`).

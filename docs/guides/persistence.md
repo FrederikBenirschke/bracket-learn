@@ -10,18 +10,18 @@ from bracketlearn.persistence import save, load
 # Save a fitted pipeline with an optional note.
 save(pipeline, "ridge_emos_qreg.pkl", note="prod-2026-05")
 
-# Load it back. Warns (loudly) if the bracketlearn version differs.
+# Load it back. Warns if the bracketlearn version differs.
 loaded = load("ridge_emos_qreg.pkl")
 new_dists = loaded.predict(X_new, ids=..., timestamps=...)
 ```
 
-## Why an envelope and not raw pickle
+## The version envelope
 
-A raw `pickle.dump(pipeline)` works — but on a future upgrade, a trainer's
-internal representation might change. The artefact would load silently
-and start producing wrong predictions. The envelope stores the
-bracketlearn version alongside the payload so `load()` can warn (or, in
-production, raise) on mismatch:
+A raw `pickle.dump(pipeline)` works today. On a future upgrade, though, a
+trainer's internal representation can change, and the artefact loads without
+complaint and starts producing wrong predictions. The envelope stores the
+bracketlearn version alongside the payload, so `load()` warns (or, in
+production, raises) on a mismatch:
 
 ```python
 load("old.pkl", strict_version=True)   # raises ValueError on mismatch
