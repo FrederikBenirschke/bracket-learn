@@ -3,16 +3,17 @@
 Public API is re-exported here so callers keep using
 ``from bracketlearn.trainers import EMOS`` etc.
 
-Layout
-------
+Layout (by what a trainer models)
+---------------------------------
 
 - ``bracketlearn.trainers.point`` — SklearnPoint, OnlineAggregator, RNNHourly.
 - ``bracketlearn.trainers.parametric`` — EMOS, HeteroscedasticNormal,
-  NGBoostNormal, MixtureNormals, BayesianRidge, HierarchicalNormal,
-  BMAStacking, StackedParametric.
+  NGBoostNormal, MixtureNormals, BayesianRidge, HierarchicalNormal.
 - ``bracketlearn.trainers.quantile`` — QuantileReg, QuantileForest.
-- ``bracketlearn.trainers.bracket`` — CumulativeBinary, TailSpecialist, CDFBoostBracket, LinearPoolDist.
-- ``bracketlearn.trainers.meta`` — DistAsFeatures.
+- ``bracketlearn.trainers.bracket`` — CumulativeBinary (bracket-native).
+- ``bracketlearn.trainers.combiners`` — trainers that combine *upstream*
+  forecasts: StackedParametric, BMAStacking, DistAsFeatures, BracketStacking,
+  LinearPoolDist, TailSpecialist, CDFBoostBracket.
 
 Convenience builders (``ridge``, ``emos_calibrated``) live in
 ``bracketlearn.trainers._factories`` and are re-exported below.
@@ -21,22 +22,23 @@ Convenience builders (``ridge``, ``emos_calibrated``) live in
 from __future__ import annotations
 
 from bracketlearn.trainers._factories import emos_calibrated, ridge
-from bracketlearn.trainers.bracket import (
+from bracketlearn.trainers.bracket import CumulativeBinary
+from bracketlearn.trainers.combiners import (
+    BMAStacking,
+    BracketStacking,
     CDFBoostBracket,
-    CumulativeBinary,
+    DistAsFeatures,
     LinearPoolDist,
+    StackedParametric,
     TailSpecialist,
 )
-from bracketlearn.trainers.meta import BracketStacking, DistAsFeatures
 from bracketlearn.trainers.parametric import (
     EMOS,
     BayesianRidge,
-    BMAStacking,
     HeteroscedasticNormal,
     HierarchicalNormal,
     MixtureNormals,
     NGBoostNormal,
-    StackedParametric,
 )
 from bracketlearn.trainers.point import OnlineAggregator, RNNHourly, SklearnPoint
 from bracketlearn.trainers.quantile import QuantileForest, QuantileReg
@@ -47,25 +49,25 @@ __all__ = [
     "RNNHourly",
     "SklearnPoint",
     # parametric
-    "BMAStacking",
     "BayesianRidge",
     "EMOS",
     "HeteroscedasticNormal",
     "HierarchicalNormal",
     "MixtureNormals",
     "NGBoostNormal",
-    "StackedParametric",
     # quantile
     "QuantileForest",
     "QuantileReg",
     # bracket
-    "CDFBoostBracket",
     "CumulativeBinary",
-    "LinearPoolDist",
-    "TailSpecialist",
-    # meta
+    # combiners
+    "BMAStacking",
     "BracketStacking",
+    "CDFBoostBracket",
     "DistAsFeatures",
+    "LinearPoolDist",
+    "StackedParametric",
+    "TailSpecialist",
     # factories
     "emos_calibrated",
     "ridge",

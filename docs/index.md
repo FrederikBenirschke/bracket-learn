@@ -13,6 +13,7 @@ score margin, asset return) and need to price a ladder of binary contracts
 
 guides/quickstart
 guides/concepts
+guides/package_map
 guides/cv
 guides/weights
 guides/multitarget
@@ -66,9 +67,9 @@ pip install -e "./bracketlearn[demo]"   # with optional trainers
 ## sklearn contract
 
 Every forecaster, lifter, and calibrator inherits from `BaseEstimator` and
-supports `get_params` / `set_params` / `clone()`. The pipeline clones each
-stage's forecaster before every fold's fit, so the user-supplied
-instances are never mutated and can be safely reused across pipelines.
+supports `get_params` / `set_params` / `clone()`. `WalkForward` clones each
+model before every fold's fit, so the user-supplied instances are never
+mutated and can be safely reused across runs.
 
 ## Index
 
