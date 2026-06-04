@@ -563,60 +563,24 @@ You write the trading layer.
 
 ## Status
 
-**Unreleased.** The composition API unified into `Pipeline` (sequential chain),
-`Stacker` (parallel combiner over upstream objects), and `WalkForward` (CV/OOF
-driver). The old `ForecastPipeline`, `LiftedForecaster`, and
-`CalibratedForecaster` wrappers are gone, along with the name-keyed
-`deps`/`deps_oof` stacker contract. Names label the leaderboard; they never
-wire. [CHANGELOG.md](CHANGELOG.md) holds the full migration recipe.
+Version 0.6.0, pre-PyPI. The pieces this README documents are built and covered
+by the test suite: the composition API (`Pipeline`, `Stacker`, `WalkForward`),
+the trainer families, the five contract adapters, and the distribution- and
+contract-level scoring. [CHANGELOG.md](CHANGELOG.md) records the version history
+and the migration recipes for past API changes.
 
-**Unreleased.** `HeteroscedasticNormal` joined the parametric family:
-distributional linear regression with a feature-driven mean and a feature-driven
-(log) scale (`μ = Xμ·βμ`, `log σ = Xσ·βσ`), fit by MLE. It generalises `EMOS`
-with readable coefficients and gives `NGBoostNormal` a linear counterpart. See
-the estimator-families table above.
+### Limitations
 
-**v0.6.0.** Removed the `Backing` and `ParametricFamily` enums along with the
-`DistributionForecast.backing` and `.family` properties. Those enums were compat
-shims from v0.3.0, when the class became an `abc.ABC` base. Dispatch on
-`isinstance(dist, NormalForecast)` instead. [CHANGELOG.md](CHANGELOG.md) has the
-migration recipe.
+Two capabilities are documented but not built. They raise on use rather than
+guess:
 
-**v0.5.0.** Removed `BracketClassifier` and `BracketRegressor`. Their two
-conflated concerns split apart: the per-row to per-(row, bracket) reshape moved
-into the new `bracketlearn.BracketExpander` transformer, and the model fit runs
-on the caller's chosen sklearn estimator. Custom per-(row, bracket) targets
-(mispricing residuals, importance-weighted hits) now compose by construction, no
-fork required. [CHANGELOG.md](CHANGELOG.md) has the migration recipe.
-
-**v0.4.0.** Added three Bayesian trainers (`BayesianRidge`, `BMAStacking`,
-`HierarchicalNormal`). The pipeline gained a `groups=` kwarg that routes site
-labels to trainers whose `fit` accepts them and gets ignored by site-blind
-stages. Split the monolithic `forecast.py` and `trainers.py` into typed
-subpackages.
-
-**v0.3.0.** `DistributionForecast` became an `abc.ABC` base with five concrete
-subclasses. `BracketForecast` stores per-row edges natively. The bracket-aware
-trainers (`CumulativeBinary`, `TailSpecialist`, `CDFBoostBracket`) and the
-`Isotonic` calibrator switched to id-keyed dict APIs, so each row carries its
-own bracket grid. New `DistributionForecast.integrate(edges_per_row)` lifts any
-subclass to a per-row `BracketForecast`.
-
-**v0.2 baseline** carries forward: protocols, three CV modes (expanding-window,
-rolling-window, kfold), sample-weight threading, the multi-target wrapper, the
-grid-search wrapper, 19 trainers, 5 prediction-market adapters, and full
-distribution- and contract-level scoring. See `bracketlearn/examples/` for
-runnable demos.
-
-Not yet:
-- Vanilla options and option-spread adapters stay out of scope; bracketlearn
-  prices prediction-market binaries only.
-- A quantile-backed `DistributionForecast` needs a `TailPolicy` for `cdf`,
-  `ppf`, `pdf`, `mean`, `variance`, and `sample`; calling those without one
-  raises `NotImplementedError`. The constructor demands the policy up front, so
-  the failure hits at construction, not later in silence. Only `TailRule.clip()`
-  ships today. For smoother tail extrapolation (`gpd`, slope-matched Gaussian),
-  open an issue with the contract shape that needs it.
+- **Non-binary contracts.** bracketlearn prices prediction-market binaries
+  only. Vanilla options and option-spread adapters stay out of scope.
+- **Non-`clip` tail rules.** A quantile-backed `DistributionForecast` needs a
+  `TailPolicy` for `cdf`, `ppf`, `pdf`, `mean`, `variance`, and `sample`. Only
+  `TailRule.clip()` ships today; `gpd` and slope-matched Gaussian raise
+  `NotImplementedError`. The constructor demands the policy up front, so the
+  gap surfaces at construction instead of in silent tail mass.
 
 ## License
 
