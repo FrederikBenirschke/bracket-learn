@@ -1,9 +1,28 @@
-"""Hourly bike-sharing demand → time-series probabilistic forecast.
+"""Hourly bike-sharing demand as a probabilistic-forecasting and pricing problem.
 
 Dataset: OpenML "Bike_Sharing_Demand" (17 379 hourly rows from a DC bike-share
-system, 2011–2012). Target = hourly rental count. Numeric features:
-``month, hour, weekday, workingday, temp, feel_temp, humidity, windspeed``
-plus one-hot ``season`` and ``weather``.
+system, 2011–2012). The raw target is the hourly rental count. Features:
+``month, hour, weekday, workingday, temp, feel_temp, humidity, windspeed`` plus
+one-hot ``season`` and ``weather``.
+
+Turning a regression target into a market problem
+-------------------------------------------------
+Predicting "how many bikes this hour" is a plain point-regression task: one
+number per row. A prediction market never trades the exact number. It trades
+ranges, and "will this hour's count land in 200-350?" pays $1 if it does. So
+the script reframes the count three ways:
+
+1. The hourly count becomes the continuous underlying.
+2. In place of a single predicted number, we model a full predictive
+   distribution over the count. EMOS and QuantileReg each produce one; the two
+   baselines give floors to beat.
+3. We lay a bracket ladder over the count axis (0 to 1000 in 7 brackets). Each
+   bracket is one YES/NO contract, and its fair price is the distribution's
+   mass in that range, ``P(lo <= count < hi)``.
+
+From there the run follows the standard three steps: forecast the distribution,
+price the brackets, score both the distribution (CRPS, log-score, PIT) and the
+contracts (bracket Brier, log-loss).
 
 Run::
 
@@ -11,13 +30,18 @@ Run::
 
 What this script demonstrates:
 
-- ``cv="expanding-window"`` on a genuine time series — train always
-  precedes test in calendar time, no look-ahead.
-- ``Pipeline([EMOS(), Isotonic(...)])`` — EMOS with isotonic calibration,
-  fit per fold on a held-out tail of the train window.
-- A bracket ladder over realistic demand levels (0 → 1000 bikes/hour).
-- Demonstrates the user does NOT touch ``dist.ids`` — ``result.score(y)``
-  aligns OOF coverage internally.
+- ``cv="expanding-window"`` on a genuine time series: train always precedes
+  test in calendar time, no look-ahead.
+- ``Pipeline([EMOS(), Isotonic(...)])``: EMOS with isotonic calibration, fit
+  per fold on a held-out tail of the train window.
+- A bracket ladder over realistic demand levels (0 to 1000 bikes/hour).
+- ``result.score(y)`` aligns OOF coverage internally, so you never touch
+  ``dist.ids``.
+
+One contrivance: EMOS expects ensemble-shaped input (rows by experts). This
+dataset has no ensemble, so the script synthesises three "vendor" columns by
+perturbing the temperature feature. In real use you would pass the ensemble
+columns from your forecast vendors.
 """
 
 from __future__ import annotations
@@ -83,7 +107,10 @@ def main() -> None:
         temp_col + rng.normal(0, 0.5, n),
     ]) * 8.0 + 50.0   # rough scaling toward ride-count units
 
-    # Bracket ladder spanning the observed range: 0 → 1000 in 100-bike steps.
+    # The bracket ladder over the count axis. These 7 brackets ARE the
+    # tradeable contracts: each is a YES/NO on "this hour's count lands in
+    # [lo, hi)", priced as the forecast distribution's mass in that range.
+    # The edges span the observed range, 0 to 1000 bikes/hour.
     edges = np.array([0., 50., 100., 200., 350., 500., 750., 1000.])
     print(f"ladder: {len(edges)-1} brackets covering {edges[0]:.0f}–{edges[-1]:.0f} bikes/hour")
 
@@ -109,7 +136,7 @@ def main() -> None:
     )
     # qreg uses the full numeric feature matrix; emos uses the synthetic
     # ensemble columns. The pipeline as-shipped uses ONE X per call, so
-    # for the demo we feed X_emos and let qreg model on it too — both
+    # for the demo we feed X_emos and let qreg model on it too, and both
     # trainers happen to handle small-K dense input.
     result = wf.fit_predict(model, X_emos, y, ids=ids, timestamps=ts)
 
