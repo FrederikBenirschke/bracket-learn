@@ -1,5 +1,12 @@
 # bracketlearn
 
+![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)
+![Version](https://img.shields.io/badge/version-0.6.0-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+![Linter: Ruff](https://img.shields.io/badge/linter-ruff-D7FF64.svg)
+![Type checked: mypy](https://img.shields.io/badge/types-mypy-2A6DB2.svg)
+![Tests: pytest](https://img.shields.io/badge/tests-pytest-0A9EDC.svg)
+
 **A scikit-learn-style toolkit for forecasting a continuous number, then
 pricing the prediction-market contracts that pay out on it.**
 
