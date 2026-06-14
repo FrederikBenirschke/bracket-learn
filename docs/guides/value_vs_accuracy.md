@@ -160,6 +160,52 @@ information the market lacks, so its edge points where the market is wrong. An
 independent thresholded, costed betting strategy agrees with EA here, not with
 Brier — selecting on accuracy would have shipped the wrong forecast.
 
+## 5b. The same thing on real data: EMOS vs a market
+
+The synthetic toy is rigged to make the point cleanly. Does it survive on real
+forecasts and real prices? [`examples/value_vs_accuracy_weather.py`](https://github.com/FrederikBenirschke/bracketlearn/blob/main/examples/value_vs_accuracy_weather.py)
+fits EMOS on a small anonymized weather sample
+(`examples/data/weather_value_sample.parquet` — ensemble mean/spread, realized
+temperatures, per-row bracket grids, and a normalized reference price per
+bracket; no venue, station, or date), prices it onto each row's grid with
+`dist.integrate`, and scores it against the reference both ways:
+
+```
+===== HIGH  (train 360, test 240) =====
+  forecast                        Brier   EA ×100
+  reference (market)             0.1107    0.0000
+  EMOS (raw)                     0.1261   +0.1568   <- less accurate than market, EA > 0
+  EMOS + mean de-bias            0.1266   +0.1383   <- value falls vs raw
+  EMOS + edge-recal              0.1138   +0.0071   <- best Brier, value collapses
+```
+
+Read the HIGH block top to bottom — it is the whole guide in four rows:
+
+* **EMOS is *less* accurate than the market** (Brier 0.126 vs 0.111). On a
+  calibration scoreboard EMOS loses outright.
+* **EMOS is nevertheless tradeable** (EA `+0.157 > 0`). Its errors are
+  decorrelated from the market's, so its edge points where the market is wrong —
+  exactly the case §2–3 says calibration cannot see.
+* **Calibrating it harder does not help.** A mean de-bias toward the truth
+  *lowers* value. And an edge-recalibration produces the **best Brier of all
+  four rows** (0.114, nearly matching the market) while its value **collapses to
+  zero** (`+0.007`) — the cleanest possible demonstration that closeness to the
+  outcome and value-vs-a-reference are different axes.
+
+(The LOW side in the example lands the other way on accuracy — EMOS there is
+*more* accurate than the market *and* positive-EA — but the same two "fixes"
+still cut its value. The robust, side-independent lesson is the last bullet, not
+the sign of the accuracy gap.)
+
+> Honest caveats. EA here is on a normalized reference price, not a tradeable
+> order book net of fees; a positive EA is necessary, not sufficient, for live
+> profit. The numbers wobble with the split (small sample); what is robust
+> across splits is the *sign* of EMOS's EA and that both calibration "fixes"
+> reduce it. The earlier σ-recalibration idea was dropped from this example
+> because it only "worked" when EMOS was misfit to a constant σ; fit properly
+> (`fit_method="crps_nelder_mead"`), EMOS is not over-dispersed here and a
+> σ-scale does nothing — a reminder to verify a fix is real before believing it.
+
 ## 6. Improving value: edge-recalibration
 
 The principle says: don't push `q → π` (calibration); push the **edge `q − m`**
@@ -180,6 +226,14 @@ layer, so bracketlearn keeps it as a documented recipe rather than a core
 pipeline stage — the same boundary that puts [trade decisions out of
 scope](../index.md). The metrics that *grade* it (`edge_alignment`,
 `value_report`) are in the library.
+
+`h` is fit against the same realized outcomes it is scored on, so it **overfits
+readily** — far more than a calibration map, which targets the smoother `π`. On
+the small real sample of §5b the isotonic `h` *lowered* test EA rather than
+raising it (it amplified in-sample-only edges). Edge-recalibration earns its
+keep only with enough data and strict walk-forward validation; treat a
+recalibration that "wins" in-sample as unproven until it holds out-of-window
+(see §8 caveats).
 
 ## 7. Relation to known theory
 
