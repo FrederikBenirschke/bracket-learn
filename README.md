@@ -464,6 +464,19 @@ The standalone `score.brier_bracket` and `score.log_loss_bracket` helpers, used
 in the [Quickstart](#quickstart-the-three-steps-end-to-end), score a single
 `ContractForecast` directly. The docs cover the per-backing scoring math.
 
+### Accuracy is not value
+
+The metrics above ask "are my prices **calibrated**?" — close to the realized
+outcome. A trader asks a second question: "are my prices more **valuable** than
+the one already quoted?" That is graded against a *reference price* `m` (a market
+quote or baseline), not against truth — and a more accurate price is not always
+a more valuable one. `score.edge_alignment(q, m, r)` measures value (the
+expected betting payoff `(q−m)(r−m)`), and `score.value_report` splits a change
+in value into "how much mispricing was available" vs "how much your forecast
+failed to capture." This is still scoring, not a trade decision; the
+[value-vs-accuracy guide](docs/guides/value_vs_accuracy.md) derives
+the principle and shows a benign case where the two metrics disagree.
+
 ## Operating the pipeline
 
 The sections above cover a single fit. These control how `WalkForward` runs

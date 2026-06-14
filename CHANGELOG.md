@@ -64,6 +64,18 @@ replaces `MultiOutputForecastPipeline(proto)`; `GridSearch(model, wf, …)` take
 the model and driver separately, with `refit_node=` (was `refit_stage=`) and
 `edges=` (was `ladder=`) for bracket scoring.
 
+### Added
+- **Reference-relative value metrics** in `score` (Step-3 scoring extension):
+  `edge_alignment(q, m, r)` (Edge-Alignment — the expected betting payoff
+  `(q−m)(r−m)` of a price `q` against a reference `m`), `edge_alignment_corr`,
+  `shared_bias_slope`, and `value_report` (EA plus its exact `EA = A − B`
+  market-mispricing / non-orthogonality split). Bracket-ladder wrappers
+  `edge_alignment_bracket` / `value_report_bracket` take a `ContractForecast`
+  plus a reference ladder. These grade whether a price is more *valuable* than a
+  quoted one (vs `brier_bracket`, which grades calibration); a more accurate
+  price is not always a more valuable one. New guide
+  `docs/guides/value_vs_accuracy.md`; tests in `tests/test_value_metrics.py`.
+
 ### Removed
 - `bracketlearn.pipeline.ForecastPipeline`, `LiftedForecaster`,
   `CalibratedForecaster`

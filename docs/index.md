@@ -32,6 +32,7 @@ guides/multitarget
 guides/search
 guides/persistence
 guides/scoring
+guides/value_vs_accuracy
 guides/adapters
 guides/baselines
 guides/tail_policies

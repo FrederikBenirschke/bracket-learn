@@ -330,3 +330,181 @@ def brier_bracket(
     bin_idx = np.clip(bin_idx, 0, B - 1)
     onehot[np.arange(N), bin_idx] = 1.0
     return float(((probs - onehot) ** 2).sum(axis=1).mean())
+
+
+# ---------------------------------------------------------------------------
+# reference-relative value metrics
+# ---------------------------------------------------------------------------
+#
+# The metrics above answer "are my prices CALIBRATED?" — closeness of my price
+# ``q`` to the realized outcome ``r``. A prediction-market trader has a second,
+# distinct question: "is my price more VALUABLE than the one already quoted?"
+# That is a *relative* question, graded against a reference price ``m`` (a
+# market quote, a consensus, or any baseline forecast), not against truth.
+#
+# A more accurate forecast is not always a more valuable one. Value lives in the
+# part of your edge that points where the *reference* is wrong, not in raw
+# closeness to truth. The guide ``docs/guides/value_vs_accuracy.md`` derives why
+# (a forecast's expected betting PnL is the inner product ⟨q−m, r−m⟩) and shows
+# a benign synthetic case where accuracy and value disagree.
+#
+# These functions take three flat arrays over individual binary contracts:
+#   q  model price of YES, in [0, 1]
+#   m  reference/market price of YES, in [0, 1]
+#   r  realized outcome, in {0, 1}
+# The bracket-ladder wrappers below build (q, m, r) from a ContractForecast,
+# its reference prices, and the realized values.
+
+
+def _check_qmr(q: np.ndarray, m: np.ndarray, r: np.ndarray) -> tuple[np.ndarray, ...]:
+    q = np.asarray(q, dtype=float).ravel()
+    m = np.asarray(m, dtype=float).ravel()
+    r = np.asarray(r, dtype=float).ravel()
+    if not (q.shape == m.shape == r.shape):
+        raise ValueError(
+            f"q, m, r must share shape; got {q.shape}, {m.shape}, {r.shape}"
+        )
+    if q.size == 0:
+        raise ValueError("empty input to reference-relative value metric")
+    return q, m, r
+
+
+def edge_alignment(q: np.ndarray, m: np.ndarray, r: np.ndarray) -> float:
+    """Edge-Alignment (EA): mean over contracts of ``(q − m)(r − m)``.
+
+    This is the un-thresholded, un-costed expected betting PnL of acting on the
+    edge ``q − m`` against the reference price ``m``: you collect ``r − m`` per
+    unit bet, sized by the edge. Positive EA means your edge points, on average,
+    in the direction the reference turns out to be wrong. ``E[r] = π`` (the
+    latent truth), so ``E[EA] = E[(q − m)(π − m)]`` — the soft PnL — even though
+    ``π`` is never observed.
+
+    EA is the value sibling of ``brier_bracket``: Brier measures ``‖q − r‖``
+    (accuracy), EA measures alignment of ``q − m`` with ``r − m`` (value vs the
+    reference). They can rank two forecasts in opposite orders.
+    """
+    q, m, r = _check_qmr(q, m, r)
+    return float(np.mean((q - m) * (r - m)))
+
+
+def edge_alignment_corr(q: np.ndarray, m: np.ndarray, r: np.ndarray) -> float:
+    """Normalized EA: ``corr(q − m, r − m)`` — the cosine of the angle between
+    your edge and the reference's realized error. ``→ 0`` is the limit where the
+    edge no longer points at the reference's mistakes (the shared-bias trap).
+    """
+    q, m, r = _check_qmr(q, m, r)
+    eq, er = q - m, r - m
+    sq, sr = eq.std(), er.std()
+    if sq < 1e-15 or sr < 1e-15:
+        raise ValueError("zero-variance edge or reference error; corr undefined")
+    return float(np.corrcoef(eq, er)[0, 1])
+
+
+def shared_bias_slope(q: np.ndarray, m: np.ndarray, r: np.ndarray) -> float:
+    """OLS slope of your error ``(q − r)`` on the reference's error ``(m − r)``.
+
+    A large positive slope means your errors coincide with the reference's — you
+    are forfeiting edge to blind spots you *share* with it (e.g. both anchor to
+    the same biased source). Driving this slope down is worth more for value than
+    any calibration gain. Slope ``1`` means ``q = m`` (no edge); slope ``0``
+    means your residual error is orthogonal to the reference's.
+    """
+    q, m, r = _check_qmr(q, m, r)
+    x = m - r
+    sxx = float(np.dot(x - x.mean(), x - x.mean()))
+    if sxx < 1e-15:
+        raise ValueError("zero-variance reference error; slope undefined")
+    yq = q - r
+    return float(np.dot(x - x.mean(), yq - yq.mean()) / sxx)
+
+
+def value_report(q: np.ndarray, m: np.ndarray, r: np.ndarray) -> dict[str, float]:
+    """Full reference-relative value diagnostic for one set of contracts.
+
+    Returns ``EA`` and its exact additive split ``EA = A − B`` (no latent ``π``
+    needed):
+
+      * ``A = mean (r − m)²`` — the reference's mean-squared error (its Brier).
+        How much mispricing is *available*. Outside your control.
+      * ``B = mean (r − q)(r − m)`` — co-projection of your error onto the
+        reference's. How much of the available mispricing your forecast *fails*
+        to capture because your errors coincide with the reference's.
+
+    Identity: ``(q−m)(r−m) = (r−m)² − (r−q)(r−m)``, so ``EA = A − B`` per
+    contract. When EA moves across models or regimes, ``ΔEA = ΔA − ΔB``
+    attributes the change: ``A`` down ⇒ the reference got more efficient
+    (less to capture); ``B`` up ⇒ your forecast lost orthogonality (a model
+    problem, fixable). Both ``A`` and ``B`` sit on the same irreducible
+    Bernoulli-variance floor, which cancels in ``EA = A − B`` — read the levels
+    with care, read the difference cleanly.
+    """
+    q, m, r = _check_qmr(q, m, r)
+    A = float(np.mean((r - m) ** 2))
+    B = float(np.mean((r - q) * (r - m)))
+    return {
+        "EA": A - B,
+        "A_reference_mse": A,
+        "B_non_orthogonality": B,
+        "align_corr": edge_alignment_corr(q, m, r),
+        "shared_bias_slope": shared_bias_slope(q, m, r),
+        "n_contracts": float(q.size),
+    }
+
+
+def _qmr_from_bracket(
+    contracts: ContractForecast,
+    reference: ContractForecast | np.ndarray,
+    edges: np.ndarray,
+    y: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Flatten a model ladder, a reference ladder, and realized y into (q, m, r)
+    over every (entity, bracket) binary contract."""
+    edges = np.asarray(edges, dtype=float)
+    y = np.asarray(y, dtype=float)
+    B = edges.shape[0] - 1
+    q = np.asarray(contracts.fair_price, dtype=float)
+    m = reference.fair_price if isinstance(reference, ContractForecast) else np.asarray(reference, dtype=float)
+    m = np.asarray(m, dtype=float)
+    if q.shape != m.shape:
+        raise ValueError(
+            f"model fair_price {q.shape} and reference {m.shape} must match"
+        )
+    if q.size % B != 0:
+        raise ValueError(f"fair_price size {q.size} not divisible by B={B}")
+    N = q.size // B
+    if y.shape[0] != N:
+        raise ValueError(f"y has {y.shape[0]} entities; contracts have {N}")
+    onehot = np.zeros((N, B), dtype=float)
+    bin_idx = np.clip(np.searchsorted(edges, y, side="right") - 1, 0, B - 1)
+    onehot[np.arange(N), bin_idx] = 1.0
+    return q.reshape(N, B).ravel(), m.reshape(N, B).ravel(), onehot.ravel()
+
+
+def edge_alignment_bracket(
+    contracts: ContractForecast,
+    reference: ContractForecast | np.ndarray,
+    edges: np.ndarray,
+    y: np.ndarray,
+) -> float:
+    """Edge-Alignment of a bracket ladder vs a reference ladder (a scalar).
+
+    ``reference`` is the quoted/baseline price for the same contracts — a
+    ``ContractForecast`` or a raw array matching ``contracts.fair_price``. Each
+    (entity, bracket) becomes a binary contract; EA averages ``(q−m)(r−m)`` over
+    all of them. See :func:`edge_alignment`.
+    """
+    q, m, r = _qmr_from_bracket(contracts, reference, edges, y)
+    return edge_alignment(q, m, r)
+
+
+def value_report_bracket(
+    contracts: ContractForecast,
+    reference: ContractForecast | np.ndarray,
+    edges: np.ndarray,
+    y: np.ndarray,
+) -> dict[str, float]:
+    """Full value diagnostic (``EA``, ``A``, ``B``, ``align_corr``,
+    ``shared_bias_slope``) for a bracket ladder vs a reference. See
+    :func:`value_report`."""
+    q, m, r = _qmr_from_bracket(contracts, reference, edges, y)
+    return value_report(q, m, r)
