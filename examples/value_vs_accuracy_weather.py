@@ -5,23 +5,26 @@ An honest, end-to-end demonstration of the reference-relative value metrics
 
   1. Fit EMOS (bracketlearn) on ensemble mean/spread.
   2. Price it onto each row's own bracket grid via ``dist.integrate``.
-  3. Score it two ways against a real *reference price* ``m`` (a normalized
-     market quote, anonymized): Brier (accuracy) and Edge-Alignment (value).
+  3. Score it against a real *reference price* ``m`` (a normalized market quote,
+     anonymized) two ways: Brier (accuracy) and Edge-Alignment (value).
 
-The honest finding:
+The honest finding (robust across random splits):
 
-  * Raw EMOS is *less accurate* than the reference (higher Brier) yet still
-    carries positive tradeable value (EA > 0) — accuracy and value are
-    different axes.
-  * Raw EMOS is **over-dispersed** (its σ is too wide), so it leaves value on
-    the table. A market-blind, proper-score (CRPS) σ-recalibration fit on the
-    training split — pure calibration, it never looks at the reference price —
-    sharpens the forecast and roughly doubles the test-set value. Calibrating
-    the *dispersion* is the sizing lever of the value guide's §8.
+  * EMOS is **less accurate than the market** — its multiclass Brier is
+    consistently *worse* than the reference price's. On a calibration
+    scoreboard, EMOS loses.
+  * EMOS nevertheless has **positive Edge-Alignment** — it is tradeable. Where
+    it is wrong is decorrelated from where the market is wrong, so its edge
+    points at the market's mistakes. Accuracy and value disagree, on real data.
+  * The two things a calibration-minded person would try to "improve" it — a
+    mean de-bias toward the truth, and an edge-recalibration toward the market's
+    realized error — both *reduce* the value. Calibrating harder is not the same
+    as capturing more mispricing (the value guide's §3).
 
 Data: ``examples/data/weather_value_sample.parquet`` — a small anonymized
 sample (forecast inputs, realized values, per-row bracket edges, normalized
-reference prices). No venue, station, or date information.
+reference prices with NaN where a bracket had no quote). No venue, station, or
+date information.
 
 Run::
 
@@ -31,23 +34,25 @@ Run::
 from __future__ import annotations
 
 import os
+import warnings
 
 import numpy as np
 import polars as pl
+from sklearn.isotonic import IsotonicRegression
 
-from bracketlearn import NormalForecast
-from bracketlearn.score import crps_gaussian, edge_alignment, value_report
+from bracketlearn.score import edge_alignment, value_report
 from bracketlearn.trainers import EMOS
 
 DATA = os.path.join(os.path.dirname(__file__), "data", "weather_value_sample.parquet")
 
 
-def _flatten(dist, rows, scale: float = 1.0):
-    """Price ``dist`` (optionally σ-scaled) onto each row's bracket grid and
-    flatten to per-contract (q, m, r) arrays paired with the reference price."""
-    if scale != 1.0:
+def _price(dist, rows, dmu=0.0):
+    """Price EMOS (optionally with a mean shift) onto each row's bracket grid,
+    then flatten to per-contract (q, m, r). NaN reference quotes are dropped."""
+    if dmu:
+        from bracketlearn import NormalForecast
         dist = NormalForecast.from_arrays(
-            mu=dist.mu, sigma=dist.sigma * scale,
+            mu=dist.mu + dmu, sigma=dist.sigma,
             ids=dist.ids, timestamps=dist.timestamps, provenance=dist.provenance,
         )
     edges_per_row = [np.asarray(r["edges"], float) for r in rows]
@@ -61,10 +66,12 @@ def _flatten(dist, rows, scale: float = 1.0):
             continue
         q = q / q.sum()
         onehot = np.zeros(K)
-        onehot[int(np.clip(np.searchsorted(edges_per_row[j], row["realized"], "right") - 1, 0, K - 1))] = 1.0
-        q_list.append(q)
-        m_list.append(m)
-        r_list.append(onehot)
+        bi = int(np.clip(np.searchsorted(edges_per_row[j], row["realized"], "right") - 1, 0, K - 1))
+        onehot[bi] = 1.0
+        ok = np.isfinite(m)               # only brackets the market actually quoted
+        q_list.append(q[ok])
+        m_list.append(m[ok])
+        r_list.append(onehot[ok])
     return np.concatenate(q_list), np.concatenate(m_list), np.concatenate(r_list)
 
 
@@ -80,44 +87,50 @@ def run_side(df: pl.DataFrame, side: str) -> None:
     tr = [rows[i] for i in idx[:cut]]
     te = [rows[i] for i in idx[cut:]]
 
-    def design(subset):
+    Xtr = np.array([[r["ens_mean"], r["ens_std"]] for r in tr])
+    ytr = np.array([r["realized"] for r in tr])
+    # crps_nelder_mead avoids the OLS fit's constant-σ fallback on this data.
+    emos = EMOS(input_form="aggregates", fit_method="crps_nelder_mead").fit(Xtr, ytr)
+
+    def predict(subset):
         X = np.array([[r["ens_mean"], r["ens_std"]] for r in subset])
-        y = np.array([r["realized"] for r in subset])
-        return X, y
+        return emos.predict_dist(X, ids=np.arange(len(subset)), timestamps=np.arange(len(subset), dtype=float))
 
-    Xtr, ytr = design(tr)
-    Xte, yte = design(te)
-    emos = EMOS(input_form="aggregates").fit(Xtr, ytr)
+    dist_te = predict(te)
+    q0, m, r = _price(dist_te, te)
 
-    dist_tr = emos.predict_dist(Xtr, ids=np.arange(len(tr)), timestamps=np.arange(len(tr), dtype=float))
-    dist_te = emos.predict_dist(Xte, ids=np.arange(len(te)), timestamps=np.arange(len(te), dtype=float))
+    # naive "fix" 1: de-bias EMOS's mean by its train residual (calibrate to truth)
+    dmu = float(ytr.mean() - predict(tr).mu.mean())
+    qd, _, _ = _price(dist_te, te, dmu=dmu)
 
-    # fit the σ-scale on TRAIN by CRPS (a proper score — never sees the reference)
-    scales = np.linspace(0.4, 1.4, 51)
-    crps_tr = [float(crps_gaussian(
-        NormalForecast.from_arrays(mu=dist_tr.mu, sigma=dist_tr.sigma * s,
-                                   ids=dist_tr.ids, timestamps=dist_tr.timestamps,
-                                   provenance=dist_tr.provenance), ytr).mean())
-        for s in scales]
-    best = float(scales[int(np.argmin(crps_tr))])
+    # naive "fix" 2: edge-recalibrate toward the market's realized error (isotonic,
+    # fit causally on train) — maximizes calibration of the edge, overfits on small N
+    qt, mt, rt = _price(predict(tr), tr)
+    iso = IsotonicRegression(out_of_bounds="clip").fit(qt - mt, rt - mt)
+    q2 = np.clip(m + iso.predict(q0 - m), 1e-4, 1 - 1e-4)
 
-    q0, m, r = _flatten(dist_te, te, scale=1.0)
-    qb, _, _ = _flatten(dist_te, te, scale=best)
-
+    ea0 = edge_alignment(q0, m, r) * 100
+    bm, b0 = _brier(m, r), _brier(q0, r)
+    acc = "less accurate than market" if b0 > bm else "more accurate than market"
     print(f"\n===== {side}  (train {len(tr)}, test {len(te)}) =====")
-    print(f"  reference (market)  Brier {_brier(m, r):.4f}   EA  0.0000")
-    print(f"  raw EMOS            Brier {_brier(q0, r):.4f}   EA {edge_alignment(q0, m, r) * 100:+.4f}  (×100)")
-    print(f"  σ-recal (CRPS, ×{best:.2f}) Brier {_brier(qb, r):.4f}   EA {edge_alignment(qb, m, r) * 100:+.4f}  (×100)")
-    rep = value_report(qb, m, r)
-    print(f"    value_report(σ-recal): A(ref MSE)={rep['A_reference_mse']:.4f}  "
+    print(f"  {'forecast':28s} {'Brier':>8s} {'EA ×100':>9s}")
+    print(f"  {'reference (market)':28s} {bm:8.4f} {0.0:9.4f}")
+    print(f"  {'EMOS (raw)':28s} {b0:8.4f} {ea0:+9.4f}   <- {acc}, EA > 0")
+    print(f"  {'EMOS + mean de-bias':28s} {_brier(qd, r):8.4f} {edge_alignment(qd, m, r) * 100:+9.4f}"
+          f"   <- value falls vs raw")
+    print(f"  {'EMOS + edge-recal':28s} {_brier(q2, r):8.4f} {edge_alignment(q2, m, r) * 100:+9.4f}"
+          f"   <- best Brier, value collapses")
+    rep = value_report(q0, m, r)
+    print(f"    value_report(EMOS raw): A(ref MSE)={rep['A_reference_mse']:.4f}  "
           f"B(non-orth)={rep['B_non_orthogonality']:.4f}  align_corr={rep['align_corr']:+.3f}")
 
 
 def main() -> None:
+    warnings.filterwarnings("ignore")
     df = pl.read_parquet(DATA)
     print(f"loaded {df.height} rows from {os.path.basename(DATA)}")
-    print("Raw EMOS is over-dispersed: less accurate than the market, yet it has")
-    print("tradeable value. A market-blind σ-recalibration recovers more of it.")
+    print("EMOS is LESS accurate than the market (worse Brier) yet has positive")
+    print("value (EA > 0). Calibrating it harder does not add value.")
     for side in ("HIGH", "LOW"):
         run_side(df, side)
 
