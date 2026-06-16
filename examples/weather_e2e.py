@@ -139,12 +139,7 @@ def main() -> None:
     qforest = Pipeline(
         [QuantileForest(n_estimators=200, random_seed=0)], name="qforest",
     )
-    cumbin = Pipeline(
-        [CumulativeBinary(
-            cutpoints_by_id=cutpoints_by_id, outer_edges_by_id=outer_edges_by_id,
-        )],
-        name="cumbin",
-    )
+    cumbin = Pipeline([CumulativeBinary()], name="cumbin")
     tail_specialist = Stacker(
         [emos], TailSpecialist(brackets_by_id=brackets_by_id),
         name="tail_specialist",
@@ -160,9 +155,15 @@ def main() -> None:
     ]
 
     print(f"\nfitting (4-fold expanding window, {len(model)} models)...")
+    # CumulativeBinary takes its per-row grids at call time now; WalkForward
+    # forwards these id-keyed dicts verbatim to every node (only cumbin uses
+    # them — the rest drop them by signature).
     result = WalkForward(
         cv="expanding-window", n_folds=4, embargo=0,
-    ).fit_predict(model, X, y, ids=ids, timestamps=ts)
+    ).fit_predict(
+        model, X, y, ids=ids, timestamps=ts,
+        cutpoints_by_id=cutpoints_by_id, outer_edges_by_id=outer_edges_by_id,
+    )
     print(f"got OOF dists for: {result.stages}")
 
     print("\n[distribution metrics]")

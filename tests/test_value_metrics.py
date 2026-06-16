@@ -16,6 +16,7 @@ from bracketlearn.score import (
     edge_alignment,
     edge_alignment_bracket,
     edge_alignment_corr,
+    edge_alignment_costed,
     shared_bias_slope,
     value_report,
     value_report_bracket,
@@ -118,6 +119,48 @@ def test_bracket_wrapper_matches_flat_form(prov):
     assert brier_bracket(_ladder(qp, prov), edges, y) >= 0.0
 
 
+def test_costed_zero_fee_is_sign_strategy():
+    """fee=0, tau=0: every contract trades, payoff = sign(edge)·(r−m)."""
+    q, _, m, r = _toy()
+    c = edge_alignment_costed(q, m, r, fee=0.0, tau=0.0)
+    expected = float(np.mean(np.sign(q - m) * (r - m)))
+    assert c["mean_pnl"] == pytest.approx(expected)
+    assert c["trade_frac"] == pytest.approx(1.0)
+
+
+def test_costed_value_decreases_with_fee_at_fixed_gate():
+    """At a FIXED trade gate the same trades each pay more fee, so value falls.
+    (With tau tied to fee it is NOT monotone: a higher gate also drops losing
+    trades — only the oracle E[(|δ|−fee)₊] is monotone in fee.)"""
+    q, _, m, r = _toy()
+    vals = [edge_alignment_costed(q, m, r, fee=f, tau=0.0)["mean_pnl"]
+            for f in (0.0, 0.01, 0.02, 0.05)]
+    assert all(a > b for a, b in zip(vals, vals[1:], strict=False))
+
+
+def test_costed_higher_tau_trades_less():
+    q, _, m, r = _toy()
+    lo = edge_alignment_costed(q, m, r, fee=0.0, tau=0.02)["trade_frac"]
+    hi = edge_alignment_costed(q, m, r, fee=0.0, tau=0.10)["trade_frac"]
+    assert hi < lo
+
+
+def test_costed_prefers_orthogonal_forecast():
+    """The orthogonal forecast (real edge) still wins once fees are charged."""
+    q_acc, q_orth, m, r = _toy()
+    v_acc = edge_alignment_costed(q_acc, m, r, fee=0.02)["mean_pnl"]
+    v_orth = edge_alignment_costed(q_orth, m, r, fee=0.02)["mean_pnl"]
+    assert v_orth > v_acc
+
+
+def test_costed_loud_errors():
+    q, _, m, r = _toy(n=100)
+    with pytest.raises(ValueError):
+        edge_alignment_costed(q, m, r, fee=-0.01)
+    with pytest.raises(ValueError):
+        edge_alignment_costed(q, m, r, fee=0.02, tau=-0.01)
+
+
 def test_loud_errors():
     _, _, m, r = _toy(n=100)
     with pytest.raises(ValueError):
@@ -126,3 +169,14 @@ def test_loud_errors():
         edge_alignment(np.array([]), np.array([]), np.array([]))  # empty
     with pytest.raises(ValueError):
         edge_alignment_corr(m, m, r)                          # zero-variance edge
+
+
+def test_nonfinite_inputs_raise():
+    """A NaN price (e.g. an unquoted bracket) must raise, not silently score NaN."""
+    q, _, m, r = _toy(n=100)
+    m_nan = m.copy()
+    m_nan[0] = np.nan
+    with pytest.raises(ValueError):
+        edge_alignment(q, m_nan, r)
+    with pytest.raises(ValueError):
+        value_report(q, m_nan, r)

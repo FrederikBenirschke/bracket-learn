@@ -169,7 +169,11 @@ class BracketExpander:
                 f"{self.name}.fit_transform: y has length {y_per_row.shape[0]} "
                 f"but ids has length {np.asarray(ids).shape[0]}"
             )
-        assert self.offsets_ is not None and self.per_row_edges_ is not None
+        if self.offsets_ is None or self.per_row_edges_ is None:
+            raise RuntimeError(
+                f"{self.name}.fit_transform: offsets not recorded; transform() "
+                f"must run before the target is built"
+            )
         N = y_per_row.shape[0]
         M = int(self.offsets_[-1])
         y_expanded = np.zeros(M, dtype=float)

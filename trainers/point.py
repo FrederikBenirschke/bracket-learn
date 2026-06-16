@@ -75,7 +75,7 @@ class SklearnPoint(BaseEstimator):
         timestamps: np.ndarray,
     ) -> PointForecast:
         mu = np.asarray(self.estimator.predict(np.asarray(X, dtype=float)), dtype=float)
-        prov = ProvenanceMeta.placeholder(self.name)
+        prov = ProvenanceMeta.placeholder(self.name or type(self).__name__)
         return PointForecast(
             mu=mu,
             ids=np.asarray(ids),
@@ -290,6 +290,11 @@ class OnlineAggregator(BaseEstimator):
         timestamps: np.ndarray,
         groups: np.ndarray,
     ) -> PointForecast:
+        if self.final_w_by_group_ is None:
+            raise RuntimeError(
+                "OnlineAggregator: grouped predict requested but no per-group "
+                "weights — was the model fit before predict, and with groups?"
+            )
         if X.shape[1] != self.K_:
             raise ValueError(
                 f"OnlineAggregator: predict X has K={X.shape[1]}, train had K={self.K_}"
@@ -488,7 +493,7 @@ class RNNHourly(BaseEstimator):
         os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
         import torch
 
-        if self.model_ is None:
+        if self.model_ is None or self.n_stations_ is None:
             raise RuntimeError("RNNHourly.predict called before fit")
         X = np.asarray(X, dtype=np.float32)
         if X.ndim != 3:

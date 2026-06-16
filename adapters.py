@@ -264,6 +264,7 @@ class BracketLadder:
         for i in range(N):
             B_i = int(B_per_row[i])
             if self.include_tail_buckets:
+                assert below_probs is not None   # set together with the flag above
                 contract_ids_list.append(-1)
                 entity_ids_list.append(ids[i])
                 timestamps_list.append(ts[i])
@@ -276,6 +277,7 @@ class BracketLadder:
                 group_id_list.append(ids[i])
                 fair_price_list.append(float(probs[i, j]))
             if self.include_tail_buckets:
+                assert above_probs is not None   # set together with the flag above
                 contract_ids_list.append(B_i)
                 entity_ids_list.append(ids[i])
                 timestamps_list.append(ts[i])

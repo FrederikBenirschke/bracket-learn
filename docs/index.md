@@ -33,6 +33,8 @@ guides/search
 guides/persistence
 guides/scoring
 guides/value_vs_accuracy
+guides/value_with_fees
+guides/value_trainers
 guides/adapters
 guides/baselines
 guides/tail_policies
@@ -52,6 +54,7 @@ api/forecast
 api/adapters
 api/transformers
 api/score
+api/value
 api/multitarget
 api/search
 api/persistence

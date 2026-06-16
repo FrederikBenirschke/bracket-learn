@@ -32,6 +32,46 @@ from bracketlearn.forecast import (
 # ---------------------------------------------------------------------------
 
 
+def _validate_cumulative_grids(
+    cutpoints_by_id: dict[Any, np.ndarray],
+    outer_edges_by_id: dict[Any, tuple[float, float]],
+    *,
+    owner: str = "CumulativeBinary",
+) -> None:
+    """Validate the per-row cutpoint grids + outer edges (the id-keyed dicts now
+    passed to fit/predict). Raises on empty / non-1-D / non-monotone cutpoints, a
+    missing outer-edge entry, or outer edges that don't bracket the cutpoints."""
+    if not isinstance(cutpoints_by_id, dict) or not cutpoints_by_id:
+        raise ValueError(
+            f"{owner} needs a non-empty cutpoints_by_id dict (id → 1-D cutpoint array)"
+        )
+    if not isinstance(outer_edges_by_id, dict) or not outer_edges_by_id:
+        raise ValueError(
+            f"{owner} needs a non-empty outer_edges_by_id dict (id → (lo, hi) tuple)"
+        )
+    for k, cuts in cutpoints_by_id.items():
+        cuts_arr = np.asarray(cuts, dtype=float)
+        if cuts_arr.ndim != 1 or cuts_arr.size == 0:
+            raise ValueError(
+                f"cutpoints_by_id[{k!r}] must be 1-D non-empty; got shape {cuts_arr.shape}"
+            )
+        if np.any(np.diff(cuts_arr) <= 0):
+            raise ValueError(f"cutpoints_by_id[{k!r}] must be strictly increasing")
+        if k not in outer_edges_by_id:
+            raise ValueError(
+                f"cutpoints_by_id has id {k!r} but outer_edges_by_id does not"
+            )
+        lo, hi = outer_edges_by_id[k]
+        if not (lo < cuts_arr[0]):
+            raise ValueError(
+                f"outer_edges_by_id[{k!r}][0]={lo} must be < cutpoints[0]={cuts_arr[0]}"
+            )
+        if not (hi > cuts_arr[-1]):
+            raise ValueError(
+                f"outer_edges_by_id[{k!r}][1]={hi} must be > cutpoints[-1]={cuts_arr[-1]}"
+            )
+
+
 @dataclass
 class CumulativeBinary(BaseEstimator):
     """Single LightGBM binary classifier on augmented features.
@@ -40,12 +80,15 @@ class CumulativeBinary(BaseEstimator):
     predict time queries P(y ≤ k) for each cutpoint k in the row's own
     grid and emits a per-row bracket-backed dist.
 
-    v0.3 — per-row brackets
-    -----------------------
+    Data contract — construction is hyperparameters only
+    ----------------------------------------------------
     Each market/event has its own cutpoint grid (the interior bracket
     edges) and its own outer-edge pair (left/right boundaries
-    absorbing tail mass). Both are passed as id-keyed dicts at
-    construction:
+    absorbing tail mass). Both are passed as id-keyed dicts **at call
+    time** (alongside ``X`` / ``y``), not at construction::
+
+        fit(X, y, *, ids, cutpoints_by_id, outer_edges_by_id, sample_weight=None)
+        predict_dist(X, *, ids, timestamps, cutpoints_by_id, outer_edges_by_id)
 
       ``cutpoints_by_id``:    dict mapping row id → 1-D float array of
                               cutpoints (length K_i ≥ 1).
@@ -53,7 +96,8 @@ class CumulativeBinary(BaseEstimator):
                               with ``lo_i < cutpoints[0]`` and
                               ``hi_i > cutpoints[-1]``.
 
-    Both dicts must cover every id passed to fit/predict. Each row i
+    Both dicts must cover every id in that call (they may cover more —
+    fit/predict select by the ``ids`` you hand them). Each row i
     contributes K_i augmented training examples to the LGBM model — the
     examples for different rows may have different cutpoint counts and
     spacings. Cutpoint values are passed as a feature, so the model
@@ -61,11 +105,10 @@ class CumulativeBinary(BaseEstimator):
 
     The model itself is global (one LGBM); only the per-row augmentation
     differs. Predict-time emits a BracketForecast on each row's full
-    ladder ``[lo_i, cutpoints_i..., hi_i]``.
+    ladder ``[lo_i, cutpoints_i..., hi_i]``. Under ``WalkForward`` the dicts
+    are forwarded verbatim — pass them once to ``fit_predict``.
     """
 
-    cutpoints_by_id: dict[Any, np.ndarray]
-    outer_edges_by_id: dict[Any, tuple[float, float]]
     n_estimators: int = 80
     learning_rate: float = 0.05
     num_leaves: int = 7
@@ -73,57 +116,24 @@ class CumulativeBinary(BaseEstimator):
     monotone: bool = True
     name: str = "CumulativeBinary"
     model_: Any = field(default=None, init=False)
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.cutpoints_by_id, dict) or not self.cutpoints_by_id:
-            raise ValueError(
-                "CumulativeBinary needs a non-empty cutpoints_by_id dict "
-                "(id → 1-D cutpoint array)"
-            )
-        if not isinstance(self.outer_edges_by_id, dict) or not self.outer_edges_by_id:
-            raise ValueError(
-                "CumulativeBinary needs a non-empty outer_edges_by_id dict "
-                "(id → (lo, hi) tuple)"
-            )
-        # Validate each entry.
-        for k, cuts in self.cutpoints_by_id.items():
-            cuts_arr = np.asarray(cuts, dtype=float)
-            if cuts_arr.ndim != 1 or cuts_arr.size == 0:
-                raise ValueError(
-                    f"cutpoints_by_id[{k!r}] must be 1-D non-empty; got shape {cuts_arr.shape}"
-                )
-            if np.any(np.diff(cuts_arr) <= 0):
-                raise ValueError(
-                    f"cutpoints_by_id[{k!r}] must be strictly increasing"
-                )
-            if k not in self.outer_edges_by_id:
-                raise ValueError(
-                    f"cutpoints_by_id has id {k!r} but outer_edges_by_id does not"
-                )
-            lo, hi = self.outer_edges_by_id[k]
-            if not (lo < cuts_arr[0]):
-                raise ValueError(
-                    f"outer_edges_by_id[{k!r}][0]={lo} must be < cutpoints[0]={cuts_arr[0]}"
-                )
-            if not (hi > cuts_arr[-1]):
-                raise ValueError(
-                    f"outer_edges_by_id[{k!r}][1]={hi} must be > cutpoints[-1]={cuts_arr[-1]}"
-                )
+    _requires_explicit_ids = True   # grids keyed by id; never auto-fill arange(N)
 
     def _augment(
         self,
         X: np.ndarray,
         ids: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
+        cutpoints_by_id: dict[Any, np.ndarray],
+    ) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]:
         """Build the per-row augmented design matrix. Returns
-        ``(X_aug, row_blocks)`` where ``row_blocks[i]`` is the
-        ``slice`` covering row i's augmented examples."""
+        ``(X_aug, offsets, per_row_cuts)`` where ``offsets[i]:offsets[i+1]``
+        covers row i's augmented examples and ``per_row_cuts[i]`` is its
+        cutpoint array."""
         N = X.shape[0]
         per_row_cuts = []
         missing = []
         for k in ids:
             try:
-                per_row_cuts.append(np.asarray(self.cutpoints_by_id[k], dtype=float))
+                per_row_cuts.append(np.asarray(cutpoints_by_id[k], dtype=float))
             except KeyError:
                 missing.append(k)
         if missing:
@@ -148,10 +158,13 @@ class CumulativeBinary(BaseEstimator):
         y: np.ndarray,
         *,
         ids: np.ndarray,
+        cutpoints_by_id: dict[Any, np.ndarray],
+        outer_edges_by_id: dict[Any, tuple[float, float]],
         sample_weight: np.ndarray | None = None,
     ) -> Self:
         import lightgbm as lgb
 
+        _validate_cumulative_grids(cutpoints_by_id, outer_edges_by_id, owner=self.name)
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
         ids = np.asarray(ids)
@@ -159,7 +172,7 @@ class CumulativeBinary(BaseEstimator):
             raise ValueError(
                 f"shape mismatch: X N={X.shape[0]} y N={y.shape[0]} ids N={ids.shape[0]}"
             )
-        X_aug, offsets, per_row_cuts = self._augment(X, ids)
+        X_aug, offsets, per_row_cuts = self._augment(X, ids, cutpoints_by_id)
         N = X.shape[0]
         y_aug = np.empty(X_aug.shape[0], dtype=int)
         for i in range(N):
@@ -193,14 +206,17 @@ class CumulativeBinary(BaseEstimator):
         *,
         ids: np.ndarray,
         timestamps: np.ndarray,
+        cutpoints_by_id: dict[Any, np.ndarray],
+        outer_edges_by_id: dict[Any, tuple[float, float]],
     ) -> DistributionForecast:
         if self.model_ is None:
             raise RuntimeError("CumulativeBinary.predict_dist called before fit")
+        _validate_cumulative_grids(cutpoints_by_id, outer_edges_by_id, owner=self.name)
         X = np.asarray(X, dtype=float)
         ids = np.asarray(ids)
         timestamps = np.asarray(timestamps)
         N = X.shape[0]
-        X_aug, offsets, per_row_cuts = self._augment(X, ids)
+        X_aug, offsets, per_row_cuts = self._augment(X, ids, cutpoints_by_id)
         proba_aug = self.model_.predict_proba(X_aug)[:, 1]
         # Reassemble per-row, then build each row's ladder + probs.
         # Rows can have different K_i — collect into a padded 2-D
@@ -216,7 +232,7 @@ class CumulativeBinary(BaseEstimator):
             p_cuts = proba_aug[sl]
             # Per-row isotonic repair on cutpoint-wise CDF.
             p_cuts = np.maximum.accumulate(p_cuts)
-            lo, hi = self.outer_edges_by_id[ids[i]]
+            lo, hi = outer_edges_by_id[ids[i]]
             row_edges = np.concatenate([[lo], per_row_cuts[i], [hi]])
             cdf_at_edges = np.concatenate([[0.0], p_cuts, [1.0]])
             row_probs = bracket_probs_from_cdf_at_edges(

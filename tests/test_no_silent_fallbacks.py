@@ -92,28 +92,34 @@ def test_sklearn_point_raises_genuine_typeerror_inside_fit():
 
 
 # ---------------------------------------------------------------------------
-# B3 — CumulativeBinary requires explicit outer_edges.
+# B3 — CumulativeBinary requires explicit outer_edges (now a fit/predict kwarg).
 # ---------------------------------------------------------------------------
 
 
 def test_cumulative_binary_requires_outer_edges_param():
-    """outer_edges_by_id is a required constructor argument (no invented pad)."""
+    """outer_edges_by_id is a required fit argument (no invented pad)."""
     pytest.importorskip("lightgbm")
     from bracketlearn.trainers import CumulativeBinary
+    X = np.zeros((2, 3)); y = np.array([1.5, 1.5]); ids = np.array([0, 1])
     with pytest.raises(TypeError, match="outer_edges_by_id"):
-        CumulativeBinary(cutpoints_by_id={0: np.array([1.0, 2.0])})  # type: ignore[call-arg]
+        CumulativeBinary().fit(
+            X, y, ids=ids, cutpoints_by_id={0: np.array([1.0, 2.0])},
+        )  # type: ignore[call-arg]
 
 
 def test_cumulative_binary_rejects_inside_outer_edges():
     pytest.importorskip("lightgbm")
     from bracketlearn.trainers import CumulativeBinary
+    X = np.zeros((1, 3)); y = np.array([1.5]); ids = np.array([0])
     with pytest.raises(ValueError, match="outer_edges_by_id"):
-        CumulativeBinary(
+        CumulativeBinary().fit(
+            X, y, ids=ids,
             cutpoints_by_id={0: np.array([1.0, 2.0])},
             outer_edges_by_id={0: (1.5, 3.0)},
         )
     with pytest.raises(ValueError, match="outer_edges_by_id"):
-        CumulativeBinary(
+        CumulativeBinary().fit(
+            X, y, ids=ids,
             cutpoints_by_id={0: np.array([1.0, 2.0])},
             outer_edges_by_id={0: (0.0, 1.5)},
         )
@@ -235,6 +241,7 @@ def test_emos_constant_sigma_fallback_emits_warning():
     """When the OLS variance fit collapses to a constant, the user must be
     told — Rule #0.5 says silent fallbacks rot debugging hours later."""
     import warnings
+
     from bracketlearn.trainers import EMOS
 
     rng = np.random.default_rng(0)
@@ -259,6 +266,7 @@ def test_emos_constant_sigma_fallback_tagged_in_provenance():
     """Downstream consumers should be able to read provenance to detect a
     constant-σ EMOS fit without inspecting trainer-internal state."""
     import warnings
+
     from bracketlearn.trainers import EMOS
 
     rng = np.random.default_rng(0)

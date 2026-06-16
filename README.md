@@ -1,7 +1,7 @@
 # bracketlearn
 
-![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)
-![Version](https://img.shields.io/badge/version-0.6.0-blue.svg)
+![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)
+![Version](https://img.shields.io/badge/version-0.8.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Linter: Ruff](https://img.shields.io/badge/linter-ruff-D7FF64.svg)
 ![Type checked: mypy](https://img.shields.io/badge/types-mypy-2A6DB2.svg)
@@ -50,8 +50,7 @@ value. bracketlearn turns your features into those fair prices.
 
 ## The three steps
 
-You forecast, you price, you score, all through a scikit-learn-style API. The
-rest of this README follows these three steps in order.
+You forecast, you price, you score, all through a scikit-learn-style API.
 
 1. **Forecast a distribution.** Fit a probabilistic model on your features:
    `EMOS`, `NGBoostNormal`, `QuantileReg`, `MixtureNormals`, `CumulativeBinary`,
@@ -317,9 +316,9 @@ rather than fabricate a silent uniform.
 
 ### Estimator families
 
-Six families group the trainers by **what they model**. Pick the family from the
-shape of your signal; inside a family the members trade off linearity, priors,
-and compute.
+Seven families group the trainers by **what they model**. Pick the family from
+the shape of your signal; inside a family the members trade off linearity,
+priors, and compute.
 
 | Family | Estimators | What it models |
 |---|---|---|
@@ -327,6 +326,7 @@ and compute.
 | **Parametric distribution** | `EMOS`, `HeteroscedasticNormal`, `NGBoostNormal`, `MixtureNormals`, `BayesianRidge`, `HierarchicalNormal` | a closed-form density (Normal / mixture) whose moments are functions of the features |
 | **Quantile / non-parametric** | `QuantileReg`, `QuantileForest` | a quantile function / empirical CDF, no distributional shape assumed |
 | **Bracket-native** | `CumulativeBinary` (+ the `BracketExpander` entry point) | bracket / cutpoint indicators directly on each row's own grid |
+| **Value (reference-relative)** | `BlendedBracketGBM`, `BlendedBracketNet` (in `bracketlearn.value`) | a bracket dist tilted to capture a **reference price's** mispricing (`L = CE − λ·EA`); needs `reference_by_id` at fit (see [§ Accuracy is not value](#accuracy-is-not-value)) |
 | **Stacking / combiners** | `StackedParametric`, `BMAStacking`, `BracketStacking`, `LinearPoolDist`, `TailSpecialist`, `CDFBoostBracket`, `DistAsFeatures` | a combination of upstream forecasts (parametric meta-learner, Bayesian average, opinion pool, tail specialist) |
 | **Baselines** | `Persistence`, `PersistenceDist`, `EmpiricalDistribution` | reference forecasts to beat; plus convenience factories `ridge`, `emos_calibrated` |
 
@@ -355,11 +355,15 @@ A second axis cuts across the families: what a trainer sees at fit time.
   `ridge`, `emos_calibrated`) never touch brackets at fit time. They fit on
   `(X, y)`, emit a continuous-ish distribution, and you call
   `.integrate(edges_per_row)` to price on a grid.
-- **Bracket-aware** (`CumulativeBinary`, `TailSpecialist`, `CDFBoostBracket`)
-  train on bracket-derived indicators. Each takes a `cutpoints_by_id` or
-  `brackets_by_id` dict (id to 1-D edge array) at construction, so per-row grids
-  flow through fit and predict. Their `fit()` signatures require an explicit
-  `ids=` kwarg; a `Pipeline` forwards it for you.
+- **Bracket-aware** (`CumulativeBinary`, `BlendedBracketGBM`/`BlendedBracketNet`,
+  `TailSpecialist`, `CDFBoostBracket`) train on bracket-derived indicators on a
+  per-row grid. The leaf trainers (`CumulativeBinary` with `cutpoints_by_id` /
+  `outer_edges_by_id`, and the value trainers with `brackets_by_id` /
+  `reference_by_id`) take their grids at **call time**, passed to
+  `fit` / `predict_dist` alongside `X`/`y` (construction is hyperparameters
+  only). The `TailSpecialist` / `CDFBoostBracket` combiners take `brackets_by_id`
+  at construction. All require an explicit `ids=` kwarg at fit; a `Pipeline` /
+  `WalkForward` forwards `ids` and the call-time grids for you.
 
   For the "fit any sklearn classifier or regressor on brackets" path, reach for
   `BracketExpander` (in `bracketlearn.transformers`). It owns the per-row to
@@ -466,16 +470,26 @@ in the [Quickstart](#quickstart-the-three-steps-end-to-end), score a single
 
 ### Accuracy is not value
 
-The metrics above ask "are my prices **calibrated**?" — close to the realized
+The metrics above ask "are my prices **calibrated**?": close to the realized
 outcome. A trader asks a second question: "are my prices more **valuable** than
 the one already quoted?" That is graded against a *reference price* `m` (a market
-quote or baseline), not against truth — and a more accurate price is not always
-a more valuable one. `score.edge_alignment(q, m, r)` measures value (the
+quote or baseline), not against truth. A more accurate price can be worth less.
+`score.edge_alignment(q, m, r)` measures value (the
 expected betting payoff `(q−m)(r−m)`), and `score.value_report` splits a change
 in value into "how much mispricing was available" vs "how much your forecast
 failed to capture." This is still scoring, not a trade decision; the
 [value-vs-accuracy guide](docs/guides/value_vs_accuracy.md) derives
 the principle and shows a benign case where the two metrics disagree.
+
+You can also **train for value** directly. `bracketlearn.value` holds two
+bracket trainers, `BlendedBracketGBM` (LightGBM) and `BlendedBracketNet`
+(torch), that optimize `L = CE − λ·EA`: calibration tilted toward capturing the
+reference's mispricing. They take the reference price `m` at fit time (the one
+thing that separates them from the core forecasters, hence their own module),
+and you select the tilt `λ` by *costed* value, since fee-free EA over-tilts;
+see the [value-with-fees](docs/guides/value_with_fees.md) and
+[value-trainers](docs/guides/value_trainers.md) guides. Still a price, not a
+position: the trade layer remains yours.
 
 ## Operating the pipeline
 
@@ -583,11 +597,13 @@ You write the trading layer.
 
 ## Status
 
-Version 0.6.0, pre-PyPI. The pieces this README documents are built and covered
+Version 0.8.0, pre-PyPI. The pieces this README documents are built and covered
 by the test suite: the composition API (`Pipeline`, `Stacker`, `WalkForward`),
-the trainer families, the five contract adapters, and the distribution- and
-contract-level scoring. [CHANGELOG.md](CHANGELOG.md) records the version history
-and the migration recipes for past API changes.
+the trainer families, the five contract adapters, the distribution- and
+contract-level scoring, and the `bracketlearn.value` layer (reference-relative
+value metrics + the `BlendedBracketGBM` / `BlendedBracketNet` value trainers).
+[CHANGELOG.md](CHANGELOG.md) records the version history and the migration
+recipes for past API changes.
 
 ## License
 

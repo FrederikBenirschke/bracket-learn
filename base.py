@@ -68,12 +68,20 @@ def _auto_fill_ids_ts(method):
         except (AttributeError, IndexError):
             return method(self, X, *args, **kwargs)
         if takes_ids and "ids" not in kwargs:
+            if getattr(self, "_requires_explicit_ids", False):
+                raise TypeError(
+                    f"{type(self).__name__}.{method.__name__}() requires an explicit "
+                    f"ids= argument: its per-row grids are keyed by id, so an "
+                    f"auto-filled ids=arange(N) would silently misalign each row with "
+                    f"the wrong bracket grid / reference. Pass ids= matching the keys "
+                    f"of brackets_by_id."
+                )
             kwargs["ids"] = np.arange(N)
         if takes_ts and "timestamps" not in kwargs:
             kwargs["timestamps"] = np.arange(N, dtype=float)
         return method(self, X, *args, **kwargs)
 
-    wrapper.__wrapped__ = method  # type: ignore[attr-defined]
+    wrapper.__wrapped__ = method
     return wrapper
 
 
@@ -101,7 +109,18 @@ class BaseEstimator(_SklearnBaseEstimator):
     - ``n_features_in_`` / ``feature_names_in_`` set on ``fit`` via the
       ``_record_input_signature`` helper (subclasses may opt in by
       calling it from their ``fit``).
+
+    Subclasses whose ``fit`` / ``predict`` key per-row state by ``ids`` (the
+    bracket-native trainers that hold a ``brackets_by_id`` dict) should set the
+    class attribute ``_requires_explicit_ids = True``. The auto-fill then
+    *refuses* to fabricate ``ids = arange(N)`` for them and raises instead — a
+    fabricated id would silently misalign each row with the wrong grid.
     """
+
+    #: When True, a missing ``ids=`` raises instead of being auto-filled with
+    #: ``arange(N)`` (which would misalign id-keyed per-row grids). Opt in on
+    #: trainers that look state up by id (see BlendedBracket*, CumulativeBinary).
+    _requires_explicit_ids: bool = False
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -141,11 +160,11 @@ class BaseEstimator(_SklearnBaseEstimator):
         except ImportError:  # pragma: no cover
             return
         if hasattr(X, "shape") and len(X.shape) >= 2:
-            self.n_features_in_ = int(X.shape[1])  # type: ignore[attr-defined]
+            self.n_features_in_ = int(X.shape[1])
         if hasattr(X, "columns"):
             import contextlib
             with contextlib.suppress(TypeError, ValueError):
-                self.feature_names_in_ = np.asarray(X.columns, dtype=object)  # type: ignore[attr-defined]
+                self.feature_names_in_ = np.asarray(X.columns, dtype=object)
 
     @classmethod
     def _get_param_names(cls) -> list[str]:

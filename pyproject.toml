@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Forecasting + bracket-contract pricing framework, sklearn-style."
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     { name = "Frederik Benirschke" },
 ]
@@ -26,7 +26,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering",
@@ -75,7 +74,13 @@ Issues = "https://github.com/FrederikBenirschke/bracketlearn/issues"
 # explicitly to "." so setuptools picks up adapters.py / forecast.py / ...
 # as bracketlearn.adapters / bracketlearn.forecast / ... .
 [tool.setuptools]
-packages = ["bracketlearn", "bracketlearn.forecast", "bracketlearn.trainers"]
+packages = [
+    "bracketlearn",
+    "bracketlearn.forecast",
+    "bracketlearn.trainers",
+    "bracketlearn.value",
+    "bracketlearn.examples",
+]
 license-files = ["LICENSE"]
 
 [tool.setuptools.package-dir]
@@ -83,6 +88,9 @@ bracketlearn = "."
 
 [tool.setuptools.package-data]
 bracketlearn = ["py.typed"]
+# Ship the bundled anonymized sample so the value example runs from a wheel
+# (value_trainers_demo / value_vs_accuracy_weather load it via __file__).
+"bracketlearn.examples" = ["data/*.parquet"]
 
 # Single-source the version from bracketlearn/__init__.py::__version__ so the
 # wheel can never disagree with the runtime value (the 0.5.0/0.6.0 drift bug).
@@ -108,7 +116,7 @@ filterwarnings = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 extend-exclude = [
     "notebooks/*.ipynb",       # jupyter notebooks are not linted as .py
 ]
@@ -129,7 +137,25 @@ ignore = [
 "tests/*" = ["E702"]                   # compact one-liners in tests are intentional
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 strict_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
+# The type gate covers the library only. Examples / notebooks / tests carry
+# intentional type games (sklearn datasets, pandas, jupytext cells) that are
+# not part of the published, typed surface.
+files = [
+    "adapters.py", "base.py", "baselines.py", "compose.py", "lift.py",
+    "multitarget.py", "persistence.py", "pipeline.py", "protocols.py",
+    "restrict.py", "score.py", "search.py", "transform.py", "transformers.py",
+    "forecast", "trainers", "value",
+]
+
+# Third-party packages that ship no type stubs / py.typed marker. Without this
+# every `import sklearn` etc. is an `import-untyped` error unrelated to our code.
+[[tool.mypy.overrides]]
+module = [
+    "sklearn.*", "scipy.*", "lightgbm.*", "ngboost.*", "quantile_forest.*",
+    "torch.*", "pandas.*", "polars.*", "matplotlib.*", "openml.*",
+]
+ignore_missing_imports = true

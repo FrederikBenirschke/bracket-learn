@@ -366,6 +366,11 @@ def _check_qmr(q: np.ndarray, m: np.ndarray, r: np.ndarray) -> tuple[np.ndarray,
         )
     if q.size == 0:
         raise ValueError("empty input to reference-relative value metric")
+    if not (np.all(np.isfinite(q)) and np.all(np.isfinite(m)) and np.all(np.isfinite(r))):
+        raise ValueError(
+            "q, m, r must be finite (no NaN/inf); a NaN reference price or "
+            "padded ragged tail would silently produce a NaN score"
+        )
     return q, m, r
 
 
@@ -385,6 +390,55 @@ def edge_alignment(q: np.ndarray, m: np.ndarray, r: np.ndarray) -> float:
     """
     q, m, r = _check_qmr(q, m, r)
     return float(np.mean((q - m) * (r - m)))
+
+
+def edge_alignment_costed(
+    q: np.ndarray,
+    m: np.ndarray,
+    r: np.ndarray,
+    *,
+    fee: float,
+    tau: float | None = None,
+) -> dict[str, float]:
+    """Fee-aware value: realized PnL of a **unit-bet** strategy that trades a
+    contract only when ``|q − m| > tau`` and pays ``fee`` per contract traded.
+
+    Per contract: ``sign(q − m)·(r − m) − fee`` if ``|q − m| > tau`` else ``0``.
+    ``tau`` defaults to ``fee`` (trade only when your edge clears the cost).
+
+    This is the metric to select/train on when fees are non-trivial — and it
+    behaves very differently from :func:`edge_alignment`. EA is frictionless and
+    **linear in the edge**, so it rewards edge *magnitude* without bound (it
+    always prefers a more extreme, more confident forecast). With a fee the
+    *magnitude* of your stated edge stops mattering for a unit bet — only its
+    **sign** and whether it clears the gate do — so over-confidence can only
+    hurt: it flips signs on noisy near-fair contracts and pays ``fee`` on
+    sub-fee "junk" trades. The best achievable value is ``E[(|δ| − fee)₊]`` with
+    ``δ = E[r − m | x]``: a *deductible* on the true mispricing. Fees convert the
+    objective from an inner product into a hinge — see
+    ``docs/guides/value_with_fees.md``.
+
+    Returns a dict: ``mean_pnl`` (per contract, the headline number),
+    ``total_pnl``, ``per_trade`` (mean PnL over traded contracts), and
+    ``trade_frac``.
+    """
+    q, m, r = _check_qmr(q, m, r)
+    if fee < 0:
+        raise ValueError(f"fee must be non-negative; got {fee}")
+    if tau is None:
+        tau = fee
+    if tau < 0:
+        raise ValueError(f"tau must be non-negative; got {tau}")
+    edge = q - m
+    side = np.where(edge > tau, 1.0, np.where(edge < -tau, -1.0, 0.0))
+    pnl = side * (r - m) - np.abs(side) * fee
+    n_trade = int((side != 0).sum())
+    return {
+        "mean_pnl": float(pnl.mean()),
+        "total_pnl": float(pnl.sum()),
+        "per_trade": float(pnl[side != 0].mean()) if n_trade else 0.0,
+        "trade_frac": float(n_trade / q.size),
+    }
 
 
 def edge_alignment_corr(q: np.ndarray, m: np.ndarray, r: np.ndarray) -> float:
@@ -508,3 +562,102 @@ def value_report_bracket(
     :func:`value_report`."""
     q, m, r = _qmr_from_bracket(contracts, reference, edges, y)
     return value_report(q, m, r)
+
+
+def _qmr_from_dist(
+    dist: DistributionForecast,
+    reference_by_id: dict,
+    y: np.ndarray | dict,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Flatten a bracket-backed ``DistributionForecast`` (a value trainer's
+    ``predict_dist`` output — ragged, NaN-padded), a per-id reference-price dict,
+    and realized ``y`` into flat ``(q, m, r)`` over every (row, bracket) binary.
+
+    Each row's model probabilities are renormalized over that row's **valid**
+    (finite) brackets — the edge you would actually trade. ``reference_by_id`` is
+    keyed by the dist's ids and must match each row's bracket count. ``y`` may be
+    an array aligned to the dist's row order, or a dict keyed by id.
+    """
+    if not isinstance(dist, BracketForecast):
+        raise TypeError(
+            "value report needs a bracket-backed DistributionForecast "
+            "(a BracketForecast with .probs / .edges), e.g. a value trainer's "
+            f"predict_dist output; got {type(dist).__name__}"
+        )
+    ids = np.asarray(dist.ids)
+    probs = np.asarray(dist.probs, dtype=np.float64)
+    edges = np.asarray(dist.edges, dtype=np.float64)
+    N = ids.shape[0]
+    if isinstance(y, dict):
+        missing = [i for i in ids if i not in y]
+        if missing:
+            raise KeyError(f"y missing {len(missing)} id(s); first: {missing[:3]}")
+        y_arr = np.array([float(y[i]) for i in ids], dtype=float)
+    else:
+        y_arr = np.asarray(y, dtype=float)
+        if y_arr.shape[0] != N:
+            raise ValueError(f"y has length {y_arr.shape[0]} but dist has {N} rows")
+    q_parts, m_parts, r_parts = [], [], []
+    for i in range(N):
+        B_i = int(np.isfinite(probs[i]).sum())
+        if B_i < 1:
+            raise ValueError(f"row {i} (id {ids[i]!r}) has no finite probabilities")
+        q_i = probs[i, :B_i]
+        s = float(q_i.sum())
+        if s <= 0:
+            raise ValueError(f"row {i} (id {ids[i]!r}) probabilities sum to {s}")
+        q_i = q_i / s
+        rid = ids[i]
+        if rid not in reference_by_id:
+            raise KeyError(f"reference_by_id missing id {rid!r}")
+        m_i = np.asarray(reference_by_id[rid], dtype=float)
+        if m_i.shape[0] != B_i:
+            raise ValueError(
+                f"reference_by_id[{rid!r}] has {m_i.shape[0]} prices but row has "
+                f"{B_i} brackets"
+            )
+        row_edges = edges[i, : B_i + 1]
+        oh = np.zeros(B_i, dtype=float)
+        k = int(np.clip(np.searchsorted(row_edges, y_arr[i], side="right") - 1, 0, B_i - 1))
+        oh[k] = 1.0
+        q_parts.append(q_i)
+        m_parts.append(m_i)
+        r_parts.append(oh)
+    return np.concatenate(q_parts), np.concatenate(m_parts), np.concatenate(r_parts)
+
+
+def edge_alignment_dist(
+    dist: DistributionForecast,
+    reference_by_id: dict,
+    y: np.ndarray | dict,
+) -> float:
+    """Edge-Alignment of a fitted bracket model's ``predict_dist`` output vs a
+    per-id reference — :func:`edge_alignment` with the ragged flatten done for
+    you. See :func:`value_report_dist` for the full diagnostic."""
+    q, m, r = _qmr_from_dist(dist, reference_by_id, y)
+    return edge_alignment(q, m, r)
+
+
+def value_report_dist(
+    dist: DistributionForecast,
+    reference_by_id: dict,
+    y: np.ndarray | dict,
+    *,
+    fee: float | None = None,
+    tau: float | None = None,
+) -> dict[str, float]:
+    """One-call value report for a fitted bracket model's ``predict_dist`` output.
+
+    Pass the distribution, the **same** ``reference_by_id`` you trained with, and
+    realized ``y`` (array in row order or dict by id) — this does the per-row
+    ragged flatten + renormalization and returns :func:`value_report`. When
+    ``fee`` is given, the costed metrics (:func:`edge_alignment_costed`) are
+    merged in under ``costed_*`` keys, so ``λ`` selection by costed value is a
+    single call.
+    """
+    q, m, r = _qmr_from_dist(dist, reference_by_id, y)
+    rep = value_report(q, m, r)
+    if fee is not None:
+        costed = edge_alignment_costed(q, m, r, fee=fee, tau=tau)
+        rep.update({f"costed_{k}": v for k, v in costed.items()})
+    return rep

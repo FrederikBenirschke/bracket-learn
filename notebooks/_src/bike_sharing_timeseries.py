@@ -375,7 +375,8 @@ def _score_one(stage_name, forecaster):
     m = forecaster if isinstance(forecaster, Pipeline) else Pipeline([forecaster], name=stage_name)
     r = WalkForward(
         cv="expanding-window", n_folds=5, embargo=24, refit_on_full=False,
-    ).fit_predict(m, X, y, ids=ids, timestamps=ts)
+    ).fit_predict(m, X, y, ids=ids, timestamps=ts,
+                  cutpoints_by_id=_cut_by_id, outer_edges_by_id=_outer_by_id)
     return r.score(y, metrics=["crps"])[m.name]["crps"]
 
 
@@ -398,10 +399,7 @@ lb = {
                                     verbose=-1, random_state=0)),
          GlobalResidual()], name="lgbm",
     )),
-    "CumBinary":      _score_one("cum", CumulativeBinary(
-        cutpoints_by_id=_cut_by_id, outer_edges_by_id=_outer_by_id,
-        n_estimators=120,
-    )),
+    "CumBinary":      _score_one("cum", CumulativeBinary(n_estimators=120)),
 }
 
 rows = sorted(lb.items(), key=lambda kv: kv[1])

@@ -234,7 +234,7 @@ class EMOS(BaseEstimator):
         ids: np.ndarray,
         timestamps: np.ndarray,
     ) -> DistributionForecast:
-        if self.a_ is None:
+        if self.a_ is None or self.b_ is None or self.c_ is None or self.d_ is None:
             raise RuntimeError("EMOS.predict_dist called before fit")
         ens_mean, ens_var, ens_std = self._row_aggregates(X)
         mu = self.a_ + self.b_ * ens_mean
@@ -671,7 +671,8 @@ class BayesianRidge(BaseEstimator):
         ids: np.ndarray,
         timestamps: np.ndarray,
     ) -> DistributionForecast:
-        if self.m_n_ is None:
+        if (self.m_n_ is None or self.V_n_ is None or self.a_n_ is None
+                or self.b_n_ is None):
             raise RuntimeError("BayesianRidge.predict_dist called before fit")
         A = self._design(X, fit_phase=False)
         mu = A @ self.m_n_
@@ -956,7 +957,9 @@ class HierarchicalNormal(BaseEstimator):
         timestamps: np.ndarray,
         groups: np.ndarray | None = None,
     ) -> DistributionForecast:
-        if self.sigma2_ is None:
+        if (self.sigma2_ is None or self.tau2_ is None or self.beta_0_ is None
+                or self.V_beta_0_ is None or self.site_m_ is None
+                or self.site_V_ is None):
             raise RuntimeError("HierarchicalNormal.predict_dist called before fit")
         if groups is None:
             raise ValueError(
@@ -979,8 +982,9 @@ class HierarchicalNormal(BaseEstimator):
         mu = np.empty(N)
         var = np.empty(N)
         psi, phi = self.sigma2_, self.tau2_
-        # Unseen-site predictive: β_new ~ N(β̂_0, V_β0 + φ I).
-        I_K = np.eye(A.shape[1]) if unseen else None
+        # Unseen-site predictive: β_new ~ N(β̂_0, V_β0 + φ I). Cheap to always
+        # build; only consumed on the unseen-site branch below.
+        I_K = np.eye(A.shape[1])
         for i in range(N):
             s = groups[i]
             x = A[i]
@@ -1187,7 +1191,7 @@ class MixtureNormals(BaseEstimator):
         ids: np.ndarray,
         timestamps: np.ndarray,
     ) -> DistributionForecast:
-        if self.sigma_v_ is None:
+        if self.sigma_v_ is None or self.K_ is None:
             raise RuntimeError("MixtureNormals.predict_dist called before fit")
         X = np.asarray(X, dtype=float)
         if X.shape[1] != self.K_:
@@ -1199,7 +1203,7 @@ class MixtureNormals(BaseEstimator):
         # for this row AND (b) σ_v was estimable on the train slice.
         vendor_trained = (
             self.vendor_trained_ if self.vendor_trained_ is not None
-            else np.ones(self.K_, dtype=bool)
+            else np.ones(self.K_, dtype=np.bool_)
         )
         present = np.isfinite(X) & vendor_trained[None, :]
         n_present = present.sum(axis=1)

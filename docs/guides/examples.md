@@ -1,8 +1,8 @@
 # Examples
 
-bracketlearn ships five runnable examples in [`bracketlearn/examples/`](https://github.com/FrederikBenirschke/bracketlearn/tree/main/bracketlearn/examples).
+bracketlearn ships seven runnable examples in [`bracketlearn/examples/`](https://github.com/FrederikBenirschke/bracketlearn/tree/main/bracketlearn/examples).
 Three use **public sklearn / OpenML datasets** so they run anywhere with
-no extra credentials.
+no extra credentials; two bundle an anonymized real-data sample.
 
 ## Public-dataset examples (recommended starting point)
 
@@ -74,3 +74,40 @@ All 11 dist-producing trainers on synthetic weather-like data:
 
 `RNNHourly` (GRU over a `(N, 24, C)` hourly tensor + station embedding)
 lifted to a parametric normal via `GlobalResidual`.
+
+## Real-data example: accuracy vs value
+
+### `value_vs_accuracy_weather.py`
+
+Fits EMOS on an **anonymized real weather sample** bundled at
+`examples/data/weather_value_sample.parquet` (ensemble mean/spread, realized
+temps, per-row bracket grids, normalized reference prices; no venue, station,
+or date), prices it onto each row's grid, and scores it against the reference
+price two ways: Brier (accuracy) and `score.edge_alignment` (value).
+
+```bash
+python -m bracketlearn.examples.value_vs_accuracy_weather
+```
+
+Shows the headline of the [value-vs-accuracy guide](value_vs_accuracy.md) on
+real data: EMOS is *less accurate* than the market yet has positive
+Edge-Alignment (it is tradeable), and calibrating it harder (a mean de-bias,
+an edge-recalibration) *reduces* its value. The one example here that scores
+forecasts the way a trader cares about.
+
+### `value_trainers_demo.py`
+
+Trains *for* value with the `bracketlearn.value` trainers and scores the result.
+On the same bundled sample it fits `BlendedBracketGBM` (LightGBM) and
+`BlendedBracketNet` (torch) on `L = CE − λ·EA` across several tilts `λ`, then
+scores each with `edge_alignment` (value) and `edge_alignment_costed` (value net
+of fee).
+
+```bash
+python -m bracketlearn.examples.value_trainers_demo
+```
+
+Shows: the trainer `fit` / `predict_dist` contract, building `brackets_by_id` and
+`reference_by_id`, scoring the implied edge, and the selection rule (pick `λ` by
+*costed* value, not EA). (EA rising with `λ` shows up cleanly here; the full
+"costed peaks interior" curve is in `tests/test_value_trainers.py`.)

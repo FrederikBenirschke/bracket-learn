@@ -197,11 +197,11 @@ def _fit_with_optional_weight(
     """
     import inspect
 
+    params: dict[str, inspect.Parameter] = {}
     try:
-        sig = inspect.signature(forecaster.fit)
-        params = sig.parameters
+        params = dict(inspect.signature(forecaster.fit).parameters)
     except (TypeError, ValueError):
-        params = {}
+        pass
     accepts_var_kw = any(
         p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
     )
@@ -233,11 +233,11 @@ def _predict_with_extras(
     """
     import inspect
 
+    params: dict[str, inspect.Parameter] = {}
     try:
-        sig = inspect.signature(forecaster.predict_dist)
-        params = sig.parameters
+        params = dict(inspect.signature(forecaster.predict_dist).parameters)
     except (TypeError, ValueError):
-        params = {}
+        pass
     accepts_var_kw = any(
         p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
     )
@@ -451,7 +451,7 @@ class Pipeline:
             c = max(2, int(n * self.calibration_fraction))
             if n - c >= 2:
                 cal_dist = self._core_predict_dist(
-                    Xz[-c:], ids_arr[-c:], ts[-c:],
+                    Xz[-c:], ids_arr[-c:], ts[-c:], **kwargs,
                 )
                 self._calibrator.fit(cal_dist, yz[-c:])
             else:
@@ -460,13 +460,15 @@ class Pipeline:
 
     # ---- predict ----
 
-    def _core_predict_dist(self, Xz, ids, ts, upstream=None, groups=None):
+    def _core_predict_dist(self, Xz, ids, ts, upstream=None, groups=None, **kwargs):
         """The core forecaster's dist in the model's working (z) space —
-        before calibration and before the transformers' inverse."""
+        before calibration and before the transformers' inverse. ``kwargs`` are
+        id-keyed side inputs (e.g. ``cutpoints_by_id`` / ``brackets_by_id``)
+        forwarded verbatim; signature-filtered for the core forecaster."""
         if self._point is not None:
             pt = self._point.predict(Xz, ids=ids, timestamps=ts)
             return self._lifter.lift(pt)
-        extras: dict[str, Any] = {}
+        extras: dict[str, Any] = {**kwargs}
         if upstream is not None:
             extras["upstream"] = upstream
         if groups is not None:
@@ -474,13 +476,13 @@ class Pipeline:
         return _predict_with_extras(self._model, Xz, ids, ts, **extras)
 
     def predict_dist(self, X, *, ids, timestamps, center=None,
-                     upstream=None, groups=None):
+                     upstream=None, groups=None, **kwargs):
         Xz = np.asarray(X, dtype=float)
         ids_arr = np.asarray(ids)
         ts = np.asarray(timestamps)
         for t in self._transformers:
             Xz = t.transform(Xz, ids=ids_arr, center=center)   # stamps test (c, s)
-        dist = self._core_predict_dist(Xz, ids_arr, ts, upstream, groups)
+        dist = self._core_predict_dist(Xz, ids_arr, ts, upstream, groups, **kwargs)
         if self._calibrator is not None and getattr(self._calibrator, "fitted_", True):
             dist = self._calibrator.transform(dist)
         for t in reversed(self._transformers):

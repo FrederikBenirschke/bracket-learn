@@ -6,6 +6,90 @@ minor release; patch releases are bug-fixes and additive tests.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-06-14
+
+### Removed
+- **Dropped Python 3.10.** Minimum is now **3.11** (`requires-python >=3.11`,
+  classifiers + CI matrix updated). The library imports `typing.Self` at runtime
+  in ~10 modules, which never existed on 3.10 — 3.10 support was nominal only.
+
+### Added
+- **Type-checking gate.** The library is now **mypy-clean** (`strict_optional`)
+  and `mypy` runs in CI. `[tool.mypy]` scopes the gate to the published library
+  surface (`files = …`) and silences `import-untyped` for stub-less third-party
+  deps (sklearn/scipy/lightgbm/…). The "type checked: mypy" badge is now enforced,
+  not aspirational. Fixes were narrowing-only (guards on fitted-state `Optional`
+  attributes, accurate return annotations) — no behavioral change.
+- **`value_report_dist` / `edge_alignment_dist`** (in `score`, re-exported from
+  `bracketlearn.value`) — one-call value scoring of a value trainer's
+  `predict_dist` output: pass the distribution, the `reference_by_id` you trained
+  with, and realized `y` (array in row order **or** dict by id). Handles the
+  per-row **ragged** (NaN-padded, varying bracket count) flatten + renormalization
+  internally; `fee=` merges costed metrics under `costed_*` keys.
+
+### Changed
+- **Breaking — bracket-native trainer construction is hyperparameters only.**
+  `BlendedBracketGBM` / `BlendedBracketNet` no longer take `brackets_by_id` /
+  `reference_by_id` at construction, and `CumulativeBinary` no longer takes
+  `cutpoints_by_id` / `outer_edges_by_id`. The per-row grids are passed at call
+  time instead:
+  - `BlendedBracket*`: `fit(X, y, *, ids, brackets_by_id, reference_by_id)`,
+    `predict_dist(X, *, ids, timestamps, brackets_by_id)`.
+  - `CumulativeBinary`: `fit(X, y, *, ids, cutpoints_by_id, outer_edges_by_id)`,
+    `predict_dist(X, *, ids, timestamps, cutpoints_by_id, outer_edges_by_id)`.
+
+  This puts the grids next to `X`/`y` (they are data, not config), makes
+  construction sklearn-like, and drops the big dicts out of
+  `get_params`/`clone`/`repr`. Grid validation moves from `__post_init__` to the
+  top of `fit`/`predict`. Migration: move the dicts from the constructor call to
+  the `fit`/`predict_dist`/`WalkForward.fit_predict` call.
+- **`Pipeline.predict_dist` forwards `**kwargs`.** A Pipeline-wrapped bracket
+  trainer now receives its id-keyed grids at predict (matching `Pipeline.fit`,
+  which already forwarded them) — required for `CumulativeBinary` /
+  `BlendedBracket*` to run under `WalkForward` inside a `Pipeline`.
+- **`WalkForward.fit_predict` / `predict` forward id-keyed `**row_meta`.**
+  Extra keyword dicts (e.g. `brackets_by_id` / `reference_by_id`) are passed
+  **verbatim** (not index-sliced like `sample_weight` / `groups`) to every
+  node's `fit` / `predict_dist`; each trainer subsets them by the `ids` it
+  receives, and signature-filtering drops them for nodes that don't declare
+  them. This is what lets the value trainers run under CV with hyperparam-only
+  construction.
+- **Bracket-native trainers refuse the `ids` auto-fill.** `BlendedBracketGBM`,
+  `BlendedBracketNet`, and `CumulativeBinary` now raise if `fit` / `predict` is
+  called without `ids=` (instead of fabricating `ids = arange(N)`), since a
+  fabricated id would silently pair each row with the wrong per-row grid /
+  reference. Opt-in via the new `BaseEstimator._requires_explicit_ids` flag;
+  `timestamps` auto-fill is unchanged.
+- **`BlendedBracketNet.ea_scale` is data-derived.** `lam` is comparable across
+  the two engines: the net rescales its EA term by `1 / mean(m(1−m))`
+  (`value.ea_scale_for_reference`, exposed), derived from the fit-set reference
+  prices instead of the old magic `ea_scale=10.0`. The Newton step in LightGBM
+  cancels the `q(1−q)` curvature the torch SGD path keeps; this scale restores
+  parity at initialization. Pass `ea_scale=` to override; the resolved value is
+  recorded on `model.ea_scale_`.
+
+> **Note:** the bracket-emitting *combiners* `TailSpecialist` / `CDFBoostBracket`
+> still take `brackets_by_id` at construction; only the leaf bracket trainers
+> (`CumulativeBinary`, `BlendedBracket*`) were reshaped to call-time grids.
+
+### Docs / polish
+- Value trainers now appear in the README "Estimator families" table (a new
+  reference-relative **Value** family), so they are discoverable in the canonical
+  trainer list.
+- `BlendedBracket*` reprs no longer dump the full `brackets_by_id` /
+  `reference_by_id` dicts (`field(repr=False)`).
+- `_HESS_FLOOR` named constant replaces the repeated `1e-6` Newton-Hessian floor
+  literal in `value.objective`.
+- Value-trainers guide documents "trained edge ≠ traded edge" (the EA loss tilts
+  the raw per-binary `q`, but `predict_dist` renormalizes per row — score value
+  on the renormalized output).
+- Corrected the `value.objective` Hessian docstring: the EA term's curvature is
+  *indefinite* (sign flips with `(r−m)` and `(1−2q)`) and is intentionally
+  dropped to keep a positive-definite Newton metric — not "≈ no curvature".
+
+
+## [0.7.0] — 2026-06-14
+
 **Breaking — composition API unified.** The two old composition syntaxes
 (inside-out `LiftedForecaster`/`CalibratedForecaster` wrappers for chains;
 a name-keyed `ForecastPipeline(steps=[(name, fc)], cv=…)` for CV + stacking)
@@ -75,6 +159,28 @@ the model and driver separately, with `refit_node=` (was `refit_stage=`) and
   quoted one (vs `brier_bracket`, which grades calibration); a more accurate
   price is not always a more valuable one. New guide
   `docs/guides/value_vs_accuracy.md`; tests in `tests/test_value_metrics.py`.
+- **Example `examples/value_vs_accuracy_weather.py`** with a small bundled
+  anonymized real-weather sample (`examples/data/weather_value_sample.parquet`):
+  fits EMOS, prices onto per-row bracket grids, and shows on real data that a
+  forecast can be *less accurate* than the market yet positive-EA (tradeable),
+  and that calibrating it harder reduces value.
+- **Fee-aware value metric `score.edge_alignment_costed`** (unit-bet PnL net of
+  a per-trade fee + trade gate) and a guide `docs/guides/value_with_fees.md`.
+  Frictionless EA is linear in the edge (rewards over-confidence without bound);
+  a fee turns the objective into a deductible `E[(|δ| − fee)₊]` with an interior
+  optimum — so training for value must select its tilt by costed value, not by
+  EA. Tests in `tests/test_value_metrics.py`.
+- **`bracketlearn.value` module — training for value.** `BlendedBracketGBM`
+  (LightGBM custom objective) and `BlendedBracketNet` (torch) train bracket
+  models on `L = CE − λ·EA`: calibration tilted toward capturing a reference
+  price's mispricing. Bracket-native (per-row `brackets_by_id` +
+  `reference_by_id`), `fit(X, y, *, ids)` → `predict_dist`. The module also holds
+  the shared objective (`make_lgb_objective`, `blended_grad_hess`,
+  `blended_loss`) and re-exports the value metrics for one namespace. New guide
+  `docs/guides/value_trainers.md`, API page `docs/api/value.rst`, runnable
+  example `examples/value_trainers_demo.py`, tests in
+  `tests/test_value_trainers.py`. The reference price is needed only at fit
+  (in the loss); `predict_dist` needs no market data.
 
 ### Removed
 - `bracketlearn.pipeline.ForecastPipeline`, `LiftedForecaster`,

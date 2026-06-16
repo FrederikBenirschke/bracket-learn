@@ -1,20 +1,20 @@
 # Accuracy vs value: scoring a price against a reference
 
-The proper-scoring rules in the [scoring guide](scoring.md) — CRPS, log-score,
-Brier, log-loss — all answer one question: **is my price close to the
-outcome?** That is *accuracy*. A trader on a prediction market has a second,
-distinct question: **is my price more valuable than the one already quoted?**
-That is *value*, and it is graded not against the truth but against a
-**reference price** `m` — a market quote, a consensus, or any baseline forecast.
+The proper-scoring rules in the [scoring guide](scoring.md) (CRPS, log-score,
+Brier, log-loss) all answer one question: **is my price close to the
+outcome?** That is *accuracy*. A trader on a prediction market asks a second
+question: **is my price more valuable than the one already quoted?** That is
+*value*. Value grades your price against a **reference price** `m` (a market
+quote, a consensus, any baseline forecast) instead of against the truth.
 
-The two questions have different answers. **A more accurate forecast is not
-always a more valuable one.** This guide derives why from first principles, and
-the [`score`](../api/score.md) module ships the metrics that measure it:
-`edge_alignment`, `value_report`, and their bracket-ladder wrappers.
+The two questions have different answers. **A more accurate forecast can be
+worth less to trade.** The [`score`](../api/score) module ships the metrics that
+measure value: `edge_alignment`, `value_report`, and their bracket-ladder
+wrappers.
 
 > This sits one step before the [trade-decision layer that bracketlearn leaves
-> to you](../index.md). Value is still *scoring* — it grades prices, it does not
-> size positions. But unlike calibration, it grades them the way a trader cares
+> to you](../index.md). Value is still *scoring*: it grades prices, it does not
+> size positions. Unlike calibration, it grades them the way a trader cares
 > about.
 
 ## 1. The PnL of a price
@@ -31,7 +31,7 @@ profit on one contract is
 E[PnL] = (q − m)(π − m)
 ```
 
-Read it literally: **the profit is the reference's mispricing `(π − m)`. Your
+Read the formula: **the profit is the reference's mispricing `(π − m)`. Your
 price only sets the direction and size of the bet.** If the reference is already
 correct (`m = π`), no price `q` earns anything. Summed over many contracts, total
 PnL is an inner product:
@@ -40,9 +40,9 @@ PnL is an inner product:
 PnL ≈ ⟨ q − m , π − m ⟩
 ```
 
-## 2. The decomposition that explains everything
+## 2. Decomposing the PnL
 
-Let `δ = π − m` (the reference's mispricing — what you want to capture) and
+Let `δ = π − m` (the reference's mispricing, what you want to capture) and
 `ε = π − q` (your error vs the truth). Substituting `q − m = δ − ε`:
 
 ```
@@ -58,26 +58,25 @@ Three consequences:
    zero for *any* forecast. You cannot out-predict a correct price.
 2. **Most error is free.** You only lose the part of your error that *aligns
    with the mispricing*. Error where the reference is already right (`δ ≈ 0`)
-   costs nothing — nobody trades there.
+   costs nothing. Nobody trades there.
 3. **The shared-bias trap.** If your error tracks the reference's, `ε → δ`, then
-   `q = π − ε → π − δ = m`: your price collapses onto the reference exactly where
+   `q = π − ε → π − δ = m`: your price collapses onto the reference where
    it is most wrong. A more accurate forecast that shares the reference's blind
    spots is worthless for trading.
 
-> **The price that makes money is not the most accurate one — it is the one
-> whose errors are orthogonal to the reference's mispricing: accurate
-> specifically where the reference is wrong, free to be sloppy where it is
-> right.** This is the Grossman–Stiglitz point in microcosm (§6): a price
+> **The price that makes money holds errors orthogonal to the reference's
+> mispricing: accurate where the reference is wrong, free to be sloppy where it
+> is right.** This is the Grossman–Stiglitz point in microcosm (§7): a price
 > aggregates common information, so the only exploitable signal is information
 > *orthogonal* to it.
 
-## 3. Why calibration ≠ value
+## 3. Calibration ≠ value
 
-Calibration, log-loss, CRPS all minimize `‖ε‖` — closeness of `q` to truth,
-uniformly over every direction. Value minimizes `⟨ε, δ⟩` — your error *projected
-onto the reference's mispricing*. These coincide only if your residual error
-happens to avoid the `δ` direction. Calibrating in a direction the reference
-*shares* (or that is orthogonal to `δ`) is wasted effort for trading.
+Calibration, log-loss, CRPS all minimize `‖ε‖`: the closeness of `q` to truth
+over every direction. Value minimizes `⟨ε, δ⟩`: your error *projected onto the
+reference's mispricing*. These coincide only if your residual error happens to
+avoid the `δ` direction. Calibrating in a direction the reference *shares* (or
+that is orthogonal to `δ`) is wasted effort for trading.
 
 ## 4. The metric: Edge-Alignment
 
@@ -91,13 +90,20 @@ ea = edge_alignment(q, m, r)        # mean over contracts of (q - m)(r - m)
 
 `edge_alignment` is the un-thresholded, every-contract expected betting PnL. It
 scores *every* contract (not just the ones that clear a trade threshold), so it
-has far more statistical power than a thresholded, costed PnL — useful on short
-windows. It is the **value** sibling of `brier_bracket`: Brier measures `‖q − r‖`,
+has far more statistical power than a thresholded, costed PnL. That power helps
+on short windows. It is the **value** sibling of `brier_bracket`: Brier measures `‖q − r‖`,
 EA measures the alignment of `q − m` with `r − m`.
 
-### The A − B split — attribute a change in value to its cause
+> **EA is frictionless: linear in your edge, so it rewards every more
+> over-confident forecast.** That is correct for a fee-free, proportional-bet
+> world, but it means EA alone will tell you to over-tilt. With per-trade fees
+> the objective becomes a *deductible* `E[(|δ| − fee)₊]` and grows an interior
+> optimum; use `edge_alignment_costed` for the deploy decision. See
+> [value with fees](value_with_fees.md).
 
-`value_report` returns EA together with its exact additive decomposition — no
+### The A − B split: attributing a change in value to its cause
+
+`value_report` returns EA together with its exact additive decomposition, with no
 latent `π` required, by the identity `(q−m)(r−m) = (r−m)² − (r−q)(r−m)`:
 
 ```python
@@ -106,16 +112,16 @@ rep = value_report(q, m, r)
 #  'align_corr', 'shared_bias_slope', 'n_contracts'}
 ```
 
-* **`A = mean (r − m)²`** — the reference's mean-squared error. How much
+* **`A = mean (r − m)²`**: the reference's mean-squared error. How much
   mispricing is *available*. Outside your control.
-* **`B = mean (r − q)(r − m)`** — co-projection of your error onto the
+* **`B = mean (r − q)(r − m)`**: co-projection of your error onto the
   reference's. How much of the available mispricing you *fail* to capture
   because your errors coincide with the reference's.
 
 `EA = A − B`. When EA moves across models or regimes, `ΔEA = ΔA − ΔB` tells you
 *why*: `A` fell ⇒ the reference got more efficient (less to capture, not your
-fault); `B` rose ⇒ your forecast lost orthogonality (`q → m` where it is wrong —
-a model problem, and therefore fixable). This attribution is exactly what Brier
+fault); `B` rose ⇒ your forecast lost orthogonality (`q → m` where it is wrong,
+a model problem you can fix). This attribution is what Brier
 cannot give: Brier sees only `‖ε‖²`, blind to `‖δ‖²` and to the alignment.
 
 Two normalized companions come along: `align_corr = corr(q − m, r − m)` (the
@@ -158,53 +164,53 @@ print(f"q_orth:  Brier {brier(q_orth):.4f}   EA {edge_alignment(q_orth, m, r):+.
 knows, the market already priced. `q_orth` is *less* accurate but holds the
 information the market lacks, so its edge points where the market is wrong. An
 independent thresholded, costed betting strategy agrees with EA here, not with
-Brier — selecting on accuracy would have shipped the wrong forecast.
+Brier. Selecting on accuracy would have shipped the wrong forecast.
 
 ## 5b. The same thing on real data: EMOS vs a market
 
-The synthetic toy is rigged to make the point cleanly. Does it survive on real
-forecasts and real prices? [`examples/value_vs_accuracy_weather.py`](https://github.com/FrederikBenirschke/bracketlearn/blob/main/examples/value_vs_accuracy_weather.py)
-fits EMOS on a small anonymized weather sample
-(`examples/data/weather_value_sample.parquet` — ensemble mean/spread, realized
+The synthetic toy is rigged to make the point. Real forecasts and real prices
+test it. [`examples/value_vs_accuracy_weather.py`](https://github.com/FrederikBenirschke/bracketlearn/blob/main/examples/value_vs_accuracy_weather.py)
+fits EMOS on an anonymized weather sample
+(`examples/data/weather_value_sample.parquet`: ensemble mean/spread, realized
 temperatures, per-row bracket grids, and a normalized reference price per
 bracket; no venue, station, or date), prices it onto each row's grid with
 `dist.integrate`, and scores it against the reference both ways:
 
 ```
-===== HIGH  (train 360, test 240) =====
+===== HIGH  (train 901, test 602) =====
   forecast                        Brier   EA ×100
-  reference (market)             0.1107    0.0000
-  EMOS (raw)                     0.1261   +0.1568   <- less accurate than market, EA > 0
-  EMOS + mean de-bias            0.1266   +0.1383   <- value falls vs raw
-  EMOS + edge-recal              0.1138   +0.0071   <- best Brier, value collapses
+  reference (market)             0.1121    0.0000
+  EMOS (raw)                     0.1220   +0.4938   <- less accurate than market, EA > 0
+  EMOS + mean de-bias            0.1232   +0.4586   <- value falls vs raw
+  EMOS + edge-recal              0.1109   +0.1288   <- best Brier, value collapses
 ```
 
-Read the HIGH block top to bottom — it is the whole guide in four rows:
+Read the HIGH block top to bottom. It is the whole guide in four rows:
 
-* **EMOS is *less* accurate than the market** (Brier 0.126 vs 0.111). On a
-  calibration scoreboard EMOS loses outright.
-* **EMOS is nevertheless tradeable** (EA `+0.157 > 0`). Its errors are
-  decorrelated from the market's, so its edge points where the market is wrong —
-  exactly the case §2–3 says calibration cannot see.
+* **EMOS is *less* accurate than the market** (Brier 0.122 vs 0.112). On a
+  calibration scoreboard EMOS loses.
+* **EMOS is tradeable anyway** (EA `+0.494 > 0`). Its errors are decorrelated
+  from the market's, so its edge points where the market is wrong, the case
+  §2–3 says calibration cannot see.
 * **Calibrating it harder does not help.** A mean de-bias toward the truth
-  *lowers* value. And an edge-recalibration produces the **best Brier of all
-  four rows** (0.114, nearly matching the market) while its value **collapses to
-  zero** (`+0.007`) — the cleanest possible demonstration that closeness to the
-  outcome and value-vs-a-reference are different axes.
+  *lowers* value. An edge-recalibration produces the **best Brier of all
+  four rows** (0.111, matching the market) while its value **collapses** (from
+  `+0.494` to `+0.129`). Closeness to the outcome and value-vs-a-reference are
+  different axes.
 
-(The LOW side in the example lands the other way on accuracy — EMOS there is
-*more* accurate than the market *and* positive-EA — but the same two "fixes"
-still cut its value. The robust, side-independent lesson is the last bullet, not
-the sign of the accuracy gap.)
+(The LOW side lands the other way on accuracy: EMOS there is *more* accurate
+than the market *and* positive-EA, yet the same two "fixes" still cut its value.
+The robust, side-independent lesson is the last bullet, not the sign of the
+accuracy gap.)
 
 > Honest caveats. EA here is on a normalized reference price, not a tradeable
 > order book net of fees; a positive EA is necessary, not sufficient, for live
-> profit. The numbers wobble with the split (small sample); what is robust
-> across splits is the *sign* of EMOS's EA and that both calibration "fixes"
-> reduce it. The earlier σ-recalibration idea was dropped from this example
-> because it only "worked" when EMOS was misfit to a constant σ; fit properly
-> (`fit_method="crps_nelder_mead"`), EMOS is not over-dispersed here and a
-> σ-scale does nothing — a reminder to verify a fix is real before believing it.
+> profit. The exact numbers wobble with the split; what is robust across splits
+> is the *sign* of EMOS's EA and that both calibration "fixes" reduce it. An
+> earlier version tried σ-recalibration; that "worked" only when EMOS was misfit
+> to a constant σ. Fit with `fit_method="crps_nelder_mead"`, EMOS is not
+> over-dispersed here and a σ-scale does nothing. Verify a fix is real before
+> believing it.
 
 ## 6. Improving value: edge-recalibration
 
@@ -223,37 +229,37 @@ which maximizes *calibration* and need not help value.
 
 This step needs the reference prices at fit time and edges toward the trade
 layer, so bracketlearn keeps it as a documented recipe rather than a core
-pipeline stage — the same boundary that puts [trade decisions out of
+pipeline stage, the same boundary that puts [trade decisions out of
 scope](../index.md). The metrics that *grade* it (`edge_alignment`,
 `value_report`) are in the library.
 
 `h` is fit against the same realized outcomes it is scored on, so it **overfits
-readily** — far more than a calibration map, which targets the smoother `π`. On
+readily**, far more than a calibration map, which targets the smoother `π`. On
 the small real sample of §5b the isotonic `h` *lowered* test EA rather than
 raising it (it amplified in-sample-only edges). Edge-recalibration earns its
 keep only with enough data and strict walk-forward validation; treat a
 recalibration that "wins" in-sample as unproven until it holds out-of-window
-(see §8 caveats).
+(see the §5b "Honest caveats").
 
 ## 7. Relation to known theory
 
 The structure is classical; recognizing the lineage is the point.
 
 * **Kelly / information theory.** Betting your model `q` against prices `m`, the
-  expected log-growth of wealth is `D(π‖m) − D(π‖q)` — *(how far the reference is
+  expected log-growth of wealth is `D(π‖m) − D(π‖q)`: *(how far the reference is
   from truth) − (how far you are)* in KL divergence. You grow iff you are closer
   to truth than the reference. The inner product `⟨q−m, π−m⟩` is its
   second-order Taylor expansion for small mispricings. (Kelly 1956; Cover &
   Thomas 2006, ch. 6.)
 * **Active portfolio management.** Grinold's Fundamental Law, `IR ≈ IC · √breadth`,
   with `IC = corr(forecast − benchmark, realized − benchmark)`. Swap benchmark →
-  reference price and IC *is* the normalized EA (`align_corr`). The well-known
-  caveat — the *rank* form of IC discards the magnitude/sizing the law needs —
-  is why EA is the covariance form, not a rank correlation. (Grinold 1989;
+  reference price and IC *is* the normalized EA (`align_corr`). The *rank* form
+  of IC discards the magnitude/sizing the law needs, which is why EA is the
+  covariance form, not a rank correlation. (Grinold 1989;
   Grinold & Kahn 2000.)
 * **Forecast verification.** Meteorology long ago separated a forecast's
   *quality* (accuracy: proper scores) from its *value* to a decision-maker,
-  defined relative to a reference forecast and a decision structure — precisely
+  defined relative to a reference forecast and a decision structure:
   "relative to the reference price, for a bet." (Murphy 1993; Murphy 1977;
   Richardson 2000.)
 * **Market efficiency.** The shared-bias trap is Grossman & Stiglitz (1980): a
@@ -271,5 +277,5 @@ The structure is classical; recognizing the lineage is the point.
 | `edge_alignment_bracket(contracts, reference, edges, y)` | value of a ladder | `ContractForecast` + reference + edges |
 | `value_report_bracket(contracts, reference, edges, y)` | full report for a ladder | `ContractForecast` + reference + edges |
 
-`reference` is the quoted/baseline price for the same contracts — a
+`reference` is the quoted/baseline price for the same contracts: a
 `ContractForecast` or a raw array matching `contracts.fair_price`.

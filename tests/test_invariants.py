@@ -30,8 +30,6 @@ from bracketlearn import (
     DistAsFeatures,
     DistributionForecast,
     EmpiricalDistribution,
-    GlobalResidual,
-    Isotonic,
     Persistence,
     SklearnPoint,
     clone,
@@ -58,15 +56,12 @@ def _all_baseestimator_subclasses() -> list[type]:
 def _try_construct(cls: type) -> object | None:
     """Try to construct ``cls`` with sensible defaults.
 
-    Some estimators need required arguments (CumulativeBinary needs
-    cutpoints + outer_edges, Isotonic needs edges, DistAsFeatures needs a
-    downstream, …). We special-case the ones we can reach; others get skipped.
+    Some estimators need required arguments (Isotonic needs edges,
+    DistAsFeatures needs a downstream, …). We special-case the ones we can
+    reach; others get skipped. (CumulativeBinary / the value trainers now take
+    only hyperparameters at construction, so they need no preset.)
     """
     presets: dict[str, dict] = {
-        "CumulativeBinary": {
-            "cutpoints_by_id": {0: np.array([1.0, 2.0, 3.0])},
-            "outer_edges_by_id": {0: (0.0, 4.0)},
-        },
         "Isotonic": {"pre_integrate_edges": np.linspace(0, 10, 6)},
         "SklearnPoint": {"estimator": _LinearRegressionFactory()},
         "DistAsFeatures": {"downstream": SklearnPoint(_LinearRegressionFactory())},

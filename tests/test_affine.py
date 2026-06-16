@@ -14,7 +14,6 @@ import pytest
 
 from bracketlearn.forecast import (
     BracketForecast,
-    DistributionForecast,
     MixtureNormalForecast,
     NormalForecast,
     QuantileForecast,

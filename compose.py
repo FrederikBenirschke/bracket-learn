@@ -42,7 +42,6 @@ from bracketlearn.pipeline import (
     _stitch_folds,
 )
 
-
 # ---------------------------------------------------------------------------
 # Stacker — parallel combiner over upstream model objects.
 # ---------------------------------------------------------------------------
@@ -178,7 +177,15 @@ class WalkForward:
         timestamps: np.ndarray,
         sample_weight: np.ndarray | None = None,
         groups: np.ndarray | None = None,
+        **row_meta: Any,
     ) -> PipelineResult:
+        """``row_meta`` are id-keyed side inputs (e.g. ``brackets_by_id`` /
+        ``reference_by_id`` for the value trainers) forwarded **verbatim** — not
+        index-sliced like ``sample_weight`` / ``groups`` — to every node's
+        ``fit`` / ``predict_dist``. Each trainer subsets them by the ``ids`` it
+        receives; a node whose signature doesn't declare a given key drops it
+        (signature-filtered in ``_fit_with_optional_weight`` /
+        ``_predict_with_extras``), so passing them globally is safe."""
         X = np.asarray(X)
         y = np.asarray(y, dtype=float)
         ids = np.asarray(ids)
@@ -214,12 +221,12 @@ class WalkForward:
                     up_te = [fold_test[j] for j in node["deps"]]
                     dist_tr, dist_te = self._fit_node(
                         obj, Xo, yo, ids_o, ts_o, train_idx, test_idx, sw_o, g_o,
-                        up_tr, up_te,
+                        up_tr, up_te, row_meta,
                     )
                 else:
                     dist_tr, dist_te = self._fit_node(
                         obj, Xo, yo, ids_o, ts_o, train_idx, test_idx, sw_o, g_o,
-                        None, None,
+                        None, None, row_meta,
                     )
                 fold_train[i] = dist_tr
                 fold_test[i] = dist_te
@@ -235,20 +242,21 @@ class WalkForward:
         # Refit each node on the full (sorted) training data → canonical models
         # for predict() on truly-unseen rows (sklearn's CV-then-final pattern).
         if self.refit_on_full:
-            self._refit_full(nodes, Xo, yo, ids_o, ts_o, sw_o, g_o)
+            self._refit_full(nodes, Xo, yo, ids_o, ts_o, sw_o, g_o, row_meta)
 
         return PipelineResult(forecasts=out)
 
     # ---- refit-on-full + predict on unseen rows ----
 
-    def _refit_full(self, nodes, X, y, ids, ts, sw, g) -> None:
+    def _refit_full(self, nodes, X, y, ids, ts, sw, g, row_meta=None) -> None:
+        row_meta = row_meta or {}
         fitted: list[Any] = [None] * len(nodes)
         canonical: dict[int, Any] = {}   # node index → in-sample full-data dist
         for i, node in enumerate(nodes):
             obj = copy.deepcopy(node["obj"])
             up = [canonical[j] for j in node["deps"]] if node["is_meta"] else None
-            fit_extras: dict[str, Any] = {"ids": ids, "timestamps": ts}
-            pred_extras: dict[str, Any] = {}
+            fit_extras: dict[str, Any] = {"ids": ids, "timestamps": ts, **row_meta}
+            pred_extras: dict[str, Any] = {**row_meta}
             if up is not None:
                 fit_extras["upstream"] = up
                 pred_extras["upstream"] = up
@@ -268,12 +276,14 @@ class WalkForward:
         ids: np.ndarray,
         timestamps: np.ndarray,
         groups: np.ndarray | None = None,
+        **row_meta: Any,
     ) -> dict[str, Any]:
         """Predict on unseen rows with the canonical (full-train) models.
 
         Requires ``refit_on_full=True`` and a prior ``fit_predict``. Returns
         ``{node_name: DistributionForecast}`` — every node addressable, same as
-        the leaderboard.
+        the leaderboard. ``row_meta`` (e.g. ``brackets_by_id`` for the unseen
+        rows) is forwarded verbatim, exactly as in ``fit_predict``.
         """
         if self._fitted is None or self._nodes is None:
             raise RuntimeError(
@@ -287,7 +297,7 @@ class WalkForward:
         node_dist: dict[int, Any] = {}
         for i, node in enumerate(self._nodes):
             f = self._fitted[i]
-            extras: dict[str, Any] = {}
+            extras: dict[str, Any] = {**row_meta}
             if node["is_meta"]:
                 extras["upstream"] = [node_dist[j] for j in node["deps"]]
             if g is not None:
@@ -300,23 +310,26 @@ class WalkForward:
     # ---- per-node fold fit ----
 
     @staticmethod
-    def _fit_node(f, X, y, ids, ts, tr, te, sw, g, up_tr, up_te):
+    def _fit_node(f, X, y, ids, ts, tr, te, sw, g, up_tr, up_te, row_meta=None):
         """Fit node ``f`` on the fold's train slice; predict on train + test.
 
         ``up_tr``/``up_te`` are the upstream fold dists for a meta node (None
-        for a plain node). ``groups`` is threaded when present; the helpers
-        drop any kwarg the node's signature doesn't declare.
+        for a plain node). ``groups`` is index-sliced per fold; ``row_meta``
+        (id-keyed side inputs) is forwarded **verbatim** — the node subsets it by
+        the ``ids`` it gets. The helpers drop any kwarg the node's signature
+        doesn't declare.
         """
+        row_meta = row_meta or {}
         sw_tr = sw[tr] if sw is not None else None
-        fit_extras: dict[str, Any] = {"ids": ids[tr], "timestamps": ts[tr]}
+        fit_extras: dict[str, Any] = {"ids": ids[tr], "timestamps": ts[tr], **row_meta}
         if up_tr is not None:
             fit_extras["upstream"] = up_tr
         if g is not None:
             fit_extras["groups"] = g[tr]
         _fit_with_optional_weight(f, X[tr], y[tr], sw_tr, **fit_extras)
 
-        tr_extras: dict[str, Any] = {}
-        te_extras: dict[str, Any] = {}
+        tr_extras: dict[str, Any] = {**row_meta}
+        te_extras: dict[str, Any] = {**row_meta}
         if up_tr is not None:
             tr_extras["upstream"] = up_tr
             te_extras["upstream"] = up_te
@@ -352,6 +365,8 @@ class WalkForward:
         return folds
 
     def _rolling_folds(self, N: int) -> list[tuple[np.ndarray, np.ndarray]]:
+        if self.rolling_window is None:
+            raise ValueError("rolling-window CV requires rolling_window to be set")
         w = int(self.rolling_window)
         chunk_size = max(2, (N - w) // self.n_folds) if w < N else 0
         if chunk_size < 2:

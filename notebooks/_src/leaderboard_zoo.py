@@ -114,8 +114,9 @@ print(f"ensemble-style X: shape {X_ens.shape}  "
 # %%
 edges = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 10.0])
 cutpoints = edges[1:-1]   # for CumulativeBinary
-# CumulativeBinary takes per-row grids (v0.3); one shared grid here → map
-# every row id to the same interior cutpoints and outer-edge pair.
+# CumulativeBinary takes per-row grids at call time; one shared grid here → map
+# every row id to the same interior cutpoints and outer-edge pair, and pass them
+# to fit_predict below (WalkForward forwards them; non-bracket trainers drop them).
 _cum_cuts = {int(i): cutpoints for i in ids}
 _cum_outer = {int(i): (float(edges[0]), float(edges[-1])) for i in ids}
 
@@ -132,8 +133,7 @@ SINGLE_TRAINERS = {
     "NGBoost":                            (NGBoostNormal(n_estimators=200, random_seed=0), X_raw, "native_dist"),
     "QuantileReg":                        (QuantileReg(n_estimators=200, learning_rate=0.05, random_seed=0), X_raw, "native_dist"),
     "QuantileForest":                     (QuantileForest(n_estimators=200, random_seed=0), X_raw, "native_dist"),
-    "CumulativeBinary":                   (CumulativeBinary(cutpoints_by_id=_cum_cuts, n_estimators=80,
-                                                            outer_edges_by_id=_cum_outer), X_raw, "bracket"),
+    "CumulativeBinary":                   (CumulativeBinary(n_estimators=80), X_raw, "bracket"),
     "EMOS  (ens. X)":                     (EMOS(), X_ens, "native_dist"),
     "MixtureNormals (ens. X)":            (MixtureNormals(), X_ens, "native_dist"),
     "Ridge + GlobalResidual":             (Pipeline([SklearnPoint(RidgeCV()), GlobalResidual()], name="ridge_gr"), X_raw, "point_lift"),
@@ -154,7 +154,8 @@ def _score_one(stage_name, forecaster, X_in):
     key = model.name
     r = WalkForward(
         cv="kfold", n_folds=5, shuffle=True, random_state=0, refit_on_full=False,
-    ).fit_predict(model, X_in, y, ids=ids, timestamps=ts)
+    ).fit_predict(model, X_in, y, ids=ids, timestamps=ts,
+                  cutpoints_by_id=_cum_cuts, outer_edges_by_id=_cum_outer)
     metrics = r.score(y, metrics=["crps", "log_score"])[key]
     dist = r[key]
     y_oof = y[dist.ids.astype(int)]

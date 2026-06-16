@@ -24,7 +24,7 @@ Less commonly used symbols live in their submodules:
 
 from __future__ import annotations
 
-__version__ = "0.6.0"
+__version__ = "0.8.0"
 
 from bracketlearn.adapters import (
     BinaryAbove,
@@ -35,6 +35,7 @@ from bracketlearn.adapters import (
 )
 from bracketlearn.base import BaseEstimator, clone
 from bracketlearn.baselines import EmpiricalDistribution, Persistence, PersistenceDist
+from bracketlearn.compose import Stacker, WalkForward
 from bracketlearn.forecast import (
     BracketForecast,
     ContractForecast,
@@ -60,7 +61,6 @@ from bracketlearn.multitarget import (
     MultiOutput,
     MultiOutputResult,
 )
-from bracketlearn.compose import Stacker, WalkForward
 from bracketlearn.pipeline import (
     Pipeline,
     PipelineResult,

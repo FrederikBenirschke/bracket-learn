@@ -80,11 +80,14 @@ A second axis cuts across the families: what a trainer sees at fit time.
   `OnlineAggregator`, `RNNHourly`, `ridge`, `emos_calibrated`) never touch
   brackets at fit time. They fit on `(X, y)`, emit a continuous-ish
   distribution, then `.integrate(edges_per_row)` prices on a specific grid.
-- **Bracket-aware** (`CumulativeBinary`, `TailSpecialist`, `CDFBoostBracket`)
-  train on bracket-derived indicators and take a `cutpoints_by_id` or
-  `brackets_by_id` dict (id → 1-D edge array) at construction, so per-row grids
-  flow through fit and predict. Their `fit()` requires an explicit `ids=`
-  kwarg, and a `Pipeline` forwards it for you.
+- **Bracket-aware** (`CumulativeBinary`, `BlendedBracketGBM`/`BlendedBracketNet`,
+  `TailSpecialist`, `CDFBoostBracket`) train on bracket-derived indicators on a
+  per-row grid. The leaf trainers (`CumulativeBinary` and the value trainers)
+  take their grids (`cutpoints_by_id`/`outer_edges_by_id`, resp.
+  `brackets_by_id`/`reference_by_id`) at **call time**, passed to
+  `fit`/`predict_dist`; the `TailSpecialist`/`CDFBoostBracket` combiners take
+  `brackets_by_id` at construction. All require an explicit `ids=` kwarg at fit,
+  and a `Pipeline`/`WalkForward` forwards `ids` and the call-time grids for you.
 
 For the **"fit any sklearn classifier or regressor on brackets"** entry point,
 reach for `BracketExpander` (see [bracket_expander](bracket_expander.md)). It

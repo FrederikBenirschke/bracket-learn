@@ -205,7 +205,7 @@ def _clone_with_params(
             for field, value in fields.items():
                 _set_node_field(nodes_by_name[node_name], node_name, field, value)
 
-    wf_kwargs = dict(
+    wf_kwargs: dict[str, Any] = dict(
         cv=wf.cv, n_folds=wf.n_folds, embargo=wf.embargo,
         refit_on_full=wf.refit_on_full, shuffle=wf.shuffle,
         random_state=wf.random_state, rolling_window=wf.rolling_window,

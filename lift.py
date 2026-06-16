@@ -23,7 +23,11 @@ import numpy as np
 from bracketlearn.base import BaseEstimator
 
 if TYPE_CHECKING:
-    from bracketlearn.forecast import DistributionForecast, PointForecast
+    from bracketlearn.forecast import (
+        BracketForecast,
+        DistributionForecast,
+        PointForecast,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -349,10 +353,10 @@ class Isotonic(BaseEstimator):
     fitted_: bool = field(default=False, init=False)
     n_calib_: int | None = field(default=None, init=False)
 
-    def _maybe_integrate(self, dist: DistributionForecast) -> DistributionForecast:
-        from bracketlearn.forecast import BracketForecast
+    def _maybe_integrate(self, dist: DistributionForecast) -> BracketForecast:
+        from bracketlearn.forecast import BracketForecast as _BracketForecast
 
-        if isinstance(dist, BracketForecast):
+        if isinstance(dist, _BracketForecast):
             return dist
         if self.pre_integrate_edges is None:
             raise TypeError(
@@ -472,7 +476,7 @@ class ConformalCalibrate(BaseEstimator):
     ) -> DistributionForecast:
         from bracketlearn.forecast import DistributionForecast, ProvenanceMeta, QuantileForecast
 
-        if not self.fitted_:
+        if not self.fitted_ or self.offsets_ is None:
             raise RuntimeError("ConformalCalibrate.transform called before fit")
         if not isinstance(dist, QuantileForecast):
             raise ValueError(

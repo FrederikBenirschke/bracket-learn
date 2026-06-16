@@ -21,7 +21,7 @@ The honest finding (robust across random splits):
     realized error — both *reduce* the value. Calibrating harder is not the same
     as capturing more mispricing (the value guide's §3).
 
-Data: ``examples/data/weather_value_sample.parquet`` — a small anonymized
+Data: ``examples/data/weather_value_sample.parquet`` — an anonymized
 sample (forecast inputs, realized values, per-row bracket edges, normalized
 reference prices with NaN where a bracket had no quote). No venue, station, or
 date information.

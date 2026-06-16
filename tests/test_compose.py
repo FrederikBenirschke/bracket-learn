@@ -13,7 +13,7 @@ from sklearn.linear_model import LinearRegression
 
 from bracketlearn import Pipeline, Stacker, WalkForward
 from bracketlearn.lift import GlobalResidual
-from bracketlearn.trainers import EMOS, SklearnPoint, StackedParametric, BMAStacking
+from bracketlearn.trainers import EMOS, BMAStacking, SklearnPoint, StackedParametric
 
 
 def _synthetic(n: int = 200, k: int = 3, seed: int = 0):

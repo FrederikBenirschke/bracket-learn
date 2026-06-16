@@ -229,7 +229,6 @@ def test_online_aggregator_grouped_specialises_per_group():
     """Per-group AdaHedge: different best expert per group → different weights."""
     rng = np.random.default_rng(0)
     N_per = 200
-    K = 3
     # Group A: expert 0 is best (low noise). Group B: expert 2 is best.
     y_a = rng.normal(0, 1, N_per)
     y_b = rng.normal(0, 1, N_per)
@@ -375,12 +374,9 @@ def test_cumulative_binary_emits_bracket():
     shared_cuts = np.array([8.0, 10.0, 12.0])
     cutpoints_by_id = {int(k): shared_cuts for k in ids}
     outer_edges_by_id = {int(k): (0.0, 20.0) for k in ids}
-    cb = CumulativeBinary(
-        cutpoints_by_id=cutpoints_by_id,
-        outer_edges_by_id=outer_edges_by_id,
-        n_estimators=20,
-    ).fit(X, y, ids=ids)
-    d = cb.predict_dist(X, ids=ids, timestamps=ts)
+    grids = dict(cutpoints_by_id=cutpoints_by_id, outer_edges_by_id=outer_edges_by_id)
+    cb = CumulativeBinary(n_estimators=20).fit(X, y, ids=ids, **grids)
+    d = cb.predict_dist(X, ids=ids, timestamps=ts, **grids)
     assert isinstance(d, BracketForecast)
     np.testing.assert_allclose(d.probs.sum(axis=1), 1.0)
 
@@ -396,12 +392,9 @@ def test_cumulative_binary_per_row_varying_cutpoints():
     cuts_b = np.array([6.0, 8.0, 10.0, 12.0, 14.0])
     cutpoints_by_id = {int(k): (cuts_a if k % 2 == 0 else cuts_b) for k in ids}
     outer_edges_by_id = {int(k): (0.0, 20.0) for k in ids}
-    cb = CumulativeBinary(
-        cutpoints_by_id=cutpoints_by_id,
-        outer_edges_by_id=outer_edges_by_id,
-        n_estimators=20,
-    ).fit(X, y, ids=ids)
-    d = cb.predict_dist(X, ids=ids, timestamps=ts)
+    grids = dict(cutpoints_by_id=cutpoints_by_id, outer_edges_by_id=outer_edges_by_id)
+    cb = CumulativeBinary(n_estimators=20).fit(X, y, ids=ids, **grids)
+    d = cb.predict_dist(X, ids=ids, timestamps=ts, **grids)
     assert isinstance(d, BracketForecast)
     # Per-row valid bin count B_i = K_i + 1: half the rows have 4 bins
     # (NaN padding in trailing columns), other half have 6.

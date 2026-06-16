@@ -1014,7 +1014,7 @@ class TailSpecialist(BaseEstimator):
                 f"TailSpecialist: too few tail positives "
                 f"(lo={int(y_lo.sum())}, hi={int(y_hi.sum())})"
             )
-        common = dict(
+        common: dict[str, Any] = dict(
             n_estimators=self.n_estimators,
             learning_rate=self.learning_rate,
             num_leaves=self.num_leaves,
@@ -1388,7 +1388,7 @@ class CDFBoostBracket(BaseEstimator):
             k = int(np.searchsorted(e_i, y[i], side="right") - 1)
             bin_idx[i] = max(0, min(k, B - 1))
 
-        common = dict(
+        common: dict[str, Any] = dict(
             n_estimators=self.n_estimators,
             learning_rate=self.learning_rate,
             num_leaves=self.num_leaves,

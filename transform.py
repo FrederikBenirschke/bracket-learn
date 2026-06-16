@@ -143,9 +143,7 @@ class GroupByZScore:
                 out[:, j] = X[:, j] / s
             elif j in passth:
                 out[:, j] = X[:, j]
-            elif level is None:                      # default: level = complement
-                out[:, j] = (X[:, j] - c) / s
-            elif j in level:                         # explicit level
+            elif level is None or j in level:                      # default: level = complement
                 out[:, j] = (X[:, j] - c) / s
             else:                                    # explicit levels given, j not one → passthrough
                 out[:, j] = X[:, j]
@@ -176,6 +174,8 @@ class GroupByZScore:
         return c
 
     def _scale_array(self, ids: np.ndarray) -> np.ndarray:
+        if self.scale_by_ is None or self.scale_global_ is None:
+            raise RuntimeError("scaler used before fit (scale_by_ unset)")
         g = self.scale_global_
         return np.array(
             [self.scale_by_.get(gid, g) for gid in ids], dtype=float
