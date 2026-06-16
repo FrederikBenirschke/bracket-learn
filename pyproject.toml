@@ -136,6 +136,12 @@ ignore = [
 "notebooks/_src/*" = ["E402", "E702"]  # jupytext cells: imports anywhere, plt.show() chains
 "tests/*" = ["E702"]                   # compact one-liners in tests are intentional
 
+[tool.ruff.lint.isort]
+# The import package is `bracketlearn` even though the distribution is
+# `bracket-learn`, so ruff cannot auto-detect it as first-party. Declare it
+# explicitly to keep first-party imports in their own group.
+known-first-party = ["bracketlearn"]
+
 [tool.mypy]
 python_version = "3.11"
 strict_optional = true

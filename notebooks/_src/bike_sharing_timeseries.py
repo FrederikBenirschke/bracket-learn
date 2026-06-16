@@ -68,14 +68,15 @@ from _style import (
     predicted_vs_realized_grid,
     reliability_with_histogram,
 )
+from lightgbm import LGBMRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+
 from bracketlearn.baselines import EmpiricalDistribution, Persistence
 from bracketlearn.compose import WalkForward
 from bracketlearn.lift import GlobalResidual, Isotonic
 from bracketlearn.pipeline import Pipeline
 from bracketlearn.score import pit, to_point
 from bracketlearn.trainers import QuantileReg, SklearnPoint
-from lightgbm import LGBMRegressor
-from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 # %% [markdown]
 # ## Data
@@ -453,10 +454,11 @@ plt.show()
 # you the distribution and the bracket prices, not a different point forecast.
 
 # %%
-from bracketlearn.score import to_point
 from lightgbm import LGBMRegressor
 from sklearn.linear_model import Ridge
 from sklearn.model_selection import TimeSeriesSplit
+
+from bracketlearn.score import to_point
 
 
 def _sklearn_oof(model_factory, X_in):

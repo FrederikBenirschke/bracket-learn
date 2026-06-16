@@ -66,13 +66,14 @@ from _style import (
     predicted_vs_realized_grid,
     reliability_with_histogram,
 )
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+
 from bracketlearn.baselines import EmpiricalDistribution
 from bracketlearn.compose import WalkForward
 from bracketlearn.lift import GlobalResidual
 from bracketlearn.pipeline import Pipeline
 from bracketlearn.score import pit, to_point
 from bracketlearn.trainers import QuantileReg, SklearnPoint
-from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 # %% [markdown]
 # ## Data

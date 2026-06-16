@@ -58,6 +58,8 @@ from _style import (
     color_for,
     leaderboard_bar,
 )
+from lightgbm import LGBMRegressor
+
 from bracketlearn.baselines import EmpiricalDistribution
 from bracketlearn.compose import Stacker, WalkForward
 from bracketlearn.lift import ConformalCalibrate, GlobalResidual, Isotonic, StudentTResidual
@@ -76,7 +78,6 @@ from bracketlearn.trainers import (
     SklearnPoint,
     StackedParametric,
 )
-from lightgbm import LGBMRegressor
 
 # %% [markdown]
 # ## Dataset 1 — California housing
@@ -329,8 +330,9 @@ plt.show()
 
 # %%
 import pandas as pd
-from bracketlearn.baselines import Persistence
 from sklearn.datasets import fetch_openml
+
+from bracketlearn.baselines import Persistence
 
 print("loading Bike_Sharing_Demand …")
 ds = fetch_openml("Bike_Sharing_Demand", version=2,
