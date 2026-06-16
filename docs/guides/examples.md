@@ -1,6 +1,6 @@
 # Examples
 
-bracketlearn ships seven runnable examples in [`bracketlearn/examples/`](https://github.com/FrederikBenirschke/bracketlearn/tree/main/bracketlearn/examples).
+bracketlearn ships seven runnable examples in [`examples/`](https://github.com/FrederikBenirschke/bracket-learn/tree/main/examples).
 Three use **public sklearn / OpenML datasets** so they run anywhere with
 no extra credentials; two bundle an anonymized real-data sample.
 
@@ -54,7 +54,7 @@ notebook with plots: PIT histograms, quantile fans, reliability diagrams,
 bracket-price bars, skill-score bars, and a **leaderboard** ranking multiple
 trainers against baselines.
 
-See [`bracketlearn/notebooks/`](https://github.com/FrederikBenirschke/bracketlearn/tree/main/bracketlearn/notebooks).
+See [`notebooks/`](https://github.com/FrederikBenirschke/bracket-learn/tree/main/notebooks).
 Source for each notebook lives as a `.py` file under `notebooks/_src/`
 (via [jupytext](https://jupytext.readthedocs.io)) so diffs stay clean.
 

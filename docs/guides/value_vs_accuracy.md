@@ -169,7 +169,7 @@ Brier. Selecting on accuracy would have shipped the wrong forecast.
 ## 5b. The same thing on real data: EMOS vs a market
 
 The synthetic toy is rigged to make the point. Real forecasts and real prices
-test it. [`examples/value_vs_accuracy_weather.py`](https://github.com/FrederikBenirschke/bracketlearn/blob/main/examples/value_vs_accuracy_weather.py)
+test it. [`examples/value_vs_accuracy_weather.py`](https://github.com/FrederikBenirschke/bracket-learn/blob/main/examples/value_vs_accuracy_weather.py)
 fits EMOS on an anonymized weather sample
 (`examples/data/weather_value_sample.parquet`: ensemble mean/spread, realized
 temperatures, per-row bracket grids, and a normalized reference price per

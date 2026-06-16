@@ -82,15 +82,15 @@ notebook.
 bracketlearn has not reached PyPI yet. Install from source:
 
 ```bash
-git clone https://github.com/FrederikBenirschke/bracketlearn
-pip install -e ./bracketlearn
+git clone https://github.com/FrederikBenirschke/bracket-learn
+pip install -e ./bracket-learn
 
 # With the full set of optional trainers (LightGBM, NGBoost, torch, ...):
-pip install -e "./bracketlearn[demo]"
+pip install -e "./bracket-learn[demo]"
 ```
 
-After PyPI publication the install becomes `pip install bracketlearn` or
-`pip install "bracketlearn[demo]"`.
+After PyPI publication the install becomes `pip install bracket-learn` or
+`pip install "bracket-learn[demo]"`.
 
 ## Quickstart: the three steps end to end
 

@@ -75,9 +75,9 @@ your notebook used to hold glue code.
 Install from source until bracketlearn reaches PyPI:
 
 ```bash
-git clone https://github.com/FrederikBenirschke/bracketlearn
-pip install -e ./bracketlearn
-pip install -e "./bracketlearn[demo]"   # with optional trainers
+git clone https://github.com/FrederikBenirschke/bracket-learn
+pip install -e ./bracket-learn
+pip install -e "./bracket-learn[demo]"   # with optional trainers
 ```
 
 ## sklearn contract
