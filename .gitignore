@@ -14,3 +14,16 @@ htmlcov/
 
 # Sphinx
 docs/_build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
