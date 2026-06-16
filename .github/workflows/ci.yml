@@ -24,9 +24,14 @@ jobs:
           cache: pip
 
       - name: Install package + dev extras
+        # Non-editable install: the package uses a flat layout
+        # (package-dir bracketlearn = "."), so an editable install exposes
+        # `bracketlearn` only through a setuptools finder that mypy cannot
+        # follow. A regular install lays down a real `bracketlearn/` directory
+        # in site-packages that mypy resolves by import name.
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,boosting,quantile-forest]"
+          pip install ".[dev,boosting,quantile-forest]"
 
       - name: Lint (ruff)
         run: ruff check .
