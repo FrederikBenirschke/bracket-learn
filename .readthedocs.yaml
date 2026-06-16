@@ -9,13 +9,13 @@ build:
     python: "3.12"
 
 sphinx:
-  configuration: bracketlearn/docs/conf.py
+  configuration: docs/conf.py
   fail_on_warning: false
 
 python:
   install:
     - method: pip
-      path: bracketlearn
+      path: .
       extra_requirements:
         - docs
 

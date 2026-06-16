@@ -1,6 +1,6 @@
 # Examples
 
-bracketlearn ships seven runnable examples in [`examples/`](https://github.com/FrederikBenirschke/bracket-learn/tree/main/examples).
+bracketlearn ships seven runnable examples in [`bracketlearn/examples/`](https://github.com/FrederikBenirschke/bracket-learn/tree/main/bracketlearn/examples).
 Three use **public sklearn / OpenML datasets** so they run anywhere with
 no extra credentials; two bundle an anonymized real-data sample.
 
@@ -80,7 +80,7 @@ lifted to a parametric normal via `GlobalResidual`.
 ### `value_vs_accuracy_weather.py`
 
 Fits EMOS on an **anonymized real weather sample** bundled at
-`examples/data/weather_value_sample.parquet` (ensemble mean/spread, realized
+`bracketlearn/examples/data/weather_value_sample.parquet` (ensemble mean/spread, realized
 temps, per-row bracket grids, normalized reference prices; no venue, station,
 or date), prices it onto each row's grid, and scores it against the reference
 price two ways: Brier (accuracy) and `score.edge_alignment` (value).
