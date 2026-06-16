@@ -150,12 +150,20 @@ warn_unused_ignores = true
 # The type gate covers the library only. Examples / notebooks / tests carry
 # intentional type games (sklearn datasets, pandas, jupytext cells) that are
 # not part of the published, typed surface.
-files = [
-    "adapters.py", "base.py", "baselines.py", "compose.py", "lift.py",
-    "multitarget.py", "persistence.py", "pipeline.py", "protocols.py",
-    "restrict.py", "score.py", "search.py", "transform.py", "transformers.py",
-    "forecast", "trainers", "value",
+#
+# Address modules by dotted import name, NOT by file path. The flat package
+# (`__init__.py` at the repo root) lives in a directory named after the repo
+# (`bracket-learn`), which is not a valid Python identifier; resolving by path
+# would make mypy infer the module name from that directory and fail. Import
+# names resolve through the installed `bracketlearn` package instead.
+modules = [
+    "bracketlearn.adapters", "bracketlearn.base", "bracketlearn.baselines",
+    "bracketlearn.compose", "bracketlearn.lift", "bracketlearn.multitarget",
+    "bracketlearn.persistence", "bracketlearn.pipeline", "bracketlearn.protocols",
+    "bracketlearn.restrict", "bracketlearn.score", "bracketlearn.search",
+    "bracketlearn.transform", "bracketlearn.transformers",
 ]
+packages = ["bracketlearn.forecast", "bracketlearn.trainers", "bracketlearn.value"]
 
 # Third-party packages that ship no type stubs / py.typed marker. Without this
 # every `import sklearn` etc. is an `import-untyped` error unrelated to our code.
