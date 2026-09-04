@@ -40,10 +40,22 @@ import numpy as np
 import polars as pl
 from sklearn.isotonic import IsotonicRegression
 
-from bracketlearn.score import edge_alignment, value_report
+from bracketlearn.score import bootstrap_ci, edge_alignment, value_report
 from bracketlearn.trainers import EMOS
 
 DATA = os.path.join(os.path.dirname(__file__), "data", "weather_value_sample.parquet")
+
+
+def _clusters(rows):
+    """One label per CONTRACT, naming its (station, day) ladder — the unit the
+    outcome is shared over. Mirrors _price's flattening exactly, including the
+    finite-quote mask, or the labels would not line up with the contracts."""
+    out = []
+    for row in rows:
+        m = np.asarray(row["ref_price"], float)
+        n_ok = int(np.isfinite(m).sum())
+        out.append(np.full(n_ok, f"{row['station_id']}|{row['event_date']}"))
+    return np.concatenate(out) if out else np.array([])
 
 
 def _price(dist, rows, dmu=0.0):
@@ -111,6 +123,10 @@ def run_side(df: pl.DataFrame, side: str) -> None:
     iso = IsotonicRegression(out_of_bounds="clip").fit(qt - mt, rt - mt)
     q2 = np.clip(m + iso.predict(q0 - m), 1e-4, 1 - 1e-4)
 
+    # Contracts on one ladder share a single realized temperature, so the CI
+    # is clustered by station-day rather than by contract.
+    ci = bootstrap_ci(edge_alignment, q0, m, r, cluster=_clusters(te),
+                      n_boot=2000, seed=0)
     ea0 = edge_alignment(q0, m, r) * 100
     bm, b0 = _brier(m, r), _brier(q0, r)
     acc = "less accurate than market" if b0 > bm else "more accurate than market"
@@ -127,6 +143,10 @@ def run_side(df: pl.DataFrame, side: str) -> None:
     print(f"  {'EMOS + edge-recal':28s} {b2:8.4f} {ea2:+9.4f}"
           f"   <- Brier {'falls' if b2 < b0 else 'rises'}, "
           f"EA {'falls' if ea2 < ea0 else 'rises'} vs raw")
+    print(f"    EA 95% CI (clustered by station-day, {ci['n_clusters']:.0f} "
+          f"clusters / {ci['n_obs']:.0f} contracts): "
+          f"[{ci['lo'] * 100:+.4f}, {ci['hi'] * 100:+.4f}]"
+          f"{'  — crosses zero' if ci['lo'] < 0 < ci['hi'] else ''}")
     rep = value_report(q0, m, r)
     print(f"    value_report(EMOS raw): A(ref MSE)={rep['A_reference_mse']:.4f}  "
           f"B(non-orth)={rep['B_non_orthogonality']:.4f}  align_corr={rep['align_corr']:+.3f}")

@@ -14,6 +14,9 @@ remain for downstream callers that pass a dist as first arg.
 
 from __future__ import annotations
 
+import math
+from collections.abc import Callable
+
 import numpy as np
 from scipy import stats as _stats
 
@@ -661,3 +664,125 @@ def value_report_dist(
         costed = edge_alignment_costed(q, m, r, fee=fee, tau=tau)
         rep.update({f"costed_{k}": v for k, v in costed.items()})
     return rep
+
+
+def bootstrap_ci(
+    fn: Callable[..., float],
+    *arrays: np.ndarray,
+    cluster: np.ndarray | None = None,
+    n_boot: int = 2000,
+    alpha: float = 0.05,
+    seed: int = 0,
+) -> dict[str, float]:
+    """Percentile bootstrap CI for a contract-level metric, clustered.
+
+    ``fn`` is any of this module's scorers — ``edge_alignment``,
+    ``edge_alignment_costed``, a Brier — called as ``fn(*arrays)`` on a
+    resample. ``arrays`` are the per-contract vectors it takes (``q, m, r``),
+    resampled together so a draw keeps each contract's triple intact.
+
+    **Pass ``cluster`` whenever contracts share an outcome.** On a bracket
+    ladder every contract for one (station, day) resolves off the SAME realized
+    value: exactly one wins and the rest lose, by construction. They are not
+    independent draws, and resampling contracts i.i.d. treats each as fresh
+    evidence.
+
+    How much that matters is an empirical question, not a fixed factor, and it
+    is smaller here than the "one shared outcome" framing suggests. Measured on
+    this repo's weather sample (~6 brackets per station-day, ~1,000 station-day
+    clusters): the clustered interval is **1.02x wider on HIGH and 1.07x on
+    LOW** than the i.i.d. one. EA is a per-contract product whose within-ladder
+    correlation is weak even though the outcome is shared — the one-hot
+    constraint ties the r's, but the (q-m) edges vary freely across brackets.
+    Expect a large inflation only when the metric itself aggregates at the
+    cluster level, or when clusters are few and heterogeneous.
+
+    Use it anyway: it costs nothing, it is the correct estimator for dependent
+    data, and the factor is a property of your sample rather than something to
+    assume.
+
+    ``cluster`` is a per-contract label (a station-day id). Whole clusters are
+    then resampled with replacement — the block bootstrap — so the resample has
+    the same dependence structure as the sample.
+
+    Returns ``point`` (``fn`` on the full sample), ``lo``/``hi`` (the
+    ``alpha/2`` and ``1-alpha/2`` percentiles), ``se`` (the bootstrap standard
+    deviation), ``n_boot`` (draws that scored finite), ``n_clusters`` and
+    ``n_obs``.
+
+    Two properties worth stating, because they decide how to read the output:
+
+    * **This is a percentile interval, not a bias-corrected one.** For a
+      near-symmetric statistic like EA it is fine. For a strongly skewed one,
+      prefer BCa; this function does not implement it.
+    * **The CI is about sampling noise only.** It says nothing about whether
+      the population is the one you meant, whether the split leaked, or whether
+      the reference price is the one you could trade. A tight interval around a
+      wrong number is still wrong.
+
+    Draws whose resample makes ``fn`` undefined (a degenerate cluster draw
+    giving zero-variance input, say) are skipped and excluded from ``n_boot``
+    rather than counted as zero. If fewer than half the draws survive, that is
+    a broken setup and it raises (Rule: no silent fallback).
+    """
+    if not arrays:
+        raise ValueError("bootstrap_ci needs at least one data array")
+    arrs = [np.asarray(a).ravel() for a in arrays]
+    n = arrs[0].size
+    if any(a.size != n for a in arrs):
+        raise ValueError(
+            f"arrays must share length; got {[a.size for a in arrs]}")
+    if n == 0:
+        raise ValueError("empty input to bootstrap_ci")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError(f"alpha must be in (0, 1); got {alpha}")
+    if n_boot < 1:
+        raise ValueError(f"n_boot must be >= 1; got {n_boot}")
+
+    point = float(fn(*arrs))
+    rng = np.random.default_rng(seed)
+
+    if cluster is None:
+        # One observation per group: the ordinary i.i.d. bootstrap. NOT a
+        # single group containing everything — that resamples the identical
+        # sample every draw and yields a zero-width interval.
+        groups = [np.array([i]) for i in range(n)]
+    else:
+        cl = np.asarray(cluster).ravel()
+        if cl.size != n:
+            raise ValueError(
+                f"cluster must have one label per observation; got {cl.size} "
+                f"for {n} observations")
+        order = np.argsort(cl, kind="stable")
+        _, starts = np.unique(cl[order], return_index=True)
+        groups = np.split(order, starts[1:])
+
+    n_groups = len(groups)
+    stats: list[float] = []
+    for _ in range(n_boot):
+        pick = rng.integers(0, n_groups, size=n_groups)
+        idx = np.concatenate([groups[j] for j in pick])
+        try:
+            v = float(fn(*[a[idx] for a in arrs]))
+        except (ValueError, ZeroDivisionError, FloatingPointError):
+            continue
+        if math.isfinite(v):
+            stats.append(v)
+
+    if len(stats) < max(1, n_boot // 2):
+        raise ValueError(
+            f"only {len(stats)} of {n_boot} bootstrap draws produced a finite "
+            f"score; the metric is degenerate on this sample rather than "
+            f"merely uncertain")
+
+    s = np.asarray(stats, dtype=float)
+    lo, hi = np.percentile(s, [100 * alpha / 2, 100 * (1 - alpha / 2)])
+    return {
+        "point": point,
+        "lo": float(lo),
+        "hi": float(hi),
+        "se": float(s.std(ddof=1)) if s.size > 1 else float("nan"),
+        "n_boot": float(s.size),
+        "n_clusters": float(n_groups),
+        "n_obs": float(n),
+    }
