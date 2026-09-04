@@ -21,7 +21,7 @@
 # destroy time ordering for sequential data).
 #
 # Then a **leaderboard** of competing model families benchmarked against
-# the grid winner — does tuning `QuantileReg` beat untuned alternatives?
+# the grid winner, does tuning `QuantileReg` beat untuned alternatives?
 
 # %%
 import sys
@@ -108,7 +108,7 @@ print(f"baseline CRPS={baseline_crps:.4f}  "
       f"best CRPSS={1-search.best_score_/baseline_crps:+.3f}")
 
 # %% [markdown]
-# ## Grid landscape — heatmap with annotated cells
+# ## Grid landscape, heatmap with annotated cells
 #
 # The cell value is CRPS (lower is better). The winning cell is outlined
 # in black. Cells far from the winner give you a sense of how flat (or
@@ -142,13 +142,13 @@ ax.set_xticks(range(len(lr_grid)), labels=[str(lr) for lr in lr_grid])
 ax.set_yticks(range(len(n_est_grid)), labels=[str(n) for n in n_est_grid])
 ax.set_xlabel("learning_rate")
 ax.set_ylabel("n_estimators")
-ax.set_title("GridSearch CRPS — winning cell outlined")
+ax.set_title("GridSearch CRPS, winning cell outlined")
 fig.colorbar(im, ax=ax, label="CRPS (lower = better)")
 fig.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ## Grid landscape — dot plot
+# ## Grid landscape, dot plot
 #
 # An alternative view: every grid point as a labeled dot in (lr, CRPS)
 # space, with curves connecting points that share `n_estimators`. Shows
@@ -173,13 +173,13 @@ ax.set_xscale("log")
 ax.set_xticks(lr_grid, labels=[str(lr) for lr in lr_grid])
 ax.set_xlabel("learning_rate (log scale)")
 ax.set_ylabel("CRPS")
-ax.set_title("Grid landscape — CRPS vs (lr, n_estimators)")
+ax.set_title("Grid landscape, CRPS vs (lr, n_estimators)")
 ax.legend(loc="upper right")
 fig.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ## Predicted vs realized — best pipeline on a held-out slice
+# ## Predicted vs realized, best pipeline on a held-out slice
 #
 # `best_wf_` is already refit on the full training data. Predict
 # on a held-out 200-row slice and show the headline scatter.
@@ -272,7 +272,7 @@ fig = leaderboard_bar(
     [(n, v) for n, v in rows],
     baseline_name="Empirical", baseline_value=baseline_crps,
     skill_label="CRPSS",
-    title="California housing — competing models",
+    title="California housing, competing models",
 )
 plt.show()
 
@@ -328,6 +328,6 @@ for name, mu_pred, y_ref in [
 fig = predicted_vs_realized_grid(
     panels_pt, ncols=3, units="$100k",
     figsize_per_panel=(3.3, 3.3),
-    title="Point-forecast benchmark — best QReg mean vs sklearn",
+    title="Point-forecast benchmark, best QReg mean vs sklearn",
 )
 plt.show()

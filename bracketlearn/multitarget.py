@@ -2,7 +2,7 @@
 
 Mirrors sklearn's ``MultiOutputRegressor``: each target column is fit by a
 separate deep-copy of the model graph, run under its own `WalkForward`. No
-cross-target sharing — if joint modelling is desired, build a single trainer
+cross-target sharing, if joint modelling is desired, build a single trainer
 that natively consumes (N, M) y.
 
 Why a wrapper rather than threading M through every trainer:
@@ -11,7 +11,7 @@ Why a wrapper rather than threading M through every trainer:
   ``DistributionForecast.params['mu']`` becomes (N, M)) and break every
   scoring rule. The blast radius is huge for a feature most users won't touch.
 - ``MultiOutput`` keeps the single-target machinery unchanged and composes M
-  times — readable, debuggable, and matches the expectation that "M targets =
+  times, readable, debuggable, and matches the expectation that "M targets =
   M models" unless a joint trainer is explicitly built.
 
 Example::

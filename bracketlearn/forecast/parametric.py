@@ -1,11 +1,11 @@
 """Parametric DistributionForecast subclasses.
 
-- ``_ParametricMixin`` — shared scipy-backed math for single-rv dists
+- ``_ParametricMixin``, shared scipy-backed math for single-rv dists
   (Normal, Student-t). Subclasses declare ``_rv`` and override
   ``_per_row_params``.
-- ``NormalForecast`` — single-rv Gaussian, (N,) μ and σ.
-- ``StudentTForecast`` — single-rv Student-t, (N,) μ, σ, ν.
-- ``MixtureNormalForecast`` — (N, K) weighted normals; standalone math.
+- ``NormalForecast``, single-rv Gaussian, (N,) μ and σ.
+- ``StudentTForecast``, single-rv Student-t, (N,) μ, σ, ν.
+- ``MixtureNormalForecast``, (N, K) weighted normals; standalone math.
 """
 
 from __future__ import annotations
@@ -21,14 +21,14 @@ from bracketlearn.forecast._meta import ProvenanceMeta
 from bracketlearn.forecast.base import DistributionForecast
 
 # ---------------------------------------------------------------------------
-# _ParametricMixin — shared math for single-rv scipy-backed dists.
+# _ParametricMixin, shared math for single-rv scipy-backed dists.
 #
 # Normal and Student-t differ only in which scipy.stats distribution they
 # delegate to and which kwargs they pass. Both inherit cdf/cdf_at/cdf_at_grid/
 # ppf/pdf from this mixin; subclasses declare ``_rv`` (the scipy distribution)
 # and override ``_per_row_params`` to return the 1-D shape parameter arrays.
 #
-# Mixture stays standalone — its cdf needs a weighted sum over K components,
+# Mixture stays standalone, its cdf needs a weighted sum over K components,
 # which doesn't fit the single-rv shape.
 # ---------------------------------------------------------------------------
 
@@ -270,7 +270,7 @@ class StudentTForecast(_ParametricMixin, DistributionForecast):
 
     def crps(self, y):
         raise NotImplementedError(
-            "StudentTForecast.crps not implemented — no closed-form CRPS for "
+            "StudentTForecast.crps not implemented, no closed-form CRPS for "
             "Student-t in score.py yet. Use MC via sample()."
         )
 

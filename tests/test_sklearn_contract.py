@@ -146,7 +146,7 @@ class TestWalkForwardDoesNotMutate:
         r2 = WalkForward(n_folds=3, refit_on_full=False).fit_predict(
             Pipeline([shared], name="emos"), X, y, ids=ids, timestamps=ts,
         )
-        # Same OOF CRPS — proves both runs were clean refits.
+        # Same OOF CRPS, proves both runs were clean refits.
         np.testing.assert_allclose(
             r1.score(y, metrics=["crps"])["emos"]["crps"],
             r2.score(y, metrics=["crps"])["emos"]["crps"],

@@ -121,7 +121,7 @@ def run_side(df: pl.DataFrame, side: str) -> None:
     qd, _, _ = _price(dist_te, te, dmu=dmu)
 
     # naive "fix" 2: edge-recalibrate toward the market's realized error (isotonic,
-    # fit causally on train) — maximizes calibration of the edge, overfits on small N
+    # fit causally on train), maximizes calibration of the edge, overfits on small N
     qt, mt, rt = _price(predict(tr), tr)
     iso = IsotonicRegression(out_of_bounds="clip").fit(qt - mt, rt - mt)
     q2 = np.clip(m + iso.predict(q0 - m), 1e-4, 1 - 1e-4)

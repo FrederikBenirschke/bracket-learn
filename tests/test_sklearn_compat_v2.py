@@ -4,7 +4,7 @@ Pins the user-visible sklearn-style improvements:
 
 - Every estimator importable from the top level (``from bracketlearn import EMOS``).
 - BaseEstimator inherits from ``sklearn.base.BaseEstimator``.
-- Plain ``(X, y)`` / ``(X,)`` calls work — ids/timestamps auto-filled.
+- Plain ``(X, y)`` / ``(X,)`` calls work, ids/timestamps auto-filled.
 - ``__sklearn_is_fitted__`` flips True after fit.
 - ``n_features_in_`` set on fit when X has 2D shape.
 - ``feature_names_in_`` set on fit when X is a pandas DataFrame.

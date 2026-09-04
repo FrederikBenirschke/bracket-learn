@@ -8,18 +8,18 @@ classes conflated two concerns inside ``fit``:
   1. **Expand**: a per-row design ``(N, F)`` becomes a per-(row, bracket)
      design ``(M, F + 2)`` with ``[..., lo_b, hi_b]`` appended.
   2. **Fit**: an sklearn estimator on that expanded design and a target
-     derived from ``y`` — *always* the bracket-hit indicator
+     derived from ``y``, *always* the bracket-hit indicator
      ``1[y ∈ bracket_b]``.
 
 That hardcoded target made them inflexible: any caller who wanted a
 *different* per-(row, bracket) target (e.g. the mispricing residual
 ``hit − market_p``) had to fork the class. v0.5.0 split the two
-concerns and removed both classes — ``BracketExpander`` owns the
+concerns and removed both classes, ``BracketExpander`` owns the
 reshape, and the caller picks any sklearn estimator and any target.
 
 - ``BracketExpander`` (this module): owns the per-row ↔ per-(row, bracket)
   conversion. Builds ``X_expanded`` and, by default, a bracket-hit
-  target ``y_expanded`` — but the caller can ignore that and supply any
+  target ``y_expanded``, but the caller can ignore that and supply any
   target of shape ``(M,)`` they like.
 
 - Model fit is plain sklearn: the caller calls ``.fit(X_expanded,
@@ -92,14 +92,14 @@ class BracketExpander:
       ladders.
 
     State is captured at construction: ``brackets_by_id`` is the
-    authoritative dict. ``fit_transform`` does *not* mutate it — callers
+    authoritative dict. ``fit_transform`` does *not* mutate it, callers
     that need to add per-row ladders at predict time should construct
     a new expander or mutate the dict directly before calling
     ``transform`` / ``assemble_dist``.
 
     Output X column layout
     ----------------------
-    ``[X_0, X_1, ..., X_{F-1}, lo, hi]`` — original features first, then
+    ``[X_0, X_1, ..., X_{F-1}, lo, hi]``, original features first, then
     the two bracket-bound columns. Callers extending the feature set
     (e.g. with ``market_p``) should append AFTER ``hi``::
 
@@ -151,7 +151,7 @@ class BracketExpander:
     ) -> tuple[np.ndarray, np.ndarray | None]:
         """Expand X and (optionally) compute the default bracket-hit target.
 
-        ``y`` is shape ``(N,)`` — per-row realized values. The returned
+        ``y`` is shape ``(N,)``, per-row realized values. The returned
         ``y_expanded`` is shape ``(M,)`` with ``1`` where ``y_i`` falls
         inside bracket ``b`` of row ``i``, else ``0``. Bin-membership
         uses right-open intervals matching ``np.searchsorted(..., side='right')``,
@@ -203,14 +203,14 @@ class BracketExpander:
         ``BracketForecast``-backed ``DistributionForecast``.
 
         ``ids`` / ``timestamps`` must match the row order of the
-        most-recent ``transform`` / ``fit_transform`` call — same shape,
+        most-recent ``transform`` / ``fit_transform`` call, same shape,
         same ordering. ``predictions`` must have length
         ``offsets_[-1]``.
         """
         if self.offsets_ is None or self.per_row_edges_ is None:
             raise RuntimeError(
                 f"{self.name}.assemble_dist called before transform / "
-                f"fit_transform — no offsets recorded"
+                f"fit_transform, no offsets recorded"
             )
         eps = self.clip_eps if clip_eps is None else clip_eps
         if not (0.0 < eps < 0.5):

@@ -1,4 +1,4 @@
-"""Pipeline (flat sequential chain) — identity reproduction + normalization.
+"""Pipeline (flat sequential chain), identity reproduction + normalization.
 
 - `Pipeline([EMOS()])` and `Pipeline([IdentityTransformer(), EMOS()])` must
   reproduce a bare `EMOS()` bit-for-bit (the chain is inert without a real

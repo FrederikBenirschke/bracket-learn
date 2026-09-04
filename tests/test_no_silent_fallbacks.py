@@ -40,7 +40,7 @@ def _prov() -> ProvenanceMeta:
 
 
 # ---------------------------------------------------------------------------
-# B6 — SklearnPoint introspects fit signature instead of swallowing TypeError.
+# B6. SklearnPoint introspects fit signature instead of swallowing TypeError.
 # ---------------------------------------------------------------------------
 
 
@@ -92,7 +92,7 @@ def test_sklearn_point_raises_genuine_typeerror_inside_fit():
 
 
 # ---------------------------------------------------------------------------
-# B3 — CumulativeBinary requires explicit outer_edges (now a fit/predict kwarg).
+# B3. CumulativeBinary requires explicit outer_edges (now a fit/predict kwarg).
 # ---------------------------------------------------------------------------
 
 
@@ -126,7 +126,7 @@ def test_cumulative_binary_rejects_inside_outer_edges():
 
 
 # ---------------------------------------------------------------------------
-# B5 — RNNHourly raises on unknown station IDs (no clip).
+# B5, RNNHourly raises on unknown station IDs (no clip).
 # ---------------------------------------------------------------------------
 
 
@@ -144,14 +144,14 @@ def test_rnn_hourly_raises_on_unknown_station_ids():
     rnn = RNNHourly(hidden=4, epochs=2, batch_size=16)
     rnn.fit(X, y, station_ids=stations)
 
-    # Predict with an unknown station ID — must raise.
+    # Predict with an unknown station ID, must raise.
     unknown = np.array([0, 0, 5], dtype=np.int64)  # 5 was not in training
     with pytest.raises(ValueError, match="trained range"):
         rnn.predict(X[:3], ids=ids[:3], timestamps=ts[:3], station_ids=unknown)
 
 
 # ---------------------------------------------------------------------------
-# B10 — Isotonic + _bracket_probs_from_dist raise on zero row-sum.
+# B10. Isotonic + _bracket_probs_from_dist raise on zero row-sum.
 # ---------------------------------------------------------------------------
 
 
@@ -169,7 +169,7 @@ def test_bracket_probs_from_dist_raises_on_zero_row_sum():
 
 
 # ---------------------------------------------------------------------------
-# B2 — StackedParametric row-alignment + sigma fallback.
+# B2. StackedParametric row-alignment + sigma fallback.
 # ---------------------------------------------------------------------------
 
 
@@ -218,7 +218,7 @@ def test_emos_falls_back_to_constant_sigma_when_mom_gives_negative_coef():
     rng = np.random.default_rng(0)
     n, k = 200, 4
     X = rng.normal(0, 1, (n, k))
-    # Build y so residuals shrink as spread widens — this gives d_<0 on
+    # Build y so residuals shrink as spread widens, this gives d_<0 on
     # the linear-in-variance MoM regression.
     ens_var = X.var(axis=1, ddof=0)
     noise = rng.normal(0, 1.0 / np.maximum(ens_var, 0.1), n)
@@ -239,7 +239,7 @@ def test_emos_falls_back_to_constant_sigma_when_mom_gives_negative_coef():
 
 def test_emos_constant_sigma_fallback_emits_warning():
     """When the OLS variance fit collapses to a constant, the user must be
-    told — Rule #0.5 says silent fallbacks rot debugging hours later."""
+    told. Rule #0.5 says silent fallbacks rot debugging hours later."""
     import warnings
 
     from bracketlearn.trainers import EMOS
@@ -287,7 +287,7 @@ def test_emos_normal_fit_does_not_tag_provenance():
     """The provenance tag must not appear on a healthy linear-in-variance fit.
 
     Bypass the inference problem by hand-setting healthy coefficients then
-    calling predict_dist — the tag should not be added.
+    calling predict_dist, the tag should not be added.
     """
     from bracketlearn.trainers import EMOS
 

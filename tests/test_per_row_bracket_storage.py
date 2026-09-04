@@ -1,4 +1,4 @@
-"""v0.3.0 — per-row BracketForecast storage + integrate() lift.
+"""v0.3.0, per-row BracketForecast storage + integrate() lift.
 
 BracketForecast.edges is now (N, B+1) per row, with NaN padding for
 ragged rows. integrate(edges_per_row) on DistributionForecast lifts any
@@ -84,7 +84,7 @@ def test_ragged_rows_with_nan_padding(prov, ids_ts):
 
 
 # ---------------------------------------------------------------------------
-# integrate() lift — per subclass.
+# integrate() lift, per subclass.
 # ---------------------------------------------------------------------------
 
 

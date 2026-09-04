@@ -1,4 +1,4 @@
-"""BracketForecast — per-row bracket-backed distribution.
+"""BracketForecast, per-row bracket-backed distribution.
 
 Storage is always 2-D with NaN padding for ragged rows; see the class
 docstring for the exact (edges, probs) shape contract.
@@ -20,9 +20,9 @@ class BracketForecast(DistributionForecast):
     """Per-row bracket-backed distribution.
 
     Storage is always 2-D:
-      ``edges``: (N, B_max + 1) — row i's bracket boundaries live in
+      ``edges``: (N, B_max + 1), row i's bracket boundaries live in
         the first ``B_i + 1`` columns; trailing columns are NaN.
-      ``probs``: (N, B_max)     — row i's bracket probabilities live
+      ``probs``: (N, B_max)     - row i's bracket probabilities live
         in the first ``B_i`` columns; trailing columns are NaN.
 
     All math is per-row. Ragged-row support is via NaN padding: a row's
@@ -96,7 +96,7 @@ class BracketForecast(DistributionForecast):
             valid_p = int((~prob_nan[i]).sum())
             if valid_p != valid_e - 1:
                 raise ValueError(
-                    f"row {i}: {valid_p} finite probs but {valid_e} finite edges — "
+                    f"row {i}: {valid_p} finite probs but {valid_e} finite edges, "
                     f"expected probs = edges - 1"
                 )
             p_row = probs[i, :valid_p]
@@ -158,7 +158,7 @@ class BracketForecast(DistributionForecast):
         B_per_row = self._row_valid_B()                # (N,)
         # left/right valid edge per row.
         left_edge = edges[:, 0]                         # (N,)
-        right_edge = edges[np.arange(N), B_per_row]     # (N,) — edges[i, B_i]
+        right_edge = edges[np.arange(N), B_per_row]     # (N,), edges[i, B_i]
         below = vals <= left_edge[:, None]
         above = vals >= right_edge[:, None]
         k = np.empty((N, M), dtype=int)

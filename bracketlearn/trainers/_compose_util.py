@@ -4,9 +4,9 @@ ordered list.
 The composition contract (``Stacker([p1, p2], meta)``) feeds a meta-combiner
 its upstream ``DistributionForecast`` objects **positionally**, in declared
 order, via ``upstream=[...]`` when run under ``WalkForward``. Names are not the
-wiring — they live only on the leaderboard.
+wiring, they live only on the leaderboard.
 
-Per Rule #0.5: a missing/empty upstream raises loud — never a silent empty
+Per Rule #0.5: a missing/empty upstream raises loud, never a silent empty
 list or partial set.
 """
 
@@ -29,7 +29,7 @@ def resolve_upstream(
         raise ValueError(f"{where}: pass upstream=[dist, ...]")
     ups = list(upstream)
     if not ups:
-        raise ValueError(f"{where}: upstream=[] is empty — need ≥1 forecast")
+        raise ValueError(f"{where}: upstream=[] is empty, need ≥1 forecast")
     return ups
 
 

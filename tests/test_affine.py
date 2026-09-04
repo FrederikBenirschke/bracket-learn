@@ -3,7 +3,7 @@
 The invariance the normalization design rests on: under the per-row map
 ``v ↦ v·s + c`` (s>0), a forecast's CDF satisfies
 ``dist.affine(c, s).cdf_at(y) == dist.cdf_at((y − c) / s)`` and bracket
-probabilities are unchanged when the edges are mapped by the same affine —
+probabilities are unchanged when the edges are mapped by the same affine,
 so a z-space forecast integrated over z-edges == the °F forecast over °F edges.
 """
 

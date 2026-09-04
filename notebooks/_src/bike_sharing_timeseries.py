@@ -118,7 +118,7 @@ sample = df.iloc[:24 * 14]
 ax.plot(sample.index, y[:24 * 14], color=color_for("qreg"), lw=1.0)
 ax.set_xlabel("hour")
 ax.set_ylabel("rentals")
-ax.set_title("First 14 days of hourly rentals — daily + weekly cycle visible")
+ax.set_title("First 14 days of hourly rentals, daily + weekly cycle visible")
 fig.tight_layout()
 plt.show()
 
@@ -153,7 +153,7 @@ result = wf.fit_predict(model, X, y, ids=ids, timestamps=ts)
 print(result.to_table(y, metrics=["crps", "log_score", "pit"]))
 
 # %% [markdown]
-# ## Headline diagnostic — predicted vs realized
+# ## Headline diagnostic, predicted vs realized
 #
 # Same sklearn-style scatter grid as the housing notebook, four panels.
 # `emp` collapses onto one horizontal stripe. `persist24` clusters along
@@ -176,7 +176,7 @@ for name in ["emp", "persist24", "qreg", "lgbm_normal"]:
 fig = predicted_vs_realized_grid(
     panels, ncols=4, units="rentals/hr",
     figsize_per_panel=(3.2, 3.2),
-    title="Predicted vs realized — four forecasters, OOF predictions",
+    title="Predicted vs realized, four forecasters, OOF predictions",
 )
 plt.show()
 
@@ -196,7 +196,7 @@ for ax, name in zip(axes, ["emp", "persist24", "qreg", "lgbm_normal"], strict=Tr
                  fontsize=10)
     ax.set_xlabel("PIT")
 axes[0].set_ylabel("density")
-fig.suptitle("PIT — uniform (black line) = perfectly calibrated", y=1.02)
+fig.suptitle("PIT, uniform (black line) = perfectly calibrated", y=1.02)
 fig.tight_layout()
 plt.show()
 
@@ -318,13 +318,13 @@ ax.set_xlabel("PIT bin")
 ax.set_ylabel("hour of day")
 ax.set_yticks(np.arange(0, 24, 3) + 0.5,
               labels=[f"{h:02d}" for h in range(0, 24, 3)])
-ax.set_title("QReg PIT density by hour of day — uniform colour = calibrated")
+ax.set_title("QReg PIT density by hour of day, uniform colour = calibrated")
 fig.colorbar(im, ax=ax, label="density")
 fig.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ## Reliability — bracket probabilities calibrated?
+# ## Reliability, bracket probabilities calibrated?
 
 # %%
 def _reliability(dist, edges, y_oof, n_bins=10):
@@ -355,7 +355,7 @@ for name in ["emp", "persist24", "qreg", "lgbm_normal"]:
     mp, hr, raw = _reliability(dist, edges, y_oof)
     series.append((name, mp, hr, raw))
 fig = reliability_with_histogram(
-    series, title="Reliability — all rows × all brackets pooled",
+    series, title="Reliability, all rows × all brackets pooled",
 )
 plt.show()
 
@@ -434,7 +434,7 @@ for ax, (base_name, base_v, suffix) in zip(
     for i, s in enumerate(vals):
         ax.text(s + (0.005 if s > 0 else -0.005), i, f"{s:+.3f}",
                 va="center", ha="left" if s > 0 else "right", fontsize=8.5)
-fig.suptitle("Bike-sharing leaderboard — beat both floors", y=1.02)
+fig.suptitle("Bike-sharing leaderboard, beat both floors", y=1.02)
 fig.tight_layout()
 plt.show()
 

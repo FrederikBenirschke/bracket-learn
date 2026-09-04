@@ -5,10 +5,10 @@ End to end on the bundled anonymized weather sample
 
   1. Build per-row bracket grids and the reference (market) price per bracket.
   2. Fit `BlendedBracketGBM` at several tilts `λ` (objective `L = CE − λ·EA`).
-  3. Score each against the reference two ways — `edge_alignment` (value,
+  3. Score each against the reference two ways, `edge_alignment` (value,
      fee-free) and `edge_alignment_costed` (value net of a per-trade fee).
   4. Show the rule: EA rises with the tilt, but *costed* value peaks at an
-     interior `λ` — select the tilt by costed value, never by EA.
+     interior `λ`, select the tilt by costed value, never by EA.
   5. Same call, torch engine (`BlendedBracketNet`).
 
 Run::
@@ -78,7 +78,7 @@ def load():
 
 
 def score(dist, reference_by_id, y_by_id):
-    """Value (EA) + value-net-of-fee (costed) in ONE call — no manual flatten.
+    """Value (EA) + value-net-of-fee (costed) in ONE call, no manual flatten.
 
     ``value_report_dist`` does the per-row ragged flatten + renormalization and
     scores against the same ``reference_by_id`` we trained with. We add the model
@@ -100,7 +100,7 @@ def score(dist, reference_by_id, y_by_id):
 
 def fit_score(Trainer, lam, X, y, ids, bbi, rbi, y_by_id, tr, te, **kw):
     # Construction is hyperparameters only; the per-row grids/references flow at
-    # call time. fit/predict each select their subset by the ids handed to them —
+    # call time. fit/predict each select their subset by the ids handed to them,
     # the same dicts drop straight into WalkForward.fit_predict(..., brackets_by_id=).
     model = Trainer(lam=lam, **kw)
     model.fit(X[tr], y[tr], ids=ids[tr], brackets_by_id=bbi, reference_by_id=rbi)
@@ -121,7 +121,7 @@ def main():
     print("Train L = CE - lam*EA, then score value (EA) and value-net-of-fee (costed).")
     print("EA rises with the tilt; SELECT lam by the costed column, not EA.\n")
 
-    # lighter regularization than the production defaults — this demo has only
+    # lighter regularization than the production defaults, this demo has only
     # two raw features (ens mean/std), so the trees need room to respond.
     gbm_kw = dict(min_child_samples=20, reg_lambda=1.0, num_leaves=31, n_estimators=200)
     print(f"  {'model':22s} {'EA×100':>8} {'costed×100':>11} {'Brier':>8}")

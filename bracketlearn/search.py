@@ -11,7 +11,7 @@ and a **WalkForward** template, kept separate the way the native surface keeps
 model and CV separate. For each combination from ``param_grid`` it:
 
 1. deep-copies the model graph and applies any ``node__field`` params to the
-   graph node named ``node`` (sklearn ``__``-nested syntax — e.g.
+   graph node named ``node`` (sklearn ``__``-nested syntax, e.g.
    ``qreg__n_estimators=400`` routes into the stage owning ``n_estimators``);
 2. clones the WalkForward template, overriding any CV-level params
    (``n_folds``, ``cv``, ``embargo``, ``rolling_window``, ``refit_on_full``,
@@ -65,12 +65,12 @@ class GridSearch:
         param_grid: dict mapping param name to a list of candidate values. Keys
             are either a CV-level WalkForward arg (``n_folds`` etc.) or a
             ``node__field`` nested key routed into the graph node named ``node``.
-        scoring: metric name passed to ``PipelineResult.score`` — one of
+        scoring: metric name passed to ``PipelineResult.score``, one of
             ``crps``, ``log_score``, ``log_loss_bracket``, ``brier_bracket``.
             Lower is better for all four (this is a *loss*).
         refit_node: name of the node whose OOF metric is the objective. If
             ``None``, the *mean* across all nodes is used.
-        edges: bracket ladder — shared ``(B+1,)``, dense ``(N, B+1)``, or a
+        edges: bracket ladder, shared ``(B+1,)``, dense ``(N, B+1)``, or a
             ragged per-row sequence; required if ``scoring``
             is a bracket metric.
         greater_is_better: defaults to ``False`` (built-in metrics are losses).
@@ -232,7 +232,7 @@ def _set_node_field(obj: Any, node_name: str, field: str, value: Any) -> None:
         if len(owners) > 1:
             raise ValueError(
                 f"node {node_name!r}: param {field!r} is exposed by "
-                f"{len(owners)} stages — ambiguous"
+                f"{len(owners)} stages, ambiguous"
             )
         owners[0].set_params(**{field: value})
     else:

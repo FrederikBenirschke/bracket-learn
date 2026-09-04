@@ -19,7 +19,7 @@ minor release; patch releases are bug-fixes and additive tests.
   row's ladder.** They took one `(B+1,)` edge vector and used it for the
   `searchsorted` deciding which bracket the outcome fell in. On a rotating
   ladder (Kalshi relists daily) that puts every row after the first in the
-  wrong bracket and returns a plausible number rather than raising — measured
+  wrong bracket and returns a plausible number rather than raising, measured
   0.8904 against a correct 0.7343 on a 40-row synthetic ladder. Both scorers,
   and `Pipeline`'s bracket metrics, now accept a shared `(B+1,)` vector, a
   dense `(N, B+1)` grid, or a ragged per-row sequence; per-row bracket counts
@@ -31,28 +31,28 @@ minor release; patch releases are bug-fixes and additive tests.
   the outcome bracket on 162 of its 2,168 rows (7.5%). Repairing only the edges
   moves HIGH EA x100 from +0.4938 to +0.3326 and LOW from +1.2960 to +0.5922;
   the remaining move to today's figures (HIGH -0.049, LOW -0.110) is
-  population — the new sample covers 2026-03-17..09-03, 5,429 rows over 18
+  population, the new sample covers 2026-03-17..09-03, 5,429 rows over 18
   stations, where the old one was a subset. The fixture is now produced by a
   committed script that asserts, per row, that tails stay open and inner
   brackets are width-2.
 - **The weather example splits chronologically** rather than by random
   permutation; weather is strongly autocorrelated day to day, so a permutation
   put adjacent days on opposite sides of the boundary. Worth about -0.199 ->
-  -0.151 on matched data — the smallest of the three effects above.
+  -0.151 on matched data, the smallest of the three effects above.
 - **The example's printed annotations derive from the computed numbers** instead
   of asserting a fixed conclusion, so a data change cannot leave the prose
   contradicting the table (which is what happened here).
 
 ### Added
-- **`score.bootstrap_ci`** — percentile bootstrap for any contract-level
+- **`score.bootstrap_ci`** - percentile bootstrap for any contract-level
   scorer, with optional clustering. Pass `cluster` when contracts share an
   outcome (a bracket ladder resolves off one realized value); whole clusters
   are resampled together. Returns point, lo, hi, se, and the cluster and
   observation counts. Measured inflation over the i.i.d. interval on this
-  repo's weather sample is 1.02x (HIGH) / 1.07x (LOW) — sample-specific, so
+  repo's weather sample is 1.02x (HIGH) / 1.07x (LOW), sample-specific, so
   measure it rather than assume a factor. The weather example prints a
   clustered 95% CI beside each EA.
-- **`ContractSpec.edges_per_row`** — ladder adapters record the grid each
+- **`ContractSpec.edges_per_row`** - ladder adapters record the grid each
   entity was priced on, so a scorer can verify the edges it is handed rather
   than trust them.
 
@@ -63,7 +63,7 @@ minor release; patch releases are bug-fixes and additive tests.
   rotating ladder was already silently incorrect; pass the per-row edges the
   ladder was priced with. A genuinely shared ladder is unaffected.
 - **`ens_mean`/`ens_std` in the weather fixture are now a declared definition**
-  — multi-model mean/std across all available forecast sources — rather than
+  multi-model mean/std across all available forecast sources, rather than
   one inherited from the older export, whose definition is unrecoverable
   (its ens_std averages 1.917; multi-model gives 2.150 and the GEFS
   percentile fan 1.268). Numbers off this fixture are a new measurement, not a
@@ -71,18 +71,18 @@ minor release; patch releases are bug-fixes and additive tests.
 - **`docs/guides/value_vs_accuracy.md` §5b rewritten** to report what the data
   now shows: on this sample EMOS is less accurate than the market *and*
   negative-EA, so the synthetic section's "worse Brier, still tradeable" case
-  does not reproduce on real data here. The mechanism the guide teaches —
-  accuracy and value are different axes that move independently — is unchanged
+  does not reproduce on real data here. The mechanism the guide teaches,
+  accuracy and value are different axes that move independently, is unchanged
   and still visible in the table. The guide's earlier claim that the sign of
   EMOS's EA was robust across splits is withdrawn; it was made on the corrupted
   fixture.
 
-## [0.8.0] — 2026-06-14
+## [0.8.0], 2026-06-14
 
 ### Removed
 - **Dropped Python 3.10.** Minimum is now **3.11** (`requires-python >=3.11`,
   classifiers + CI matrix updated). The library imports `typing.Self` at runtime
-  in ~10 modules, which never existed on 3.10 — 3.10 support was nominal only.
+  in ~10 modules, which never existed on 3.10, 3.10 support was nominal only.
 
 ### Added
 - **Type-checking gate.** The library is now **mypy-clean** (`strict_optional`)
@@ -90,16 +90,16 @@ minor release; patch releases are bug-fixes and additive tests.
   surface (`files = …`) and silences `import-untyped` for stub-less third-party
   deps (sklearn/scipy/lightgbm/…). The "type checked: mypy" badge is now enforced,
   not aspirational. Fixes were narrowing-only (guards on fitted-state `Optional`
-  attributes, accurate return annotations) — no behavioral change.
+  attributes, accurate return annotations), no behavioral change.
 - **`value_report_dist` / `edge_alignment_dist`** (in `score`, re-exported from
-  `bracketlearn.value`) — one-call value scoring of a value trainer's
+  `bracketlearn.value`), one-call value scoring of a value trainer's
   `predict_dist` output: pass the distribution, the `reference_by_id` you trained
   with, and realized `y` (array in row order **or** dict by id). Handles the
   per-row **ragged** (NaN-padded, varying bracket count) flatten + renormalization
   internally; `fee=` merges costed metrics under `costed_*` keys.
 
 ### Changed
-- **Breaking — bracket-native trainer construction is hyperparameters only.**
+- **Breaking, bracket-native trainer construction is hyperparameters only.**
   `BlendedBracketGBM` / `BlendedBracketNet` no longer take `brackets_by_id` /
   `reference_by_id` at construction, and `CumulativeBinary` no longer takes
   `cutpoints_by_id` / `outer_edges_by_id`. The per-row grids are passed at call
@@ -116,7 +116,7 @@ minor release; patch releases are bug-fixes and additive tests.
   the `fit`/`predict_dist`/`WalkForward.fit_predict` call.
 - **`Pipeline.predict_dist` forwards `**kwargs`.** A Pipeline-wrapped bracket
   trainer now receives its id-keyed grids at predict (matching `Pipeline.fit`,
-  which already forwarded them) — required for `CumulativeBinary` /
+  which already forwarded them), required for `CumulativeBinary` /
   `BlendedBracket*` to run under `WalkForward` inside a `Pipeline`.
 - **`WalkForward.fit_predict` / `predict` forward id-keyed `**row_meta`.**
   Extra keyword dicts (e.g. `brackets_by_id` / `reference_by_id`) are passed
@@ -152,29 +152,29 @@ minor release; patch releases are bug-fixes and additive tests.
 - `_HESS_FLOOR` named constant replaces the repeated `1e-6` Newton-Hessian floor
   literal in `value.objective`.
 - Value-trainers guide documents "trained edge ≠ traded edge" (the EA loss tilts
-  the raw per-binary `q`, but `predict_dist` renormalizes per row — score value
+  the raw per-binary `q`, but `predict_dist` renormalizes per row, score value
   on the renormalized output).
 - Corrected the `value.objective` Hessian docstring: the EA term's curvature is
   *indefinite* (sign flips with `(r−m)` and `(1−2q)`) and is intentionally
-  dropped to keep a positive-definite Newton metric — not "≈ no curvature".
+  dropped to keep a positive-definite Newton metric, not "≈ no curvature".
 
 
-## [0.7.0] — 2026-06-14
+## [0.7.0], 2026-06-14
 
-**Breaking — composition API unified.** The two old composition syntaxes
+**Breaking, composition API unified.** The two old composition syntaxes
 (inside-out `LiftedForecaster`/`CalibratedForecaster` wrappers for chains;
 a name-keyed `ForecastPipeline(steps=[(name, fc)], cv=…)` for CV + stacking)
 collapse into three homogeneous, object-composed primitives:
 
-- `Pipeline([stage, …], *, name=…)` — a sequential chain wired left→right by
+- `Pipeline([stage, …], *, name=…)`, a sequential chain wired left→right by
   protocol type. Subsumes `LiftedForecaster` and `CalibratedForecaster`: a
   lifter or calibrator is just another stage in the list. A `Pipeline` *is* a
   `DistForecaster`.
-- `Stacker([upstream, …], meta, *, name=…)` — a parallel combiner over
+- `Stacker([upstream, …], meta, *, name=…)`, a parallel combiner over
   upstream `Pipeline`/`Stacker` **objects**. The dependency *is* the nesting;
   there is no name-string `deps`/`deps_oof`. Meta-combiners receive their
   upstreams' OOF distributions positionally via `upstream=[…]`.
-- `WalkForward(*, cv, n_folds, embargo, refit_on_full, …)` — the CV/OOF
+- `WalkForward(*, cv, n_folds, embargo, refit_on_full, …)`, the CV/OOF
   driver, split out of the old `ForecastPipeline`. `fit_predict(model, X, y,
   ids=…, timestamps=…)` returns a `PipelineResult`; `predict(…)` requires
   `refit_on_full=True`.
@@ -207,7 +207,7 @@ Migration::
     result.to_table(y, metrics=["log_loss_bracket"], edges=edges)  # shared 1-D vector
     wf.predict(X_new, ids=…, timestamps=…)
 
-Stacker migration — upstreams are objects, weights arrive positionally::
+Stacker migration, upstreams are objects, weights arrive positionally::
 
     # Old:  StackedParametric(deps=("ridge", "ngboost"))  + pipe injects deps_oof
     # New:
@@ -221,7 +221,7 @@ the model and driver separately, with `refit_node=` (was `refit_stage=`) and
 
 ### Added
 - **Reference-relative value metrics** in `score` (Step-3 scoring extension):
-  `edge_alignment(q, m, r)` (Edge-Alignment — the expected betting payoff
+  `edge_alignment(q, m, r)` (Edge-Alignment, the expected betting payoff
   `(q−m)(r−m)` of a price `q` against a reference `m`), `edge_alignment_corr`,
   `shared_bias_slope`, and `value_report` (EA plus its exact `EA = A − B`
   market-mispricing / non-orthogonality split). Bracket-ladder wrappers
@@ -239,9 +239,9 @@ the model and driver separately, with `refit_node=` (was `refit_stage=`) and
   a per-trade fee + trade gate) and a guide `docs/guides/value_with_fees.md`.
   Frictionless EA is linear in the edge (rewards over-confidence without bound);
   a fee turns the objective into a deductible `E[(|δ| − fee)₊]` with an interior
-  optimum — so training for value must select its tilt by costed value, not by
+  optimum, so training for value must select its tilt by costed value, not by
   EA. Tests in `tests/test_value_metrics.py`.
-- **`bracketlearn.value` module — training for value.** `BlendedBracketGBM`
+- **`bracketlearn.value` module, training for value.** `BlendedBracketGBM`
   (LightGBM custom objective) and `BlendedBracketNet` (torch) train bracket
   models on `L = CE − λ·EA`: calibration tilted toward capturing a reference
   price's mispricing. Bracket-native (per-row `brackets_by_id` +
@@ -258,13 +258,13 @@ the model and driver separately, with `refit_node=` (was `refit_stage=`) and
   `CalibratedForecaster`
 - the name-keyed `deps` / `deps_oof` stacker contract (and the dead
   `Forecaster.depends_on` field)
-- `Stacking` (legacy alias for `StackedParametric` — use the canonical name)
+- `Stacking` (legacy alias for `StackedParametric`, use the canonical name)
 - `BracketForecast.shared_edges()` (consume per-row `self.edges` directly)
 - `Isotonic(edges=…)` constructor arg → `Isotonic(pre_integrate_edges=…)`
 - bracket-metric `ladder=BracketLadder(edges=…)` → `edges=` (a shared 1-D
   edge vector; the score path builds the per-row ladder internally)
 
-## [0.6.0] — 2026-05-28
+## [0.6.0], 2026-05-28
 
 **Breaking**: ``Backing`` and ``ParametricFamily`` enums removed, along
 with the ``DistributionForecast.backing`` / ``.family`` properties on
@@ -317,11 +317,11 @@ use a tuple of all three parametric subclasses::
 
 All 343 tests pass.
 
-## [0.5.0] — 2026-05-27
+## [0.5.0], 2026-05-27
 
 **Breaking**: ``BracketClassifier`` and ``BracketRegressor`` removed.
-Both classes conflated two concerns inside ``fit`` — the per-row to
-per-(row, bracket) reshape and the model fit — and hardcoded the target
+Both classes conflated two concerns inside ``fit``, the per-row to
+per-(row, bracket) reshape and the model fit, and hardcoded the target
 as a bracket-hit indicator. That made the regressor inflexible: any
 caller wanting a different per-(row, bracket) target (e.g. mispricing
 residual ``hit - market_p``) had to fork the class.
@@ -380,9 +380,9 @@ length-mismatch guards, end-to-end logistic-regression composition).
 - ``bracketlearn.transformers.BracketExpander``
 - ``bracketlearn.BracketExpander`` top-level re-export
 
-## [0.4.0] — 2026-05-27
+## [0.4.0], 2026-05-27
 
-Three Bayesian trainers added — one with empirical wins on this repo's
+Three Bayesian trainers added, one with empirical wins on this repo's
 domain, one that ties the existing baseline, one that didn't justify
 its structural pitch but ships as an alternative. Pipeline grows a
 ``groups`` kwarg so site-aware trainers compose with the existing CV
@@ -398,7 +398,7 @@ bracketlearn.forecast import …``, ``from bracketlearn.trainers import
 
 ### Added
 
-- ``bracketlearn.trainers.BracketClassifier`` — single binary
+- ``bracketlearn.trainers.BracketClassifier``, single binary
   classifier on ``[X, lo, hi]`` features with target
   ``1[y ∈ [lo, hi))``. Any sklearn-style classifier with
   ``predict_proba`` works (Logistic, GradientBoosting, LGBM, RF, MLP).
@@ -412,10 +412,10 @@ bracketlearn.forecast import …``, ``from bracketlearn.trainers import
   tree-based classifier matches ``CumulativeBinary`` within ~10%
   CRPS on a synthetic nonlinear benchmark, beats EMOS-discretised
   and ``CDFBoostBracket(EMOS dep)``; with a linear classifier acts
-  as a Gaussian-ish floor. Sells flexibility — same trainer, any
-  classifier — rather than peak accuracy. See bench
+  as a Gaussian-ish floor. Sells flexibility, same trainer, any
+  classifier, rather than peak accuracy. See bench
   ``/tmp/bracket_classifier_bench.py`` for numbers.
-- ``bracketlearn.trainers.BracketRegressor`` — regressor-sibling of
+- ``bracketlearn.trainers.BracketRegressor``, regressor-sibling of
   ``BracketClassifier``. Same augmentation (``[X_i, lo_b, hi_b]``)
   and same target ``1[y_i ∈ [lo_b, hi_b))``, but fits any sklearn-
   style regressor (``fit`` + ``predict``) instead of a classifier.
@@ -425,12 +425,12 @@ bracketlearn.forecast import …``, ``from bracketlearn.trainers import
   ElasticNet, GradientBoostingRegressor, LGBMRegressor, MLPRegressor,
   custom GAMs), or when squared-error loss on the bracket-hit target
   is preferable to cross-entropy. Trade-off: regressor outputs aren't
-  constrained to ``[0, 1]`` — clipping + row-normalisation lose the
+  constrained to ``[0, 1]``, clipping + row-normalisation lose the
   calibration logistic-style classifiers get for free. Same loud
   rails as ``BracketClassifier``. Shares the ``_augment_with_bracket_
   bounds`` and ``_assemble_bracket_forecast`` helpers with the
   classifier so behaviour stays in lockstep.
-- ``bracketlearn.trainers.BayesianRidge`` — conjugate
+- ``bracketlearn.trainers.BayesianRidge``, conjugate
   Normal-Inverse-Gamma Bayesian linear regression. Predictive per row
   is Student-t with ``ν = 2·a_n``; predictive σ inflates via
   ``(1 + xᵀ V_n x)`` so rows far from training data automatically get
@@ -439,7 +439,7 @@ bracketlearn.forecast import …``, ``from bracketlearn.trainers import
   ``b_n`` (data leak / over-tight prior). Standardisation on by
   default; intercept fitted with a near-flat prior
   (``prior_precision_intercept=1e-6``).
-- ``bracketlearn.trainers.BMAStacking`` — meta-learner alternative to
+- ``bracketlearn.trainers.BMAStacking``, meta-learner alternative to
   ``StackedParametric``. Dirichlet-prior weights on the
   K-component mixture of upstream Normals (moment-matched from
   any parametric backing). EM with Dirichlet pseudo-counts;
@@ -448,9 +448,9 @@ bracketlearn.forecast import …``, ``from bracketlearn.trainers import
   disagree. Empirical caveat: on this repo's regression scenarios
   BMA ties ``StackedParametric(sigma_method='geometric_mean_upstream')``
   and loses to ``StackedParametric`` when upstream disagreement is
-  structural bias correctable by an OLS negative coefficient — ships
+  structural bias correctable by an OLS negative coefficient, ships
   as an option, not a replacement.
-- ``bracketlearn.trainers.HierarchicalNormal`` — cross-site
+- ``bracketlearn.trainers.HierarchicalNormal``, cross-site
   partial-pooling regression. Per-site coefficients ``β_s`` shrunk
   toward a common ``β₀`` with variance components ``(σ², τ²)``
   estimated by empirical-Bayes (Type-II marginal likelihood; Nelder-
@@ -460,7 +460,7 @@ bracketlearn.forecast import …``, ``from bracketlearn.trainers import
   Unseen sites raise by default (``allow_unseen_sites=False``); when
   enabled, predictive uses ``β₀`` with ``V_β₀ + τ² I`` added to
   reflect the missing per-site data. Empirical wins on imbalanced-N
-  scenarios — see commit benchmark for paired-bootstrap CRPS CIs.
+  scenarios, see commit benchmark for paired-bootstrap CRPS CIs.
   Woodbury identity keeps per-site fit O(K³) regardless of n_s.
 - ``ForecastPipeline.fit_predict(...)`` and ``.predict(...)`` accept
   ``groups: np.ndarray | None``, threaded through fold slicing and
@@ -470,7 +470,7 @@ bracketlearn.forecast import …``, ``from bracketlearn.trainers import
   via the same signature-introspection routing that already handles
   ``sample_weight`` / ``deps_oof`` / ``ids`` / ``timestamps``. No
   behaviour change for callers that don't pass ``groups``.
-- Internal helper ``bracketlearn.pipeline._predict_with_extras`` —
+- Internal helper ``bracketlearn.pipeline._predict_with_extras``,
   generalises the deprecated ``_predict_with_deps`` to thread any
   predict-time kwarg (``deps_oof``, ``groups``, future ones) through
   signature introspection. ``_predict_with_deps`` kept as a
@@ -522,20 +522,20 @@ bracketlearn.forecast import …``, ``from bracketlearn.trainers import
 - 1 ``ForecastPipeline`` integration test for ``groups`` routing
   (fit_predict + predict + missing-groups raise).
 
-## [0.3.0] — 2026-05-26
+## [0.3.0], 2026-05-26
 
 `DistributionForecast` is now an `abc.ABC` base with five concrete
 subclasses; `BracketForecast` stores per-row edges natively;
 bracket-aware trainers consume id-keyed dicts so each market/event
 can carry its own bracket grid. Motivating use case: Kalshi
-temperature contracts list a different bracket ladder every day — a
+temperature contracts list a different bracket ladder every day, a
 single forecast needs to price against the row's own grid, not a
 shared global ladder.
 
 ### Added
 
 - `bracketlearn.forecast.NormalForecast`, `StudentTForecast`,
-  `MixtureNormalForecast`, `QuantileForecast`, `BracketForecast` —
+  `MixtureNormalForecast`, `QuantileForecast`, `BracketForecast`,
   concrete subclasses of `DistributionForecast`. Each owns typed
   storage (no `params: dict[str, ndarray] | None`) and its own math
   (no `if/elif` on `(backing, family)` at every accessor). Both the
@@ -563,7 +563,7 @@ shared global ladder.
   (`NormalForecast(mu=, sigma=, ids=, timestamps=, provenance=)`) or
   the `DistributionForecast.from_*` classmethods, which now route to
   the matching subclass. The two-level `(backing, family)`
-  discriminator collapses to one level — the class itself is the
+  discriminator collapses to one level, the class itself is the
   backing.
 - **Breaking.** `BracketForecast.edges` is now `(N, B+1)` per-row,
   NaN-padded for ragged-length rows. `from_brackets` still accepts
@@ -595,7 +595,7 @@ shared global ladder.
   arg. Inputs and outputs are `BracketForecast` (any subclass that
   isn't a `BracketForecast` must be `.integrate()`d first). Pass
   `pre_integrate_edges=...` to have `Isotonic` auto-integrate
-  non-bracket inputs internally — used by the `emos_calibrated()`
+  non-bracket inputs internally, used by the `emos_calibrated()`
   factory to wrap a parametric forecaster with bracket calibration.
 - `score.log_score_bracket`, `crps_bracket`, `to_point`, and
   `_quantile_at` now consume per-row edges (NaN-padded tail aware).
@@ -616,7 +616,7 @@ shared global ladder.
   `dist.integrate(edges)`, which works on any subclass and returns
   a typed `BracketForecast` instead of raw probs.
 
-## [0.2.0] — 2026-05-26
+## [0.2.0], 2026-05-26
 
 Initial public release. Sklearn-style API; four backings (parametric
 normal / mixture-normal / quantile / bracket); `ForecastPipeline` with
@@ -628,14 +628,14 @@ GitHub Actions CI.
 
 - `bracketlearn.__version__` (top-level + `__all__`) so callers can
   introspect the installed version without parsing package metadata.
-- `adapters.BinaryAbove` — `P(X > k)` priced as `1 - dist.cdf(k)`. Maps
+- `adapters.BinaryAbove`, `P(X > k)` priced as `1 - dist.cdf(k)`. Maps
   to single-threshold Kalshi / Polymarket contracts.
-- `adapters.BinaryBelow` — `P(X ≤ k)` priced as `dist.cdf(k)`.
-- `adapters.Twin` — paired YES/NO at one strike. Two rows per entity
+- `adapters.BinaryBelow`, `P(X ≤ k)` priced as `dist.cdf(k)`.
+- `adapters.Twin`, paired YES/NO at one strike. Two rows per entity
   sharing `group_id`, `fair_price` sums to 1.0 by construction. Maps to
   prediction-market spread / total contracts (`Eagles -3.5`,
   `Over 47.5 total points`).
-- `adapters.ThresholdLadder` — survival function evaluated at S strikes
+- `adapters.ThresholdLadder`, survival function evaluated at S strikes
   (`[P(X > k_i)]_i`). Maps to single-side Kalshi multi-threshold ladders.
 
 ### Changed
@@ -680,7 +680,7 @@ GitHub Actions CI.
 ### Fixed
 
 - Sphinx `-W` build (the CI gate) was failing on three docstring issues
-  in `trainers.py` — `CDFBoostBracket` (definition-list unindent) and
+  in `trainers.py`, `CDFBoostBracket` (definition-list unindent) and
   `DistAsFeatures` (undefined `|taus|` / `|cuts|` substitutions). Both
   rewritten with code-literal formulas.
 - `docs/guides/adapters.md` was documenting `BinaryAbove`, `BinaryBelow`,
@@ -696,15 +696,15 @@ GitHub Actions CI.
   `tests/test_trainers.py:231`. `__init__.py` restored to a single
   alphabetical import block.
 
-### Added (continued — earlier in this release cycle)
+### Added (continued, earlier in this release cycle)
 
-- `DistributionForecast.cdf_at_grid(y)` — per-row CDF on a *per-row*
+- `DistributionForecast.cdf_at_grid(y)`, per-row CDF on a *per-row*
   evaluation grid. Input `y` shape `(N, M)` → output `(N, M)`, where row
   `i` uses its own grid `y[i, :]`. NaN entries round-trip as NaN so
   callers can pad ragged grids. Generalises `cdf_at` (which is the M=1
   case in spirit) and avoids the `(N, M_global)` cross-product of `cdf`
   when each row needs different query points.
-- `adapters.PerRowBracketLadder` — bracket ladder with a *per-row* edge
+- `adapters.PerRowBracketLadder`, bracket ladder with a *per-row* edge
   vector. Motivated by Kalshi-style daily-rotating temperature brackets
   (NYC max-temp etc.). Storage is ragged (`edges_per_row: list[ndarray]`,
   per-row `B_i` allowed to vary). `include_tail_buckets=True` emits
@@ -712,10 +712,10 @@ GitHub Actions CI.
   prices sum to exactly 1.0; otherwise the existing coverage check
   (warn / strict-raise) gates against silent tail leakage. Built on
   `cdf_at_grid` so parametric backings stay fully vectorised.
-- `DistributionForecast.cdf_at(y)` — per-row CDF for any backing.
+- `DistributionForecast.cdf_at(y)`, per-row CDF for any backing.
   Replaces the O(N²) `np.diag(dist.cdf(y))` pattern; drops `score.pit`
   memory from ~800 MB to ~80 KB at N=10k.
-- `forecast.bracket_probs_from_cdf_at_edges(cdf_at_edges, source)` —
+- `forecast.bracket_probs_from_cdf_at_edges(cdf_at_edges, source)`,
   shared diff / clip / row-sum-check / normalise helper. Used by
   `CumulativeBinary.predict_dist` and `lift._bracket_probs_from_dist`.
 - Top-level re-exports: every estimator, adapter, lifter, calibrator,
@@ -731,7 +731,7 @@ GitHub Actions CI.
 - `BracketLadder` now accepts `strict: bool = False` and
   `coverage_tol: float = 1e-4`. Coverage shortfalls warn (or raise
   under `strict=True`) instead of silently dropping mass.
-- `EMOS.sigma_fit_was_constant_` flag — exposed when the fit fell back
+- `EMOS.sigma_fit_was_constant_` flag, exposed when the fit fell back
   to constant σ because the linear-in-variance MoM regression returned
   a negative coefficient.
 

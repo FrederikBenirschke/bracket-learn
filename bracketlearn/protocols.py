@@ -5,7 +5,7 @@ forecast→forecast transformer protocols (Lifter, Calibrator), and one
 input/target Transformer (standardizer composed as a Pipeline's leading
 stage). Five named concepts.
 
-The WalkForward driver lives in composite.py — it's a pipeline-level
+The WalkForward driver lives in composite.py, it's a pipeline-level
 wrapper, not a protocol.
 """
 
@@ -94,7 +94,7 @@ class DistForecaster(Forecaster, Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Lifter (§4.6) — Point → Dist transformer.
+# Lifter (§4.6). Point → Dist transformer.
 # ---------------------------------------------------------------------------
 
 
@@ -126,7 +126,7 @@ class Lifter(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Calibrator (§4.7) — Dist → Dist transformer.
+# Calibrator (§4.7). Dist → Dist transformer.
 # ---------------------------------------------------------------------------
 
 
@@ -155,7 +155,7 @@ class Calibrator(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Transformer (§4.8) — feature/target standardizer that a Pipeline runs as
+# Transformer (§4.8), feature/target standardizer that a Pipeline runs as
 # its first stage(s). Distinct from Lifter/Calibrator (which transform a
 # *forecast*): a Transformer transforms the model's *inputs* (X), the
 # *target* (y) at fit, and inverts the resulting *distribution* back to the
@@ -178,7 +178,7 @@ class Transformer(Protocol):
       space and **stamps** the per-row ``(center, scale)`` it used, so that
       ``transform_target`` / ``inverse_dist`` need no re-derivation. Called
       once per fit batch and once per predict batch (the stamp reflects the
-      most recent call — mirror the Lifter/Calibrator stateful pattern).
+      most recent call, mirror the Lifter/Calibrator stateful pattern).
     - ``transform_target(y)`` maps the target by the stamped ``(center, scale)``.
     - ``inverse_dist(dist)`` maps a forecast back to the original scale via
       ``DistributionForecast.affine(shift=center, scale=scale)`` using the

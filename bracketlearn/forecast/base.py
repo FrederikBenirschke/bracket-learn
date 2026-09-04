@@ -1,10 +1,10 @@
-"""DistributionForecast — abstract base for all distribution backings.
+"""DistributionForecast, abstract base for all distribution backings.
 
 Concrete subclasses live in sibling modules:
 
-- ``parametric.py`` — ``NormalForecast``, ``StudentTForecast``, ``MixtureNormalForecast``
-- ``quantile.py``   — ``QuantileForecast``
-- ``bracket.py``    — ``BracketForecast``
+- ``parametric.py``, ``NormalForecast``, ``StudentTForecast``, ``MixtureNormalForecast``
+- ``quantile.py``   - ``QuantileForecast``
+- ``bracket.py``    - ``BracketForecast``
 
 Subclass references in ``from_*`` classmethods and ``integrate`` use
 local imports to keep base.py at the bottom of the dependency graph.
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# DistributionForecast — abstract base.
+# DistributionForecast, abstract base.
 # ---------------------------------------------------------------------------
 
 
@@ -160,7 +160,7 @@ class DistributionForecast(abc.ABC):
         """Validate + broadcast (shift, scale) to per-row (N,) arrays.
 
         ``scale`` must be finite and strictly positive (it is a σ-multiplier
-        from an inverse z-score — a non-positive scale would flip the
+        from an inverse z-score, a non-positive scale would flip the
         distribution / violate σ>0; raise loud per Rule #0.5).
         """
         N = self.ids.shape[0]

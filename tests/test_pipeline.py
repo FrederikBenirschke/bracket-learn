@@ -2,7 +2,7 @@
 
 Focused on the load-bearing invariants:
 - OOF row alignment: `result[node].ids` maps correctly into the original
-  y vector — `y[dist.ids]` recovers the realized targets.
+  y vector, `y[dist.ids]` recovers the realized targets.
 - WalkForward doesn't fit on test data (leakage check).
 - Duplicate node names raise loudly.
 - An unsupported cv raises loudly.
@@ -74,7 +74,7 @@ def test_oof_no_test_fold_overlap():
 
 def test_expanding_window_absorbs_tail():
     """Final expanding-window fold absorbs the N % (n_folds + 1) trailing
-    rows so OOF coverage equals N exactly — no silent data drop."""
+    rows so OOF coverage equals N exactly, no silent data drop."""
     n = 203
     X, y, ids, ts = _synthetic(n=n)
     p = WalkForward(n_folds=5)
@@ -139,7 +139,7 @@ def test_score_bracket_metrics_without_edges_raise():
 
 def test_bracket_metrics_score_finite_with_edges():
     """log_loss_bracket / brier_bracket run end-to-end given a shared edges
-    vector — score() builds the per-row ragged ladder internally per stage."""
+    vector, score() builds the per-row ragged ladder internally per stage."""
     X, y, ids, ts = _synthetic()
     result = WalkForward(n_folds=3).fit_predict(
         Pipeline([EMOS()], name="emos"), X, y, ids=ids, timestamps=ts,

@@ -45,7 +45,7 @@ import warnings
 
 import numpy as np
 
-# Quiet the LightGBM "X does not have valid feature names" warning — we
+# Quiet the LightGBM "X does not have valid feature names" warning, we
 # feed numpy arrays everywhere by design.
 warnings.filterwarnings(
     "ignore",
@@ -96,7 +96,7 @@ def make_synthetic_weather(
 
 def main() -> None:
     print("=" * 70)
-    print("bracketlearn v0.1 — tier-1 + tier-2 end-to-end demo")
+    print("bracketlearn v0.1, tier-1 + tier-2 end-to-end demo")
     print("=" * 70)
 
     X, y, ids, ts = make_synthetic_weather()
@@ -115,9 +115,9 @@ def main() -> None:
     outer_edges_by_id = {int(i): (float(edges[0]), float(edges[-1])) for i in ids}
     brackets_by_id = {int(i): edges for i in ids}
 
-    # Tier 1 — names are leaderboard labels; ``ridge()`` / ``emos_calibrated()``
+    # Tier 1, names are leaderboard labels; ``ridge()`` / ``emos_calibrated()``
     # already return named Pipelines. ``emos`` is reused by two combiners
-    # (stack, tail_specialist) — the SAME object, so it is fit once per fold.
+    # (stack, tail_specialist), the SAME object, so it is fit once per fold.
     ridge_node = ridge()
     lin_ols = Pipeline(
         [SklearnPoint(LinearRegression()), GlobalResidual()], name="lin_ols",
@@ -157,7 +157,7 @@ def main() -> None:
     print(f"\nfitting (4-fold expanding window, {len(model)} models)...")
     # CumulativeBinary takes its per-row grids at call time now; WalkForward
     # forwards these id-keyed dicts verbatim to every node (only cumbin uses
-    # them — the rest drop them by signature).
+    # them, the rest drop them by signature).
     result = WalkForward(
         cv="expanding-window", n_folds=4, embargo=0,
     ).fit_predict(
@@ -169,7 +169,7 @@ def main() -> None:
     print("\n[distribution metrics]")
     print(result.to_table(y, metrics=["crps", "log_score", "pit"]))
 
-    print(f"\n[bracket metrics — {len(edges) - 1} bins on [{edges[0]:.0f}, {edges[-1]:.0f}]]")
+    print(f"\n[bracket metrics, {len(edges) - 1} bins on [{edges[0]:.0f}, {edges[-1]:.0f}]]")
     print(result.to_table(y, metrics=["log_loss_bracket", "brier_bracket"], edges=edges))
 
     print("\ndone.")

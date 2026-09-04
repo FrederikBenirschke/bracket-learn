@@ -46,7 +46,7 @@ class ContractAdapter(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Binary / bracket / ladder family — bounded payoffs, no tail needed.
+# Binary / bracket / ladder family, bounded payoffs, no tail needed.
 # ---------------------------------------------------------------------------
 
 
@@ -136,7 +136,7 @@ class BracketLadder:
     extreme-weather days).
 
     For the i.i.d. case where every row shares the same edges, pass
-    ``edges_per_row=[edges] * N`` (cheap — the inner list holds N
+    ``edges_per_row=[edges] * N`` (cheap, the inner list holds N
     references to the same array). The old shared-edges shortcut was
     removed in v0.3.0 because every real-world venue this library targets
     has per-row edges, and keeping two adapters was API surface for a use
@@ -149,7 +149,7 @@ class BracketLadder:
     Output is long-form: row ``(i, j)`` is the bracket-``j`` contract for
     entity ``i``. The flattened ``contract_ids`` index within each entity
     (0-based, 0..B_i-1 for interior buckets; with ``include_tail_buckets``,
-    bucket -1 is "below edges[0]" and bucket B_i is "above edges[-1]" —
+    bucket -1 is "below edges[0]" and bucket B_i is "above edges[-1]",
     those land at contract_id = -1 and B_i in the per-entity numbering).
 
     Args:
@@ -200,7 +200,7 @@ class BracketLadder:
 
         B_max = int(B_per_row.max())
         # Pad edges to (N, B_max+1) with NaN. The cdf_at_grid output's NaN
-        # columns carry forward — we drop them when flattening to long form.
+        # columns carry forward, we drop them when flattening to long form.
         edges_dense = np.full((N, B_max + 1), np.nan, dtype=float)
         for i, e_arr in enumerate(edges_clean):
             edges_dense[i, : e_arr.shape[0]] = e_arr
@@ -212,12 +212,12 @@ class BracketLadder:
         # are NaN (one operand is NaN).
         probs = np.diff(cdf_at_edges, axis=1)
         # Clip tiny negative noise from numerical CDF differences. Real
-        # negatives only arise from non-monotone CDF — bug upstream.
+        # negatives only arise from non-monotone CDF, bug upstream.
         valid_mask = ~np.isnan(probs)
         worst_neg = float(np.nanmin(probs)) if valid_mask.any() else 0.0
         if worst_neg < -1e-9:
             raise ValueError(
-                f"BracketLadder: CDF non-monotone — worst diff "
+                f"BracketLadder: CDF non-monotone, worst diff "
                 f"{worst_neg:.6g}. Indicates upstream bug."
             )
         probs = np.where(valid_mask, np.clip(probs, 0.0, 1.0), np.nan)
@@ -305,7 +305,7 @@ class ThresholdLadder:
     """One row per ``P(X > k_i)``. Shared group_id across the entity's row block.
 
     Maps to single-side Kalshi ladders ("high above 70°F", "high above 75°F",
-    "high above 80°F" ...). Prices are *not* required to sum to 1 — they are
+    "high above 80°F" ...). Prices are *not* required to sum to 1, they are
     survival-function values at increasing strikes, so they decrease monotonically.
     """
 

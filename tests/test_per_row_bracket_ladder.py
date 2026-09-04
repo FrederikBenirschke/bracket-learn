@@ -1,4 +1,4 @@
-"""Per-row bracket ladder (varying edges per entity) — adapter + cdf_at_grid.
+"""Per-row bracket ladder (varying edges per entity), adapter + cdf_at_grid.
 
 Motivating venue: Kalshi temperature contracts list a different bracket
 grid each day. ``DistributionForecast.cdf_at_grid`` (the underlying
@@ -17,7 +17,7 @@ from bracketlearn.adapters import BracketLadder
 from bracketlearn.forecast import DistributionForecast, TailPolicy, TailRule
 
 # ---------------------------------------------------------------------------
-# cdf_at_grid — must equal a row-by-row cdf call (without the (N, N) cost).
+# cdf_at_grid, must equal a row-by-row cdf call (without the (N, N) cost).
 # ---------------------------------------------------------------------------
 
 
@@ -120,7 +120,7 @@ def test_cdf_at_grid_quantile(prov, ids_ts, rng):
 
 
 def test_cdf_at_grid_preserves_nan(prov, ids_ts, rng):
-    """Ragged callers pad with NaN — those slots must round-trip as NaN."""
+    """Ragged callers pad with NaN, those slots must round-trip as NaN."""
     n, M = 6, 4
     ids, ts = ids_ts(n)
     d = DistributionForecast.from_normal(
@@ -152,7 +152,7 @@ def test_cdf_at_grid_rejects_wrong_shape(prov, ids_ts):
 
 
 # ---------------------------------------------------------------------------
-# BracketLadder — adapter contract.
+# BracketLadder, adapter contract.
 # ---------------------------------------------------------------------------
 
 
@@ -193,7 +193,7 @@ def test_per_row_ladder_tail_buckets_sum_to_one(prov, ids_ts, rng):
         mu=rng.normal(0, 1, n), sigma=rng.uniform(0.5, 1.5, n),
         ids=ids, timestamps=ts, provenance=prov,
     )
-    # Narrow ladders that DON'T cover the tails — but tail buckets are on,
+    # Narrow ladders that DON'T cover the tails, but tail buckets are on,
     # so totals must still be exactly 1.0 per entity.
     edges = [np.array([-0.5, 0.0, 0.5]) for _ in range(n)]
     cf = BracketLadder(

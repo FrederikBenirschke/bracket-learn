@@ -1,6 +1,6 @@
 """Shared array / numeric helpers used across DistributionForecast subclasses.
 
-Pure functions — no class state, no behaviour changes from the v0.2
+Pure functions, no class state, no behaviour changes from the v0.2
 inlined versions. Lives below the subclass modules in the dependency
 graph: ``_quantile_via_brentq`` does isinstance checks against
 ``BracketForecast`` and ``MixtureNormalForecast`` via local imports to
@@ -31,7 +31,7 @@ def normalize_bracket_probs(
     if np.any(raw < 0):
         raise ValueError(
             f"{source}: normalize_bracket_probs received negative "
-            f"weights. Refusing to clip silently — upstream produced "
+            f"weights. Refusing to clip silently, upstream produced "
             f"invalid data."
         )
     if raw.ndim == 1:
@@ -133,7 +133,7 @@ def _to_dense_2d(edges_per_row, *, n_rows: int) -> np.ndarray:
 
 def _clip_tiny_negatives(probs: np.ndarray, *, atol: float = 1e-12) -> np.ndarray:
     """Clip small numerical-noise negative entries in a probs array to 0.
-    Larger negatives raise — they indicate a real upstream bug rather
+    Larger negatives raise, they indicate a real upstream bug rather
     than rounding."""
     if np.any(probs < -atol):
         worst = float(np.nanmin(probs))
@@ -145,7 +145,7 @@ def _clip_tiny_negatives(probs: np.ndarray, *, atol: float = 1e-12) -> np.ndarra
 
 
 # ---------------------------------------------------------------------------
-# CDF inversion via brentq — used by mixture / bracket for median.
+# CDF inversion via brentq, used by mixture / bracket for median.
 # Local imports avoid a circular at module load.
 # ---------------------------------------------------------------------------
 

@@ -61,7 +61,7 @@ def test_walkforward_predict_on_unseen_rows():
         assert pred[nm].params["mu"].shape == (n_te,)
         assert np.all(pred[nm].params["sigma"] > 0)
     # The stack's μ is a (calibration-free) affine blend of its upstreams'
-    # μ — it must sit within their row-wise envelope plus a small margin.
+    # μ - it must sit within their row-wise envelope plus a small margin.
     lo = np.minimum(pred["ridge"].params["mu"], pred["emos"].params["mu"])
     hi = np.maximum(pred["ridge"].params["mu"], pred["emos"].params["mu"])
     span = hi - lo + 1.0

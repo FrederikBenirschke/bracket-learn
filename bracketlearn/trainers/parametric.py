@@ -26,7 +26,7 @@ from bracketlearn.trainers._common import (
 )
 
 # ---------------------------------------------------------------------------
-# EMOS — Ensemble Model Output Statistics. Native parametric-normal DistForecaster.
+# EMOS. Ensemble Model Output Statistics. Native parametric-normal DistForecaster.
 # ---------------------------------------------------------------------------
 
 
@@ -36,7 +36,7 @@ class EMOS(BaseEstimator):
 
     Two fit algorithms are supported, selected by ``fit_method``:
 
-    ``fit_method="ols"`` (default — bracketlearn's v0.1 method):
+    ``fit_method="ols"`` (default, bracketlearn's v0.1 method):
         μ̂(x) = a + b·ens_mean
         σ̂²(x) = c + d·ens_var      (linear-in-variance)
         Closed-form: OLS for (a, b); OLS on squared residuals for
@@ -47,7 +47,7 @@ class EMOS(BaseEstimator):
 
     ``fit_method="crps_nelder_mead"`` (matches the parent repo's
         ``prediction_market_weather/ml/trainers/emos.py`` snowflake
-        exactly — Gneiting & Raftery 2005, Gneiting et al. 2005):
+        exactly. Gneiting & Raftery 2005, Gneiting et al. 2005):
         μ̂(x) = a + b·ens_mean
         σ̂²(x) = exp(c) + exp(d)·ens_std²   (exp-link variance)
         Coefficients (a, b, c, d) minimise mean closed-form Gaussian
@@ -162,7 +162,7 @@ class EMOS(BaseEstimator):
         self.a_, self.b_ = _weighted_lstsq2(A_mu, y, sample_weight)
         # Squared residuals → σ². Method-of-moments OLS for variance:
         # r² ≈ c + d·ens_var. Unconstrained OLS can return c_<0 or d_<0,
-        # which makes σ²(x) negative somewhere in the training range —
+        # which makes σ²(x) negative somewhere in the training range,
         # silently clipping that at predict time hides a bad fit (Rule
         # #0.5). Solve unconstrained first; if either coefficient is
         # negative, fall back to a constant variance (mean of r²) and
@@ -180,7 +180,7 @@ class EMOS(BaseEstimator):
                 c_fallback = float((w * r2).sum() / w.sum())
             if c_fallback <= 0:
                 raise ValueError(
-                    "EMOS: mean squared residual non-positive — y is a "
+                    "EMOS: mean squared residual non-positive, y is a "
                     "perfect linear function of X.mean(axis=1) on the "
                     "training set; no variance left to fit."
                 )
@@ -192,7 +192,7 @@ class EMOS(BaseEstimator):
                 f"non-positive variance (c={c_unc:.3g}, d={d_unc:.3g}); "
                 f"fell back to constant σ²={c_fallback:.3g}. ens_var is "
                 f"not informative about residual scale on this training "
-                f"set — consider EMOS(fit_method='crps_nelder_mead') "
+                f"set, consider EMOS(fit_method='crps_nelder_mead') "
                 f"(exp-link variance) or check ensemble spread-skill.",
                 UserWarning, stacklevel=3,
             )
@@ -239,10 +239,10 @@ class EMOS(BaseEstimator):
         ens_mean, ens_var, ens_std = self._row_aggregates(X)
         mu = self.a_ + self.b_ * ens_mean
         if self.fit_method == "crps_nelder_mead":
-            # Exp-link variance — always strictly positive.
+            # Exp-link variance, always strictly positive.
             var = math.exp(self.c_) + math.exp(self.d_) * (ens_std ** 2)
         else:
-            # Linear-in-variance — guarded at fit, recheck on inference.
+            # Linear-in-variance, guarded at fit, recheck on inference.
             var = self.c_ + self.d_ * ens_var
             if np.any(var <= 0):
                 n_bad = int(np.sum(var <= 0))
@@ -302,10 +302,10 @@ def _crps_nelder_mead_loss(
 
 
 # ---------------------------------------------------------------------------
-# HeteroscedasticNormal — distributional linear regression. Both the mean
+# HeteroscedasticNormal, distributional linear regression. Both the mean
 # and the (log) scale of a Normal are linear functions of arbitrary feature
 # columns. Generalises EMOS (which is the special case μ-features=[ens_mean],
-# σ-features=[ens_std]) to any predictors — cloud, wind, dewpoint, spread, …
+# σ-features=[ens_std]) to any predictors, cloud, wind, dewpoint, spread, …
 # ---------------------------------------------------------------------------
 
 
@@ -321,15 +321,15 @@ class HeteroscedasticNormal(BaseEstimator):
 
     where ``xμ = X[:, mu_idx]`` and ``xσ = X[:, sigma_idx]`` select which
     columns of the shared design matrix ``X`` drive the mean vs the scale
-    (the two sets may overlap — e.g. cloud cover in both). When ``mu_idx`` /
+    (the two sets may overlap, e.g. cloud cover in both). When ``mu_idx`` /
     ``sigma_idx`` are ``None`` every column drives that moment.
 
     This is the parametric, interpretable counterpart to ``NGBoostNormal``
     (which boosts μ̂/σ̂ non-linearly) and the feature-driven generalisation
     of ``EMOS`` (whose mean is hard-wired to ``ens_mean`` and whose scale is
     hard-wired to ``ens_std``). Setting ``mu_idx=(i_mean,)`` and
-    ``sigma_idx=(i_logstd,)`` recovers EMOS's modelling philosophy — affine
-    mean, spread-driven scale — but now cloud / wind / dewpoint can enter
+    ``sigma_idx=(i_logstd,)`` recovers EMOS's modelling philosophy, affine
+    mean, spread-driven scale, but now cloud / wind / dewpoint can enter
     *either* moment as additional columns. The coefficients are readable:
     each ``β_σ`` is the multiplicative log-scale response to its feature.
 
@@ -341,18 +341,18 @@ class HeteroscedasticNormal(BaseEstimator):
     * **Optimiser.** L-BFGS-B with the analytic gradient
       ``∂/∂β_μ = −Aμᵀ(w·(y−μ)/σ²)`` and ``∂/∂β_σ = Aσᵀ(w·(1−z²))``.
       Initialised from an OLS mean fit + a constant log-scale at the
-      residual std. Non-convergence raises (Rule #0.5 — no silent
+      residual std. Non-convergence raises (Rule #0.5, no silent
       return of the init).
     * **Standardisation.** Columns are standardised (mean/std stored from
       fit, reused at predict) so the optimiser is well-conditioned across
       features on different scales. Predictions are invariant to this.
     * **Ridge.** ``l2 > 0`` adds an L2 penalty on the non-intercept
-      coefficients of *both* heads — the low-N overfit guard.
+      coefficients of *both* heads, the low-N overfit guard.
     * **σ floor.** ``sigma_floor`` clamps σ̂ at predict time only (the
       log link already keeps it positive; the floor bounds confidence).
 
     Per Rule #0.5: non-finite ``X``/``y`` raise rather than being imputed
-    here — the caller decides how to handle missing features.
+    here, the caller decides how to handle missing features.
     """
 
     mu_idx: tuple[int, ...] | None = None
@@ -389,7 +389,7 @@ class HeteroscedasticNormal(BaseEstimator):
                 )
             if not idx:
                 raise ValueError(
-                    f"HeteroscedasticNormal: {name} is empty — each moment "
+                    f"HeteroscedasticNormal: {name} is empty, each moment "
                     f"needs at least its intercept's companion feature set "
                     f"(pass at least one column)"
                 )
@@ -417,7 +417,7 @@ class HeteroscedasticNormal(BaseEstimator):
             )
         if not np.all(np.isfinite(X)):
             raise ValueError(
-                "HeteroscedasticNormal.fit: X has non-finite entries — impute "
+                "HeteroscedasticNormal.fit: X has non-finite entries, impute "
                 "or drop upstream; this estimator does not guess (Rule #0.5)"
             )
         if not np.all(np.isfinite(y)):
@@ -488,7 +488,7 @@ class HeteroscedasticNormal(BaseEstimator):
         X = np.asarray(X, dtype=float)
         if not np.all(np.isfinite(X)):
             raise ValueError(
-                "HeteroscedasticNormal.predict_dist: X has non-finite entries — "
+                "HeteroscedasticNormal.predict_dist: X has non-finite entries, "
                 "impute or drop upstream (Rule #0.5)"
             )
         Amu, Asig = self._designs(X)
@@ -502,14 +502,14 @@ class HeteroscedasticNormal(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# BayesianRidge — conjugate Bayesian linear regression. Predictive Student-t.
+# BayesianRidge, conjugate Bayesian linear regression. Predictive Student-t.
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class BayesianRidge(BaseEstimator):
     """Conjugate Bayesian linear regression. Predictive distribution per row
-    is Student-t (μ_n, σ_n, ν_n) — σ_n grows with feature-space distance from
+    is Student-t (μ_n, σ_n, ν_n), σ_n grows with feature-space distance from
     training data, so dispersion is regime-conditional without a boosted σ.
 
     Prior (Normal-Inverse-Gamma):
@@ -541,7 +541,7 @@ class BayesianRidge(BaseEstimator):
 
     The (1 + x*ᵀ V_n x*) factor is the posterior-uncertainty inflation:
     rows whose features sit far from the training set get wider
-    predictive intervals automatically — that's the regime-conditional σ
+    predictive intervals automatically, that's the regime-conditional σ
     that ``StackedParametric``'s constant residual σ̂ cannot give you.
 
     Features are standardised by default (subtract train mean, divide by
@@ -579,7 +579,7 @@ class BayesianRidge(BaseEstimator):
                     raise ValueError(
                         f"BayesianRidge.fit: zero-variance column(s) in X "
                         f"at indices {bad}. Drop them before fitting "
-                        "(Rule #0.5 — no silent zero-scale)."
+                        "(Rule #0.5, no silent zero-scale)."
                     )
             else:
                 if self.x_mean_ is None or self.x_scale_ is None:
@@ -611,7 +611,7 @@ class BayesianRidge(BaseEstimator):
             raise ValueError(
                 "BayesianRidge: prior_precision and prior_precision_intercept "
                 "must be strictly positive (use a small value like 1e-6 "
-                "for a near-flat prior — improper priors not supported)."
+                "for a near-flat prior, improper priors not supported)."
             )
         V0_inv = np.diag(np.concatenate([[lam0], np.full(k - 1, lam)]))
         if sample_weight is None:
@@ -637,7 +637,7 @@ class BayesianRidge(BaseEstimator):
         except np.linalg.LinAlgError as e:
             raise ValueError(
                 "BayesianRidge.fit: posterior precision matrix is not "
-                "positive definite — Xᵀ W X is rank-deficient and the prior "
+                "positive definite, Xᵀ W X is rank-deficient and the prior "
                 "is too weak to regularise it. Raise prior_precision or "
                 "drop collinear columns."
             ) from e
@@ -647,7 +647,7 @@ class BayesianRidge(BaseEstimator):
         if b_n <= 0:
             raise ValueError(
                 f"BayesianRidge.fit: posterior IG scale b_n = {b_n:.3g} ≤ 0. "
-                "Predictive variance would be non-positive — usually means "
+                "Predictive variance would be non-positive, usually means "
                 "the design perfectly explains y (data leak) or the prior "
                 "is too tight."
             )
@@ -682,7 +682,7 @@ class BayesianRidge(BaseEstimator):
             n_bad = int(np.sum(scale_sq <= 0))
             raise ValueError(
                 f"BayesianRidge.predict_dist: non-positive predictive variance "
-                f"on {n_bad} rows — numerical issue with V_n. Refit with higher "
+                f"on {n_bad} rows, numerical issue with V_n. Refit with higher "
                 "prior_precision."
             )
         sigma = np.sqrt(scale_sq)
@@ -696,7 +696,7 @@ class BayesianRidge(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# HierarchicalNormal — cross-site partial-pooling regression. Empirical Bayes
+# HierarchicalNormal, cross-site partial-pooling regression. Empirical Bayes
 # on the shrinkage variance τ²; closed-form posterior per site.
 # ---------------------------------------------------------------------------
 
@@ -714,7 +714,7 @@ class HierarchicalNormal(BaseEstimator):
 
     Each site has its own coefficient vector β_s. All sites' coefs are
     shrunk toward the global mean β₀ by an amount τ that the data
-    itself estimates (empirical Bayes — Type-II marginal-likelihood
+    itself estimates (empirical Bayes. Type-II marginal-likelihood
     maximisation over (log σ², log τ²); β₀ profiled out by GLS).
 
     Predictive at a new row in site s:
@@ -725,7 +725,7 @@ class HierarchicalNormal(BaseEstimator):
     For a row in a site not seen at fit time, predictive uses β₀ with
     the marginal prior τ² added to the posterior on β₀ (proper
     Bayesian predictive for a new group). Raises by default
-    (``allow_unseen_sites=False``) — Rule #0.5.
+    (``allow_unseen_sites=False``). Rule #0.5.
 
     Inputs require a ``groups`` array of length N giving the site
     identifier per row (str or int). Features are standardised before
@@ -1006,7 +1006,7 @@ class HierarchicalNormal(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# NGBoostNormal — non-linear EMOS. μ̂ and σ̂ both boosted as f(X).
+# NGBoostNormal, non-linear EMOS. μ̂ and σ̂ both boosted as f(X).
 # ---------------------------------------------------------------------------
 
 
@@ -1106,7 +1106,7 @@ class NGBoostNormal(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# MixtureNormals — one Gaussian component per "vendor" (column of X).
+# MixtureNormals, one Gaussian component per "vendor" (column of X).
 # ---------------------------------------------------------------------------
 
 
@@ -1129,7 +1129,7 @@ class MixtureNormals(BaseEstimator):
     - **predict_dist**: each row gets weights ∝ (vendor present) and is
       renormalized to sum to 1; absent components carry zero weight and
       a placeholder μ/σ so downstream math stays finite. Rows with **all**
-      vendors absent fall back to uniform weights with NaN μ — callers
+      vendors absent fall back to uniform weights with NaN μ - callers
       must handle those upstream.
 
     This mirrors the per-row vendor-presence semantics of the original

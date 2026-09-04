@@ -21,7 +21,7 @@ from scipy.stats import norm
 from bracketlearn.trainers import EMOS
 
 # ---------------------------------------------------------------------------
-# Reference implementation — copied verbatim from the snowflake at
+# Reference implementation, copied verbatim from the snowflake at
 # prediction_market_weather/ml/trainers/emos.py (functions _gaussian_crps,
 # _crps_loss, _fit_emos). Kept here as a frozen reference so any drift
 # in either side fails this test loudly.
@@ -129,7 +129,7 @@ def test_ols_fit_method_still_default():
 
 def test_crps_nelder_mead_rejects_sample_weight():
     """The CRPS variant does not (yet) thread sample weights through the
-    optimiser — raise loudly per Rule #0.5 rather than silently dropping."""
+    optimiser, raise loudly per Rule #0.5 rather than silently dropping."""
     ens_mean, ens_std, y = _make_synthetic(seed=3, n=80)
     X = np.column_stack([ens_mean, ens_std])
     est = EMOS(fit_method="crps_nelder_mead", input_form="aggregates")

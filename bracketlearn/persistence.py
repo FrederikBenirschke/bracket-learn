@@ -1,13 +1,13 @@
 """Save and load fitted ``WalkForward`` / ``PipelineResult`` instances.
 
-bracketlearn objects pickle natively — every trainer's fitted state is
+bracketlearn objects pickle natively, every trainer's fitted state is
 plain numpy arrays plus picklable third-party models (sklearn,
 LightGBM, NGBoost, torch). This module wraps ``pickle`` with a small
 envelope so that:
 
 - The bracketlearn version that produced the artefact is stored alongside
   it (``__bracketlearn_version__``). ``load()`` warns loudly when loading
-  an artefact built with a different version — drift between
+  an artefact built with a different version, drift between
   algorithm-internal representations is the most common cause of
   silently-wrong predictions after a library upgrade.
 - The artefact is self-describing: a single ``.pkl`` carries the
@@ -25,7 +25,7 @@ Usage::
     new_dists = loaded.predict(X_new, ids=..., timestamps=...)
 
 A fitted ``WalkForward`` (refit_on_full=True), a ``PipelineResult``, or any
-other picklable object are all accepted — the envelope is identical.
+other picklable object are all accepted, the envelope is identical.
 
 Security note: ``pickle`` executes arbitrary code on load. Only load
 artefacts you produced yourself or that came from a trusted source.
@@ -56,7 +56,7 @@ def save(obj: Any, path: str | Path, *, note: str | None = None) -> None:
     """Pickle ``obj`` to ``path`` with a bracketlearn-version envelope.
 
     Args:
-        obj: any picklable object — typically a fitted ``WalkForward``
+        obj: any picklable object, typically a fitted ``WalkForward``
             or a ``PipelineResult``.
         path: filesystem path. Parent directories are not created.
         note: optional free-text note stored in the envelope (e.g. the
@@ -102,7 +102,7 @@ def load(path: str | Path, *, strict_version: bool = False) -> Any:
     saved_version = envelope.get("bracketlearn_version", "<unknown>")
     if saved_version != __BL_VERSION__:
         msg = (
-            f"{path}: bracketlearn version mismatch — "
+            f"{path}: bracketlearn version mismatch, "
             f"artefact was saved with {saved_version}, "
             f"current install is {__BL_VERSION__}. "
             "Predictions may differ from the original training run "

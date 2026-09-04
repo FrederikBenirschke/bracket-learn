@@ -6,7 +6,7 @@ forecasts (TailSpecialist, CDFBoostBracket, LinearPoolDist) now live in
 ``bracketlearn.trainers.combiners``.
 
 The old ``BracketClassifier`` / ``BracketRegressor`` classes were
-removed in v0.5.0 — they conflated per-row -> per-(row, bracket)
+removed in v0.5.0, they conflated per-row -> per-(row, bracket)
 expansion with model fitting and hardcoded the target as a bracket-hit
 indicator. The two concerns now live separately: callers compose
 ``bracketlearn.transformers.BracketExpander`` with any sklearn-style
@@ -28,7 +28,7 @@ from bracketlearn.forecast import (
 )
 
 # ---------------------------------------------------------------------------
-# CumulativeBinary — one classifier on (X ⊕ cutpoint) → 1[y ≤ cutpoint].
+# CumulativeBinary, one classifier on (X ⊕ cutpoint) → 1[y ≤ cutpoint].
 # ---------------------------------------------------------------------------
 
 
@@ -80,7 +80,7 @@ class CumulativeBinary(BaseEstimator):
     predict time queries P(y ≤ k) for each cutpoint k in the row's own
     grid and emits a per-row bracket-backed dist.
 
-    Data contract — construction is hyperparameters only
+    Data contract, construction is hyperparameters only
     ----------------------------------------------------
     Each market/event has its own cutpoint grid (the interior bracket
     edges) and its own outer-edge pair (left/right boundaries
@@ -96,9 +96,9 @@ class CumulativeBinary(BaseEstimator):
                               with ``lo_i < cutpoints[0]`` and
                               ``hi_i > cutpoints[-1]``.
 
-    Both dicts must cover every id in that call (they may cover more —
+    Both dicts must cover every id in that call (they may cover more,
     fit/predict select by the ``ids`` you hand them). Each row i
-    contributes K_i augmented training examples to the LGBM model — the
+    contributes K_i augmented training examples to the LGBM model, the
     examples for different rows may have different cutpoint counts and
     spacings. Cutpoint values are passed as a feature, so the model
     naturally generalises across grids.
@@ -106,7 +106,7 @@ class CumulativeBinary(BaseEstimator):
     The model itself is global (one LGBM); only the per-row augmentation
     differs. Predict-time emits a BracketForecast on each row's full
     ladder ``[lo_i, cutpoints_i..., hi_i]``. Under ``WalkForward`` the dicts
-    are forwarded verbatim — pass them once to ``fit_predict``.
+    are forwarded verbatim, pass them once to ``fit_predict``.
     """
 
     n_estimators: int = 80
@@ -219,7 +219,7 @@ class CumulativeBinary(BaseEstimator):
         X_aug, offsets, per_row_cuts = self._augment(X, ids, cutpoints_by_id)
         proba_aug = self.model_.predict_proba(X_aug)[:, 1]
         # Reassemble per-row, then build each row's ladder + probs.
-        # Rows can have different K_i — collect into a padded 2-D
+        # Rows can have different K_i, collect into a padded 2-D
         # BracketForecast (NaN-padded ragged columns).
         K_per_row = np.array([c.size for c in per_row_cuts], dtype=int)
         # Row ladder is [lo, cutpoints..., hi]: K_i + 2 edges, K_i + 1 bins.

@@ -1,4 +1,4 @@
-"""Pipeline — the sequential chain forecaster, plus PipelineResult + the
+"""Pipeline, the sequential chain forecaster, plus PipelineResult + the
 shared fold helpers used by the WalkForward CV driver.
 
 `Pipeline([...stages...])` wires a left→right chain of stages (Transformer*,
@@ -99,7 +99,7 @@ def _compute_metric(
 
 
 # ---------------------------------------------------------------------------
-# PipelineResult — owns OOF coverage alignment + scoring.
+# PipelineResult, owns OOF coverage alignment + scoring.
 # ---------------------------------------------------------------------------
 
 
@@ -142,10 +142,10 @@ class PipelineResult:
         """Return {stage_name: {metric_name: value}}.
 
         Available metrics:
-          - "crps"             — mean CRPS for Gaussian backing
-          - "log_score"        — mean predictive negative log-likelihood
-          - "pit_mean"         — mean PIT (≈ 0.5 if calibrated)
-          - "pit_std"          — std of PIT
+          - "crps"             - mean CRPS for Gaussian backing
+          - "log_score"        - mean predictive negative log-likelihood
+          - "pit_mean"         - mean PIT (≈ 0.5 if calibrated)
+          - "pit_std"          - std of PIT
           - "log_loss_bracket", requires ``edges`` (any ladder shape)
           - "brier_bracket"   , requires ``edges`` (any ladder shape)
 
@@ -234,7 +234,7 @@ def _fit_with_optional_weight(
     Drops ``sample_weight`` if not supported (online-learning trainers like
     ``OnlineAggregator`` and pure-sequence trainers like ``RNNHourly``).
     Also drops other extras (``ids``, ``timestamps``, ``groups``) that
-    a particular trainer doesn't declare — keeps callers free to pass the
+    a particular trainer doesn't declare, keeps callers free to pass the
     full row-alignment context without worrying about each trainer's API.
 
     Detection is signature-based, not TypeError-based, so a missing kwarg
@@ -273,7 +273,7 @@ def _predict_with_extras(
     """Call predict_dist threading any extras (``groups``, …)
     that the forecaster's signature declares.
 
-    Signature-based introspection — never a bare ``except TypeError``,
+    Signature-based introspection, never a bare ``except TypeError``,
     which would swallow real bugs raised inside predict_dist.
     """
     import inspect
@@ -312,12 +312,12 @@ def _stitch_folds(
     indices so ``y[ids]`` recovers the realized targets for OOF scoring.
     """
     if not folds:
-        raise RuntimeError("no folds to stitch — pipeline emitted nothing")
+        raise RuntimeError("no folds to stitch, pipeline emitted nothing")
     types = {type(d) for _, d in folds}
     if len(types) > 1:
         raise ValueError(
             f"mixed dist subclasses across folds: {types}. Pipeline folds "
-            f"must share one subclass — a single forecaster cannot emit "
+            f"must share one subclass, a single forecaster cannot emit "
             f"different distribution types on different folds."
         )
     cls = next(iter(types))
@@ -325,13 +325,13 @@ def _stitch_folds(
 
 
 # ---------------------------------------------------------------------------
-# Pipeline — flat, sequential chain of stages (= sklearn `Pipeline`).
+# Pipeline, flat, sequential chain of stages (= sklearn `Pipeline`).
 #
 # A *stage* is one of: Transformer, PointForecaster, Lifter, Calibrator,
 # DistForecaster. The chain is wired left→right by stage kind into a single
 # DistForecaster; a leading Transformer standardizes X (+ target at fit) and
 # its `inverse_dist` maps the forecaster's distribution back to the original
-# scale at the tail — so downstream bracket integration is unchanged.
+# scale at the tail, so downstream bracket integration is unchanged.
 #
 # Track 1 supports the shape the weather fleet needs: [Transformer*,
 # DistForecaster]. Point→Lifter and Calibrator stages need out-of-fold
@@ -383,7 +383,7 @@ class Pipeline:
     half-split (the point fits on the first part, predicts the rest, the lifter
     fits on those OOF predictions, the point refits on full); a trailing
     Calibrator fits on a held-out tail of the (transformed) training data. The
-    chain is self-contained — given ``(X, y, ids, timestamps)`` it fits itself,
+    chain is self-contained, given ``(X, y, ids, timestamps)`` it fits itself,
     including the inner splits its stages need, so `WalkForward` only owns the
     *outer* CV.
 
@@ -437,7 +437,7 @@ class Pipeline:
                 if self._calibrator is not None:
                     raise ValueError("Pipeline: at most one Calibrator")
                 self._calibrator = st
-            else:  # pragma: no cover — _stage_kind already raised
+            else:  # pragma: no cover, _stage_kind already raised
                 raise TypeError(f"Pipeline: unsupported stage kind {kind!r}")
         if self._point is not None and self._lifter is None:
             raise ValueError(
@@ -561,7 +561,7 @@ class Pipeline:
     # ---- predict ----
 
     def _core_predict_dist(self, Xz, ids, ts, upstream=None, groups=None, **kwargs):
-        """The core forecaster's dist in the model's working (z) space —
+        """The core forecaster's dist in the model's working (z) space,
         before calibration and before the transformers' inverse. ``kwargs`` are
         id-keyed side inputs (e.g. ``cutpoints_by_id`` / ``brackets_by_id``)
         forwarded verbatim; signature-filtered for the core forecaster."""

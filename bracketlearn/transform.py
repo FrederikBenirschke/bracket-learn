@@ -1,4 +1,4 @@
-"""Input/target standardizers — the `Transformer` stage of a `Pipeline`.
+"""Input/target standardizers, the `Transformer` stage of a `Pipeline`.
 
 `GroupByZScore` is the per-group standardized-anomaly transform behind the
 weather normalization win: each row is mapped by a per-row affine
@@ -9,7 +9,7 @@ per-group (e.g. per-station) constant learned at fit as ``std(y − center)``.
 It implements the `Transformer` protocol (``fit`` / ``transform`` /
 ``transform_target`` / ``inverse_dist``): features go to z-space, the target
 goes to z-space at fit, and the forecaster's predicted distribution is mapped
-back to the original scale via ``DistributionForecast.affine`` — so a
+back to the original scale via ``DistributionForecast.affine``, so a
 forecaster never sees normalization and downstream bracket integration is
 unchanged.
 
@@ -27,7 +27,7 @@ _MIN_GROUP_OBS = 5
 
 class IdentityTransformer:
     """No-op `Transformer`: passes features/target through unchanged and
-    leaves the forecast unchanged. The degenerate transformer — also the
+    leaves the forecast unchanged. The degenerate transformer, also the
     shim shape for composing a plain sklearn X-only transformer (override
     ``transform``; target + inverse stay identity)."""
 
@@ -60,13 +60,13 @@ class GroupByZScore:
         Explicit *level* column indices: ``v → (v − center) / scale``. When
         ``None`` (default) every column that is neither a spread nor an
         explicit passthrough is treated as a level. When given, ONLY these
-        indices are levels and all other (non-spread) columns pass through —
+        indices are levels and all other (non-spread) columns pass through,
         so ``level_cols=()`` normalizes nothing on the feature side and the
         transform reduces to **target-only** standardization (``transform``
         passes X through, but ``transform_target`` / ``inverse_dist`` still
         z-score the target and map the forecast back). Target-only is the
         right mode when X carries heterogeneous columns (mixed vendor temps
-        + non-temperature features) whose roles aren't known by index — the
+        + non-temperature features) whose roles aren't known by index, the
         location confound lives in the *target*, and a tree/boosting model's
         feature splits are scale-invariant anyway.
     min_group

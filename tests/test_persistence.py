@@ -107,7 +107,7 @@ class TestEnvelope:
     def test_envelope_info_does_not_require_payload_class(self, tmp_path: Path):
         """envelope_info should return metadata fields the user can read
         without needing payload-construction succeeds. (We don't fully verify
-        lazy unpickling here — pickle reads the whole file — but we pin the
+        lazy unpickling here, pickle reads the whole file, but we pin the
         fields the helper returns.)"""
         p, _, _, _ = _build_fitted_pipeline()
         path = tmp_path / "p.pkl"

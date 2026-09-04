@@ -1,10 +1,10 @@
-"""BracketMask — restrict a bracket forecast to a tradable subset.
+"""BracketMask, restrict a bracket forecast to a tradable subset.
 
 Use case: a base forecaster (climatology, EMOS, mixture-normals,
 stacking) emits probabilities over the full bracket grid, but at any
 given timestamp some brackets may have no live quote (no bid, no ask,
 no recent last) and cannot be touched. The original mass over those
-brackets has nowhere to go — distributing it pro-rata across the
+brackets has nowhere to go, distributing it pro-rata across the
 tradable subset is the maximum-entropy choice consistent with the
 full forecast.
 
@@ -45,14 +45,14 @@ if TYPE_CHECKING:
 class BracketMask(BaseEstimator):
     """Per-row restriction of a bracket forecast to a tradable mask.
 
-    Stateless — ``fit`` is a no-op, ``transform`` does the work. The
+    Stateless, ``fit`` is a no-op, ``transform`` does the work. The
     mask is supplied at transform time because it varies per row and
     is not a property of the forecaster.
     """
 
     fitted_: bool = True  # stateless; satisfies sklearn check_is_fitted
 
-    def fit(self, X=None, y=None) -> Self:  # noqa: ARG002 — stateless, sklearn shape
+    def fit(self, X=None, y=None) -> Self:  # noqa: ARG002, stateless, sklearn shape
         return self
 
     def transform(
@@ -94,14 +94,14 @@ class BracketMask(BaseEstimator):
         if probs is None:
             raise ValueError(
                 "BracketMask.transform: dist.probs is None despite "
-                "BracketForecast input — invariant violated."
+                "BracketForecast input, invariant violated."
             )
 
         mask = np.asarray(mask)
         if mask.dtype != np.bool_:
             raise TypeError(
                 f"BracketMask.transform: mask.dtype={mask.dtype!r} must be bool. "
-                f"Refusing to coerce — a non-bool mask usually means caller "
+                f"Refusing to coerce, a non-bool mask usually means caller "
                 f"passed prices or counts by accident."
             )
         if mask.shape != probs.shape:
@@ -124,7 +124,7 @@ class BracketMask(BaseEstimator):
         if zero_mass_rows.size:
             raise ValueError(
                 f"BracketMask.transform: {zero_mass_rows.size} row(s) have "
-                f"zero forecast mass on tradable brackets — the forecast "
+                f"zero forecast mass on tradable brackets, the forecast "
                 f"assigns no probability to any tradable bracket. First "
                 f"offending row indices: {zero_mass_rows[:5].tolist()}."
             )

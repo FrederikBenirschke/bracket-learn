@@ -4,9 +4,9 @@ Lives here so other modules in this package can import these without
 worrying about circulars: ``_meta`` is the bottom of the dependency
 graph. Contains:
 
-- ``TailRule`` / ``TailPolicy`` / ``TailPolicyError`` — tail extrapolation policy (§7).
-- ``ProvenanceMeta`` — audit / reproducibility schema (§5.4).
-- ``PointForecast`` — §5.1 leaf data object.
+- ``TailRule`` / ``TailPolicy`` / ``TailPolicyError``, tail extrapolation policy (§7).
+- ``ProvenanceMeta``, audit / reproducibility schema (§5.4).
+- ``PointForecast``, §5.1 leaf data object.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ class TailPolicyError(ValueError):
 
 
 # ---------------------------------------------------------------------------
-# ProvenanceMeta — audit/reproducibility schema (§5.4)
+# ProvenanceMeta, audit/reproducibility schema (§5.4)
 # ---------------------------------------------------------------------------
 
 

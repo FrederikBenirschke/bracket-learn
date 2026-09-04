@@ -80,7 +80,7 @@ def test_heteroscedastic_normal_emits_parametric_normal():
 def test_heteroscedastic_normal_recovers_feature_driven_scale():
     """Column 0 drives the mean, column 1 drives the (log) scale.
 
-    The fitted σ̂ must track the true feature-driven scale — the property
+    The fitted σ̂ must track the true feature-driven scale, the property
     EMOS (scale ← ens_std only) and homoscedastic regressions cannot model.
     """
     rng = np.random.default_rng(0)
@@ -370,7 +370,7 @@ def test_cumulative_binary_emits_bracket():
     X, y, ids, ts = _synthetic(n=80)
     # v0.3: per-row cutpoints + outer_edges via id-keyed dicts. Here the
     # cutpoints happen to be shared across rows but the API requires the
-    # dict — exercises the broadcast path.
+    # dict, exercises the broadcast path.
     shared_cuts = np.array([8.0, 10.0, 12.0])
     cutpoints_by_id = {int(k): shared_cuts for k in ids}
     outer_edges_by_id = {int(k): (0.0, 20.0) for k in ids}
@@ -408,13 +408,13 @@ def test_cumulative_binary_per_row_varying_cutpoints():
 
 
 # ---------------------------------------------------------------------------
-# StackedParametric — positive integration path (audit §6.T1).
+# StackedParametric, positive integration path (audit §6.T1).
 # ---------------------------------------------------------------------------
 
 
 def test_stacking_recovers_truth_from_perfect_upstream():
     """Two upstreams: a noisy one and a precise one. StackedParametric should
-    weight the precise upstream more. Doesn't require exact recovery —
+    weight the precise upstream more. Doesn't require exact recovery,
     just relative ordering of |weights_|."""
     from datetime import datetime as _dt
 
@@ -458,7 +458,7 @@ def test_stacking_recovers_truth_from_perfect_upstream():
 def test_stacking_passes_sample_weight_through_to_lstsq():
     """Doubling the weight on half the rows should shift the meta-OLS
     fit toward those rows. We check by comparing weighted-fit weights
-    against unweighted-fit weights — they should differ when the
+    against unweighted-fit weights, they should differ when the
     upstream μ values differ between the two halves."""
     from datetime import datetime as _dt
 
@@ -632,7 +632,7 @@ def test_stacking_invalid_options_raise_loudly():
 
 
 # ---------------------------------------------------------------------------
-# BMAStacking — Bayesian model averaging meta-learner.
+# BMAStacking. Bayesian model averaging meta-learner.
 # ---------------------------------------------------------------------------
 
 
@@ -677,7 +677,7 @@ def test_bma_stacking_emits_mixture_normal_with_row_sum_weights():
 
 
 def test_bma_stacking_sigma_inflates_when_upstreams_disagree():
-    """Mixture marginal variance grows where upstream μ's disagree —
+    """Mixture marginal variance grows where upstream μ's disagree,
     StackedParametric with default sigma_method='constant' cannot do this."""
     rng = np.random.default_rng(1)
     N = 300
@@ -740,7 +740,7 @@ def test_bma_stacking_rejects_invalid_alpha_prior():
 
 
 # ---------------------------------------------------------------------------
-# HierarchicalNormal — cross-site partial-pooling regression.
+# HierarchicalNormal, cross-site partial-pooling regression.
 # ---------------------------------------------------------------------------
 
 
@@ -880,7 +880,7 @@ def test_hierarchical_normal_requires_multiple_sites():
 
 
 # ---------------------------------------------------------------------------
-# TailSpecialist — positive integration (audit §6.T1).
+# TailSpecialist, positive integration (audit §6.T1).
 # ---------------------------------------------------------------------------
 
 
@@ -923,7 +923,7 @@ def test_tail_specialist_emits_bracket_with_classifier_tails():
 
 
 # ---------------------------------------------------------------------------
-# Factories (audit §6.T1) — ridge / emos_calibrated.
+# Factories (audit §6.T1), ridge / emos_calibrated.
 # ---------------------------------------------------------------------------
 
 
@@ -952,7 +952,7 @@ def test_emos_calibrated_factory_returns_pipeline():
 
 
 # ---------------------------------------------------------------------------
-# sample_weight respect (audit §6.T2) — at minimum: doubling a single
+# sample_weight respect (audit §6.T2), at minimum: doubling a single
 # row's weight should shift the fit toward that row's residual.
 # ---------------------------------------------------------------------------
 
@@ -1005,10 +1005,10 @@ def test_empirical_distribution_respects_sample_weight():
 
 
 # ---------------------------------------------------------------------------
-# BracketExpander — per-row <-> per-(row, bracket) reshape + dist assembly.
+# BracketExpander, per-row <-> per-(row, bracket) reshape + dist assembly.
 #
 # Replaces the BracketClassifier / BracketRegressor unit tests deleted in
-# v0.5.0. The classes are gone — callers now compose BracketExpander with
+# v0.5.0. The classes are gone, callers now compose BracketExpander with
 # any sklearn estimator. These tests exercise the expander directly plus
 # one end-to-end "expander + LogisticRegression" scenario to prove the
 # composition path.
@@ -1160,7 +1160,7 @@ def test_bracket_expander_end_to_end_with_logistic_regression():
 
 
 # ---------------------------------------------------------------------------
-# BracketStacking — multiclass head over concatenated bracket-prob deps.
+# BracketStacking, multiclass head over concatenated bracket-prob deps.
 # ---------------------------------------------------------------------------
 
 

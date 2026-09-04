@@ -1,11 +1,11 @@
 """Point → Distribution lifters (§6) + Dist → Dist calibrators.
 
 v0.1 ships:
-- GlobalResidual      — Lifter: iid Gaussian residuals, one σ.
-- StudentTResidual    — Lifter: iid Student-t residuals, MLE (σ, ν).
-- GARCHResidual       — Lifter: time-varying σ from GARCH(1,1), one-step.
-- Isotonic            — Calibrator: per-bracket isotonic calibration.
-- ConformalCalibrate  — Calibrator: per-τ conformal coverage on quantile dists.
+- GlobalResidual      - Lifter: iid Gaussian residuals, one σ.
+- StudentTResidual    - Lifter: iid Student-t residuals, MLE (σ, ν).
+- GARCHResidual       - Lifter: time-varying σ from GARCH(1,1), one-step.
+- Isotonic            - Calibrator: per-bracket isotonic calibration.
+- ConformalCalibrate  - Calibrator: per-τ conformal coverage on quantile dists.
 
 Planned for v0.2 (see README "Not yet" section):
 - SisterModel, ConditionalVariance, Conformal lifters
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# GlobalResidual — iid Gaussian residuals.
+# GlobalResidual, iid Gaussian residuals.
 # ---------------------------------------------------------------------------
 
 
@@ -55,7 +55,7 @@ class GlobalResidual(BaseEstimator):
         # ML estimator with N-1 dof.
         self.sigma_ = float(np.std(residuals, ddof=1))
         if self.sigma_ <= 0:
-            raise ValueError("fitted σ is non-positive — residuals all equal?")
+            raise ValueError("fitted σ is non-positive, residuals all equal?")
         return self
 
     def lift(self, point: PointForecast) -> DistributionForecast:
@@ -86,7 +86,7 @@ class GlobalResidual(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# StudentTResidual — iid Student-t residuals (MLE).
+# StudentTResidual, iid Student-t residuals (MLE).
 # ---------------------------------------------------------------------------
 
 
@@ -117,12 +117,12 @@ class StudentTResidual(BaseEstimator):
         residuals = np.asarray(y, dtype=float) - point_oof.mu
         if residuals.size < 10:
             raise ValueError("need at least 10 OOF residuals to fit (σ, ν)")
-        # scipy MLE with loc fixed at 0 — point forecast assumed unbiased.
+        # scipy MLE with loc fixed at 0, point forecast assumed unbiased.
         df, _loc, scale = _stats.t.fit(residuals, floc=0.0)
         # Clip ν into the configured range; if df_min is hit we still raise
         # (silent clipping would mask a degenerate fit).
         if not (self.df_min < df < self.df_max):
-            # Out of range — if too low, residuals have infinite variance per
+            # Out of range, if too low, residuals have infinite variance per
             # MLE; refuse rather than ship a finite-variance lie.
             if df <= self.df_min:
                 raise ValueError(
@@ -130,11 +130,11 @@ class StudentTResidual(BaseEstimator):
                     f"too heavy-tailed for finite-variance Student-t. "
                     f"Reduce df_min only if you know what you're doing."
                 )
-            # If too high, the t is indistinguishable from Gaussian — clip up
+            # If too high, the t is indistinguishable from Gaussian, clip up
             # to df_max (the cap is a numerical convenience, not a statement).
             df = self.df_max
         if scale <= 0:
-            raise ValueError("fitted σ is non-positive — residuals all equal?")
+            raise ValueError("fitted σ is non-positive, residuals all equal?")
         self.df_ = float(df)
         self.sigma_ = float(scale)
         return self
@@ -173,7 +173,7 @@ class StudentTResidual(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# GARCHResidual — time-varying σ from GARCH(1,1), one-step ahead.
+# GARCHResidual, time-varying σ from GARCH(1,1), one-step ahead.
 # ---------------------------------------------------------------------------
 
 
@@ -187,7 +187,7 @@ class GARCHResidual(BaseEstimator):
     One-step semantics (per user choice): every lift() row receives the
     forecasted σ for the next observation given the fitted residual history,
     i.e. σ̂² = ω + α·r²_T + β·σ²_T where T is the last fit-residual index.
-    Multi-horizon mean-reversion is not implemented — pass timestamps that
+    Multi-horizon mean-reversion is not implemented, pass timestamps that
     match the one-step convention.
 
     family="normal" (default) produces a parametric normal output; "student_t"
@@ -220,7 +220,7 @@ class GARCHResidual(BaseEstimator):
         r2 = residuals ** 2
         var_uncond = float(np.var(residuals, ddof=1))
         if var_uncond <= 0:
-            raise ValueError("residual variance is non-positive — all equal?")
+            raise ValueError("residual variance is non-positive, all equal?")
 
         def _recurse(omega: float, alpha: float, beta: float) -> np.ndarray:
             sigma2 = np.empty(T)
@@ -321,7 +321,7 @@ class GARCHResidual(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# Isotonic — Calibrator (bracket-probability isotonic regression).
+# Isotonic. Calibrator (bracket-probability isotonic regression).
 # ---------------------------------------------------------------------------
 
 
@@ -335,7 +335,7 @@ class Isotonic(BaseEstimator):
     transform time it's applied independently to every (row, bracket)
     cell, then each row is renormalised back to sum-to-1.
 
-    v0.3 — drops the ``edges`` constructor arg. Callers that have a
+    v0.3, drops the ``edges`` constructor arg. Callers that have a
     non-bracket dist should ``.integrate(edges_per_row)`` first, which
     works on any subclass and accepts per-row grids natively. The
     calibrator itself is grid-agnostic because the single isotonic
@@ -344,7 +344,7 @@ class Isotonic(BaseEstimator):
 
     Convenience: pass ``pre_integrate_edges`` (1-D shared, 2-D dense,
     or ragged sequence) to have Isotonic auto-integrate non-bracket
-    inputs internally — useful in factories that wrap a parametric
+    inputs internally, useful in factories that wrap a parametric
     forecaster with bracket-prob calibration on a known ladder.
     """
 
@@ -415,7 +415,7 @@ class Isotonic(BaseEstimator):
             n_bad = int((row_sum.ravel() <= 0).sum())
             raise ValueError(
                 f"Isotonic.transform: {n_bad}/{cal.shape[0]} rows have zero "
-                f"calibrated mass — isotonic fit is degenerate (check fit data)."
+                f"calibrated mass, isotonic fit is degenerate (check fit data)."
             )
         with np.errstate(invalid="ignore"):
             cal = cal / row_sum
@@ -486,7 +486,7 @@ class ConformalCalibrate(BaseEstimator):
         if not np.array_equal(dist.taus, np.arange(self.offsets_.shape[0])) and \
            dist.taus.shape[0] != self.offsets_.shape[0]:
             raise ValueError(
-                f"ConformalCalibrate: shape mismatch — calibrated for Q={self.offsets_.shape[0]} "
+                f"ConformalCalibrate: shape mismatch, calibrated for Q={self.offsets_.shape[0]} "
                 f"taus, dist has Q={dist.taus.shape[0]}"
             )
         # Apply δ_τ shift; isotonic-repair afterwards to keep monotonicity.
@@ -506,7 +506,7 @@ class ConformalCalibrate(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# PITCalibrate — isotonic CDF recalibration on PIT values.
+# PITCalibrate, isotonic CDF recalibration on PIT values.
 # ---------------------------------------------------------------------------
 
 
@@ -544,7 +544,7 @@ class PITCalibrate(BaseEstimator):
     just location.
 
     Requires a calibration set large enough to estimate the empirical
-    PIT — raises if ``N < 30``.
+    PIT, raises if ``N < 30``.
     """
 
     taus_out: tuple[float, ...] = (

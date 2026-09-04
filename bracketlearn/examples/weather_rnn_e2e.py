@@ -62,9 +62,9 @@ def make_synthetic_hourly(
         X[d, :, 0] = seasonal[d] + diurnal + rng.normal(0, 1.5, n_hours)
         # ch 1: dewpoint_f
         X[d, :, 1] = X[d, :, 0] - rng.uniform(5, 20)
-        # ch 2: relative_humidity — anti-correlated with T
+        # ch 2: relative_humidity, anti-correlated with T
         X[d, :, 2] = np.clip(80 - 1.5 * (X[d, :, 0] - seasonal[d]), 0, 100)
-        # ch 3: wind, ch 4: cloud, ch 5: CAPE — random.
+        # ch 3: wind, ch 4: cloud, ch 5: CAPE, random.
         X[d, :, 3] = rng.gamma(2, 3, n_hours)
         X[d, :, 4] = rng.uniform(0, 100, n_hours)
         X[d, :, 5] = rng.gamma(1.5, 100, n_hours)
@@ -78,7 +78,7 @@ def make_synthetic_hourly(
 
 def main() -> None:
     print("=" * 70)
-    print("bracketlearn v0.1 — tier-3 RNN-on-hourly-tensor demo")
+    print("bracketlearn v0.1, tier-3 RNN-on-hourly-tensor demo")
     print("=" * 70)
 
     X, y, ids, ts = make_synthetic_hourly()

@@ -1,4 +1,4 @@
-"""Shared notebook style — rcParams, palette, and a couple of plot helpers.
+"""Shared notebook style, rcParams, palette, and a couple of plot helpers.
 
 Imported at the top of every notebook. Keeps the look consistent and stops
 each notebook from re-inventing its own bar-chart-with-two-bars aesthetic.
@@ -10,14 +10,14 @@ the metrics annotated inside the panel rather than in a separate bar chart.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 
 # ---------------------------------------------------------------------------
-# Global style — applied as a side effect on import.
+# Global style, applied as a side effect on import.
 # ---------------------------------------------------------------------------
 
 mpl.rcParams.update({
@@ -42,7 +42,7 @@ mpl.rcParams.update({
 })
 
 # ---------------------------------------------------------------------------
-# Model-family palette — tab10. One stable color per *family*; individual
+# Model-family palette, tab10. One stable color per *family*; individual
 # models within a family inherit it. Lookup falls through to a default tab10
 # slot via _DEFAULT_CYCLE for anything unmapped.
 # ---------------------------------------------------------------------------
@@ -63,7 +63,7 @@ FAMILY_COLORS: dict[str, tuple[float, float, float]] = {
     "sklearn":     _TAB10[5],   # brown
 }
 
-# Per-model overrides — used when a notebook wants a specific model to pop.
+# Per-model overrides, used when a notebook wants a specific model to pop.
 MODEL_COLORS: dict[str, tuple[float, float, float]] = {
     "emp":              FAMILY_COLORS["baseline"],
     "Empirical":        FAMILY_COLORS["baseline"],
@@ -168,7 +168,7 @@ def predicted_vs_realized_grid(
                 fontsize=8.5, family="monospace",
                 bbox=dict(facecolor="white", edgecolor="none",
                           alpha=0.75, pad=2.0))
-        # Flag degenerate panels (predictions collapse to a near-constant —
+        # Flag degenerate panels (predictions collapse to a near-constant,
         # most often the marginal-y baseline, by construction).
         pred_std = float(np.nanstd(mu))
         y_std = float(np.nanstd(y_true))
@@ -258,7 +258,7 @@ def reliability_with_histogram(
 
 
 # ---------------------------------------------------------------------------
-# Family-colored horizontal leaderboard bar — used by leaderboard_zoo.
+# Family-colored horizontal leaderboard bar, used by leaderboard_zoo.
 # ---------------------------------------------------------------------------
 
 
@@ -279,7 +279,7 @@ def leaderboard_bar(
             passed alongside ``baseline_name``, ``value`` is interpreted as
             raw CRPS and skill is computed as ``1 − v / baseline_value``.
             Pass already-computed skill values by setting
-            ``baseline_value=1.0`` (so skill = ``1 − v``) — keep the math
+            ``baseline_value=1.0`` (so skill = ``1 − v``), keep the math
             on the caller side and use this helper only for layout.
         families: optional map ``model_name → family_key`` from
             FAMILY_COLORS. Models without a family use color_for(name).
@@ -329,7 +329,7 @@ def leaderboard_bar(
 
 
 # ---------------------------------------------------------------------------
-# CDF overlay — replaces the 3-house grouped-bar plot in housing_brackets.
+# CDF overlay, replaces the 3-house grouped-bar plot in housing_brackets.
 # ---------------------------------------------------------------------------
 
 
@@ -346,7 +346,7 @@ def cdf_overlay_for_examples(
     from each model, plus a vertical line at the realized value and
     light dashes at the bracket edges.
 
-    Replaces the 3-grouped-bar plot — same information, immediately
+    Replaces the 3-grouped-bar plot, same information, immediately
     readable as a probability distribution rather than a stack of bars.
     """
     n = len(row_indices)

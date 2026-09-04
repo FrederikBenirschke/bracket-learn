@@ -2,7 +2,7 @@
 
 Every probabilistic-forecasting paper compares against a baseline that
 ignores most of the signal. These two are the floors a real model should
-clear by a wide margin — if your fancy quantile-regression-stacked-ensemble
+clear by a wide margin, if your fancy quantile-regression-stacked-ensemble
 ties ``EmpiricalDistribution``, the features aren't predictive.
 
 - ``EmpiricalDistribution``: emits the marginal distribution of training
@@ -12,7 +12,7 @@ ties ``EmpiricalDistribution``, the features aren't predictive.
 - ``Persistence``: ``mu_t = y_{t - lag}`` (defaults to lag=1). Point-only;
   pair with ``GlobalResidual`` (or another ``Lifter``) for distributional
   output. Trivial on i.i.d. data, surprisingly strong on autocorrelated
-  series — use it to spot autocorrelation you weren't modelling.
+  series, use it to spot autocorrelation you weren't modelling.
 
 Both inherit ``BaseEstimator`` so they slot into a ``Pipeline`` (run under
 ``WalkForward``) unchanged.
@@ -100,7 +100,7 @@ class EmpiricalDistribution(BaseEstimator):
 
 @dataclass
 class Persistence(BaseEstimator):
-    """``mu_t = y_{t - lag}``. PointForecaster — wrap with a Lifter for σ.
+    """``mu_t = y_{t - lag}``. PointForecaster, wrap with a Lifter for σ.
 
     At fit time we record the *last* ``lag`` training ``y`` values. At
     predict time we tile that vector across the inference horizon:
@@ -109,14 +109,14 @@ class Persistence(BaseEstimator):
     - lag=1 collapses to "predict the last training y everywhere" (the
       classical random-walk baseline).
     - lag=24 on hourly data emits ``[y_{T-24}, y_{T-23}, ..., y_{T-1},
-      y_{T-24}, y_{T-23}, ...]`` — the last full day repeated, which is
+      y_{T-24}, y_{T-23}, ...]``, the last full day repeated, which is
       the standard "yesterday's diurnal cycle" baseline used in
       bike-share / load-forecasting benchmarks.
 
     The cycle is deterministic and ignores any inference y (the model
     sees only X and timestamps). For a strictly causal autoregressive
     forecaster, pair this with ``cv="expanding-window"`` or
-    ``"rolling-window"`` — ``"kfold"`` on shuffled rows makes the "last
+    ``"rolling-window"``, ``"kfold"`` on shuffled rows makes the "last
     y" meaningless.
 
     Trivial on i.i.d. shuffles; standard time-series baseline whenever
@@ -170,18 +170,18 @@ class Persistence(BaseEstimator):
 class PersistenceDist(BaseEstimator):
     """Distributional persistence: ``y_t ~ N(y_{t-lag}, σ̂²)``.
 
-    Same μ rule as ``Persistence`` — tiles the last ``lag`` training y's
+    Same μ rule as ``Persistence``, tiles the last ``lag`` training y's
     across the inference horizon. σ̂ is the std of in-sample
     persistence residuals ``y_t − y_{t-lag}`` over the training window,
     so it captures the empirical scale of single-lag innovations.
 
     Use when you need a distributional baseline (CRPS, bracket-prob
     eval) and the series is autocorrelated. For i.i.d. data, σ̂ collapses
-    to ``std(y)`` and this becomes a constant-Normal climatology — use
+    to ``std(y)`` and this becomes a constant-Normal climatology, use
     ``EmpiricalDistribution`` instead, which doesn't pretend symmetry.
 
     Lag=24 on hourly data gives "yesterday's diurnal + Gaussian noise"
-    — a strong baseline for load/temperature forecasting.
+    a strong baseline for load/temperature forecasting.
     """
 
     lag: int = 1
@@ -218,7 +218,7 @@ class PersistenceDist(BaseEstimator):
             sigma = float(np.sqrt(var))
         if sigma <= 0:
             raise ValueError(
-                "PersistenceDist.fit: residual std is non-positive — "
+                "PersistenceDist.fit: residual std is non-positive, "
                 "y_t == y_{t-lag} on every training row. The series has "
                 "no lag-step innovation; persistence is a deterministic "
                 "function and σ is undefined. Refusing to substitute a "

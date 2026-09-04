@@ -38,7 +38,7 @@ def _row_sums(dist: DistributionForecast, edges: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Parametric normal — full-support backing.
+# Parametric normal, full-support backing.
 # ---------------------------------------------------------------------------
 
 
@@ -61,7 +61,7 @@ def test_normal_ladder_sums_to_one_when_edges_cover_support(prov, ids_ts, B):
 
 
 # ---------------------------------------------------------------------------
-# Bracket — exact match must be lossless.
+# Bracket, exact match must be lossless.
 # ---------------------------------------------------------------------------
 
 
@@ -82,7 +82,7 @@ def test_bracket_ladder_lossless_when_edges_match(prov, ids_ts, B):
 
 
 # ---------------------------------------------------------------------------
-# Quantile (clip) — this is where the bug lives.
+# Quantile (clip), this is where the bug lives.
 # ---------------------------------------------------------------------------
 
 
@@ -94,7 +94,7 @@ def test_quantile_clip_ladder_sums_to_one_when_edges_cover_quantile_range(
     [qvals[0], qvals[-1]] should sum to 1.0.
 
     Rationale: clip semantics say mass beyond outermost stored quantile
-    is zero — so the stored [qvals[0], qvals[-1]] range carries the
+    is zero, so the stored [qvals[0], qvals[-1]] range carries the
     *entire* distribution. A ladder covering that range loses nothing.
     """
     N = 5
@@ -142,7 +142,7 @@ def test_quantile_clip_ladder_inside_quantile_range_documented(
         ids=ids, timestamps=ts, provenance=prov,
     )
     # Edges strictly inside [qvals[0], qvals[-1]] = [norm.ppf(0.05), norm.ppf(0.95)].
-    # This pins the lossy behavior — coverage warning is part of the contract.
+    # This pins the lossy behavior, coverage warning is part of the contract.
     edges = np.array([norm.ppf(0.10), 0.0, norm.ppf(0.90)])
     with pytest.warns(UserWarning, match="ladder does not cover"):
         sums = _row_sums(dist, edges)
@@ -224,7 +224,7 @@ def test_quantile_clip_ladder_edges_outside_quantile_range_captures_all_mass(
 
 
 # ---------------------------------------------------------------------------
-# Mixture normal — full support, should be 1.0 with wide enough edges.
+# Mixture normal, full support, should be 1.0 with wide enough edges.
 # ---------------------------------------------------------------------------
 
 

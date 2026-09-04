@@ -6,7 +6,7 @@ For each metric we verify either:
   bounded), or
 - a proper-score property (lower-bound at the true distribution).
 
-These tests pin metric correctness — a regression here means a forecast
+These tests pin metric correctness, a regression here means a forecast
 that should win the leaderboard might lose, which is the worst kind of
 silent bug.
 """
@@ -28,7 +28,7 @@ from bracketlearn.score import (
 )
 
 # ---------------------------------------------------------------------------
-# Gaussian CRPS — closed-form check.
+# Gaussian CRPS, closed-form check.
 # ---------------------------------------------------------------------------
 
 
@@ -72,7 +72,7 @@ def test_crps_gaussian_scale_invariance(prov, ids_ts):
 
 
 # ---------------------------------------------------------------------------
-# Log score — sanity + propriety.
+# Log score, sanity + propriety.
 # ---------------------------------------------------------------------------
 
 
@@ -215,7 +215,7 @@ def test_crps_quantile_matches_gaussian_on_dense_grid(prov, ids_ts):
 
 
 # ---------------------------------------------------------------------------
-# PIT — uniformity statistic.
+# PIT, uniformity statistic.
 # ---------------------------------------------------------------------------
 
 
@@ -233,7 +233,7 @@ def test_pit_uniform_mean_half(prov, ids_ts, rng):
 
 
 # ---------------------------------------------------------------------------
-# cdf_at — per-row CDF (B9 fix: must equal np.diag(cdf(y)) without
+# cdf_at, per-row CDF (B9 fix: must equal np.diag(cdf(y)) without
 # materialising the (N, N) cross product).
 # ---------------------------------------------------------------------------
 

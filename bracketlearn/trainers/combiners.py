@@ -1,4 +1,4 @@
-"""Combiner / meta trainers — forecasts built from upstream forecasts.
+"""Combiner / meta trainers, forecasts built from upstream forecasts.
 
 Every trainer here consumes the out-of-fold distributions of one or more
 upstream models (received positionally via ``upstream=[...]`` under a
@@ -6,16 +6,16 @@ upstream models (received positionally via ``upstream=[...]`` under a
 because "combine upstreams" is a single concept; the split by output backing
 (parametric vs bracket) is incidental.
 
-- ``StackedParametric`` / ``BMAStacking`` — parametric meta-learners over
+- ``StackedParametric`` / ``BMAStacking``, parametric meta-learners over
   upstream (μ, σ): OLS-of-μ and Bayesian model averaging.
-- ``DistAsFeatures`` — generic bridge: upstream dists become a feature matrix
+- ``DistAsFeatures``, generic bridge: upstream dists become a feature matrix
   for any downstream trainer.
-- ``BracketStacking`` — learned per-bracket combination of upstream bracket
+- ``BracketStacking``, learned per-bracket combination of upstream bracket
   probabilities.
-- ``LinearPoolDist`` — convex (linear) opinion pool of upstream dists.
-- ``TailSpecialist`` — Gaussian body from an upstream EMOS + LightGBM tail
+- ``LinearPoolDist``, convex (linear) opinion pool of upstream dists.
+- ``TailSpecialist``. Gaussian body from an upstream EMOS + LightGBM tail
   classifiers, on per-row brackets.
-- ``CDFBoostBracket`` — gradient-boosted CDF correction on a bracket grid.
+- ``CDFBoostBracket``, gradient-boosted CDF correction on a bracket grid.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ _EULER_GAMMA = 0.5772156649015329
 
 
 # ---------------------------------------------------------------------------
-# DistAsFeatures — generic bridge: upstream dists → feature matrix → any trainer.
+# DistAsFeatures, generic bridge: upstream dists → feature matrix → any trainer.
 # ---------------------------------------------------------------------------
 
 
@@ -71,7 +71,7 @@ class DistAsFeatures(BaseEstimator):
     Total per row: ``K * (len(feature_taus) + include_mean + include_variance + len(tail_cutpoints))``.
 
     The downstream forecaster sees ONLY dist-derived features, not raw X.
-    If you also want raw X, build a separate node — keeping this class
+    If you also want raw X, build a separate node, keeping this class
     single-purpose is intentional.
 
     Upstream forecasts arrive **positionally** via ``upstream=[dist, ...]``
@@ -161,7 +161,7 @@ class DistAsFeatures(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# BracketStacking — multiclass classifier over concatenated bracket-prob deps.
+# BracketStacking, multiclass classifier over concatenated bracket-prob deps.
 # ---------------------------------------------------------------------------
 
 
@@ -179,15 +179,15 @@ class BracketStacking(BaseEstimator):
     Why this and not ``BMAStacking``: BMA produces convex weight
     combinations on the simplex, which can only interpolate between
     upstreams. A LightGBM (or any non-linear) multiclass head learns
-    *regime-conditional* interactions — "trust EMOS when forecasts
-    disagree, market when they cluster" — that a convex pool cannot
+    *regime-conditional* interactions, "trust EMOS when forecasts
+    disagree, market when they cluster", that a convex pool cannot
     express. Empirically this matters: stacking a LightGBM head over
     bracket probs typically beats convex pooling by 20-40% on logloss.
 
     Why not ``DistAsFeatures``: that primitive extracts a fixed feature
     set (quantiles, mean, var) from each upstream, then runs a downstream
     *point* or *dist* forecaster on those features. It loses the
-    bracket-prob shape information — the raw per-bin probabilities
+    bracket-prob shape information, the raw per-bin probabilities
     are not in its feature set. BracketStacking preserves the full
     bracket-prob shape across all upstreams and lets the classifier
     learn directly on those vectors.
@@ -196,14 +196,14 @@ class BracketStacking(BaseEstimator):
 
     * All upstreams must be ``BracketForecast`` with matching per-row edges
       (same K, same boundaries). Rows where upstreams disagree on edges are
-      caller-resolved — typically by filtering to the modal K and dropping
+      caller-resolved, typically by filtering to the modal K and dropping
       non-conforming rows.
     * ``estimator`` must be sklearn-compatible with ``predict_proba``.
       ``num_class`` is auto-set from observed K when the estimator
       accepts that parameter (LightGBM, sklearn classifiers); otherwise
       caller pre-configures it.
 
-    Predict-time edges are taken from the first upstream — since the contract
+    Predict-time edges are taken from the first upstream, since the contract
     requires all upstreams share edges, any one is canonical.
     """
 
@@ -266,7 +266,7 @@ class BracketStacking(BaseEstimator):
             elif not np.array_equal(upstream_ids, d.ids):
                 raise ValueError(
                     f"BracketStacking: upstream {upstream_label(i)}.ids "
-                    "does not match the first upstream's ids — rows would be misaligned"
+                    "does not match the first upstream's ids, rows would be misaligned"
                 )
         if (
             caller_ids is not None
@@ -274,7 +274,7 @@ class BracketStacking(BaseEstimator):
             and not np.array_equal(np.asarray(caller_ids), upstream_ids)
         ):
             raise ValueError(
-                "BracketStacking: caller's ids do not match upstream ids — "
+                "BracketStacking: caller's ids do not match upstream ids, "
                 "rows would be misaligned"
             )
 
@@ -292,7 +292,7 @@ class BracketStacking(BaseEstimator):
 
         ``labels`` (optional) overrides the default ``realized_bin(y)``
         derivation. Use it when the upstream's edges don't reflect
-        the true bin assignment — e.g. Kalshi overlapping brackets,
+        the true bin assignment, e.g. Kalshi overlapping brackets,
         where multiple brackets contain y and the caller has its own
         "first match" tie-breaker. When omitted, the first upstream's
         ``realized_bin(y)`` provides the labels and rows with
@@ -317,16 +317,16 @@ class BracketStacking(BaseEstimator):
             valid = np.ones(N, dtype=bool)
         else:
             labels_arr = ups[0].realized_bin(y).astype(int)
-            # realized_bin already clips to [0, K-1] — no negative labels possible.
+            # realized_bin already clips to [0, K-1], no negative labels possible.
             # Filter out rows with non-finite y (would have produced 0-clip silently).
             valid = np.isfinite(y)
         if int(valid.sum()) < K * 2:
             raise RuntimeError(
                 f"BracketStacking.fit: only {int(valid.sum())} valid rows for "
-                f"{K}-class multiclass — too few (need ≥ 2*K)"
+                f"{K}-class multiclass, too few (need ≥ 2*K)"
             )
         # Auto-set num_class if estimator accepts it; LightGBM needs this
-        # at construction for multiclass — but it also accepts a re-fit
+        # at construction for multiclass, but it also accepts a re-fit
         # with num_class=K via set_params.
         try:
             self.estimator.set_params(num_class=K)
@@ -377,7 +377,7 @@ class BracketStacking(BaseEstimator):
         if np.any(proba_sum <= 0):
             raise RuntimeError(
                 "BracketStacking: estimator returned a row with zero total "
-                "probability — predict_proba contract violated"
+                "probability, predict_proba contract violated"
             )
         proba = proba / proba_sum
         return BracketForecast.from_arrays(
@@ -389,7 +389,7 @@ class BracketStacking(BaseEstimator):
         )
 
 # ---------------------------------------------------------------------------
-# StackedParametric — DistForecaster meta-learner over upstream μ (and
+# StackedParametric. DistForecaster meta-learner over upstream μ (and
 # optionally σ), received positionally via ``upstream=[...]`` under a
 # ``Stacker``.
 # ---------------------------------------------------------------------------
@@ -404,16 +404,16 @@ class StackedParametric(BaseEstimator):
     std, Gaussian output. The optional knobs below widen the surface.
 
     ``weight_constraint``:
-        * ``"unconstrained"`` (default) — OLS with intercept; μ-weights
+        * ``"unconstrained"`` (default), OLS with intercept; μ-weights
           take any sign and any magnitude.
-        * ``"convex"`` — Σ wₖ = 1, wₖ ≥ 0 via SLSQP (classic Breiman
+        * ``"convex"``, Σ wₖ = 1, wₖ ≥ 0 via SLSQP (classic Breiman
           1996 stacking). Intercept stays free so it can absorb any
           common bias in the upstream μ scale.
 
     ``sigma_method``:
-        * ``"constant"`` (default) — σ̂ = std(in-sample residuals);
+        * ``"constant"`` (default), σ̂ = std(in-sample residuals);
           single scalar applied to every row.
-        * ``"geometric_mean_upstream"`` — per-row dispersion modelled as
+        * ``"geometric_mean_upstream"``, per-row dispersion modelled as
           σ̂(x) = exp(α + Σ wⱼ · log σⱼ(x)). Fit by OLS regressing the
           bias-corrected target ``0.5·(log(resid² + ε) + γ_E + log 2)``
           on per-upstream log σⱼ(x), where the additive constant
@@ -424,8 +424,8 @@ class StackedParametric(BaseEstimator):
           −∞ targets.
 
     ``dist_family``:
-        * ``"normal"`` (default) — N(μ̂, σ̂²).
-        * ``"student_t"`` — t_ν(μ̂, scale) with ν = ``student_t_df``.
+        * ``"normal"`` (default), N(μ̂, σ̂²).
+        * ``"student_t"``, t_ν(μ̂, scale) with ν = ``student_t_df``.
           The fitted σ̂ is interpreted as the standard deviation of
           residuals (matches the residual-fit semantics); it is
           converted to the t-distribution *scale* parameter via
@@ -433,7 +433,7 @@ class StackedParametric(BaseEstimator):
           equals σ̂² regardless of ν.
 
     Upstream forecasts arrive **positionally** via ``upstream=[dist, ...]``
-    (the ``Stacker`` contract) — this reads ``.params['mu']`` (and
+    (the ``Stacker`` contract), this reads ``.params['mu']`` (and
     ``['sigma']`` when ``sigma_method='geometric_mean_upstream'``) from each,
     in declared order.
     """
@@ -506,7 +506,7 @@ class StackedParametric(BaseEstimator):
             elif not np.array_equal(upstream_ids, d.ids):
                 raise ValueError(
                     f"StackedParametric.fit: upstream {label}.ids does not match the "
-                    f"first upstream's ids — meta-learner rows would be misaligned"
+                    f"first upstream's ids, meta-learner rows would be misaligned"
                 )
         if (
             ids is not None
@@ -514,7 +514,7 @@ class StackedParametric(BaseEstimator):
             and not np.array_equal(np.asarray(ids), upstream_ids)
         ):
             raise ValueError(
-                "StackedParametric.fit: caller's ids do not match upstream ids — "
+                "StackedParametric.fit: caller's ids do not match upstream ids, "
                 "rows would be misaligned"
             )
         cols = [d.params["mu"] for d in ups]
@@ -671,7 +671,7 @@ class StackedParametric(BaseEstimator):
                 raise ValueError(
                     f"StackedParametric.predict_dist: upstream "
                     f"{upstream_label(i)}.ids does not "
-                    f"match caller ids — rows would be misaligned"
+                    f"match caller ids, rows would be misaligned"
                 )
         cols = [d.params["mu"] for d in ups]
         Z = np.column_stack(cols)
@@ -699,7 +699,7 @@ class StackedParametric(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# BMAStacking — Bayesian model averaging meta-learner. Mixture-of-Normals output.
+# BMAStacking. Bayesian model averaging meta-learner. Mixture-of-Normals output.
 # ---------------------------------------------------------------------------
 
 
@@ -720,7 +720,7 @@ class BMAStacking(BaseEstimator):
     where each upstream forecaster k contributes (μ_{k,i}, σ_{k,i}) per
     row i from its OOF ``DistributionForecast``. For non-Normal
     parametric upstreams (Student-t, MixtureNormal) we use the marginal
-    moments — μ = ``dist.mean()``, σ = √``dist.variance()`` — i.e. the
+    moments, μ = ``dist.mean()``, σ = √``dist.variance()``, i.e. the
     standard moment-matching BMA approximation.
 
     Fit (EM with Dirichlet prior):
@@ -731,7 +731,7 @@ class BMAStacking(BaseEstimator):
       w_k = α_n_k / Σ_j α_n_j (posterior mean).
 
     s_i = sample_weight_i (1 if unweighted). Iterates until
-    ‖w_new − w‖∞ < ``tol`` or ``max_iter`` is reached — non-convergence
+    ‖w_new − w‖∞ < ``tol`` or ``max_iter`` is reached, non-convergence
     raises (Rule #0.5; partial weights would silently misweight tails).
 
     Predict at new x*: the pipeline re-runs upstreams on the inference
@@ -741,7 +741,7 @@ class BMAStacking(BaseEstimator):
 
     Why this beats ``StackedParametric``:
 
-    * Per-row output σ — the mixture's standard deviation grows wherever
+    * Per-row output σ - the mixture's standard deviation grows wherever
       upstream μ̂'s disagree on that row. ``StackedParametric``'s σ̂ is one scalar
       from training residuals.
     * No σ̂ → 0 collapse (the v0.1 ``StackedParametric`` pathology). The mixture
@@ -784,7 +784,7 @@ class BMAStacking(BaseEstimator):
         if np.any(var <= 0):
             raise ValueError(
                 f"BMAStacking: upstream {name} has non-positive variance "
-                "on some rows — likelihood would be undefined."
+                "on some rows, likelihood would be undefined."
             )
         return mu, np.sqrt(var)
 
@@ -800,7 +800,7 @@ class BMAStacking(BaseEstimator):
         ups = resolve_upstream(upstream, where="BMAStacking.fit")
         y = np.asarray(y, dtype=float)
         N = y.shape[0]
-        # Row-alignment guard. Same contract as StackedParametric — upstream ids
+        # Row-alignment guard. Same contract as StackedParametric, upstream ids
         # must agree with each other and with the caller's ids (if given).
         upstream_ids = None
         for i, d in enumerate(ups):
@@ -809,7 +809,7 @@ class BMAStacking(BaseEstimator):
             elif not np.array_equal(upstream_ids, d.ids):
                 raise ValueError(
                     f"BMAStacking.fit: upstream {upstream_label(i)}.ids "
-                    "does not match the first upstream's ids — mixture rows would be misaligned"
+                    "does not match the first upstream's ids, mixture rows would be misaligned"
                 )
         if (
             ids is not None
@@ -817,7 +817,7 @@ class BMAStacking(BaseEstimator):
             and not np.array_equal(np.asarray(ids), upstream_ids)
         ):
             raise ValueError(
-                "BMAStacking.fit: caller's ids do not match upstream ids — "
+                "BMAStacking.fit: caller's ids do not match upstream ids, "
                 "rows would be misaligned"
             )
         # Collect per-row moments.
@@ -844,7 +844,7 @@ class BMAStacking(BaseEstimator):
                 "BMAStacking: sample_weight must be 1-D, same length as y, non-negative."
             )
         # EM loop. Convergence on Δ weighted-log-likelihood (the EM objective)
-        # rather than Δw — when upstreams are near-duplicates, w drifts
+        # rather than Δw, when upstreams are near-duplicates, w drifts
         # linearly toward the fixed point with no real change in the
         # objective, and tol-on-Δw spuriously fails. Δll is the proper
         # criterion (and Σ Δll = 0 implies w is stationary).
@@ -859,7 +859,7 @@ class BMAStacking(BaseEstimator):
             denom = num.sum(axis=1, keepdims=True)
             if np.any(denom <= 0):
                 raise ValueError(
-                    "BMAStacking.fit: row likelihood is zero under all components — "
+                    "BMAStacking.fit: row likelihood is zero under all components, "
                     "upstream μ̂'s sit too far from y on some rows. Check upstream "
                     "fit or widen σ_floor on upstreams."
                 )
@@ -901,7 +901,7 @@ class BMAStacking(BaseEstimator):
                 raise ValueError(
                     f"BMAStacking.predict_dist: upstream "
                     f"{upstream_label(i)}.ids does "
-                    "not match caller ids — mixture rows would be misaligned"
+                    "not match caller ids, mixture rows would be misaligned"
                 )
         K = len(ups)
         mu = np.empty((N, K))
@@ -921,7 +921,7 @@ class BMAStacking(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# TailSpecialist — EMOS body + LightGBM tail classifiers (DistForecaster).
+# TailSpecialist, EMOS body + LightGBM tail classifiers (DistForecaster).
 # ---------------------------------------------------------------------------
 
 
@@ -932,23 +932,23 @@ class TailSpecialist(BaseEstimator):
 
     Takes a single parametric-normal upstream (positionally, via the
     ``Stacker`` contract) and a per-row bracket ladder via ``brackets_by_id``
-    (id → 1-D edge array). Fits two global binary classifiers — one for "y in row's
-    first bracket" and one for "y in row's last bracket" — and at
+    (id → 1-D edge array). Fits two global binary classifiers, one for "y in row's
+    first bracket" and one for "y in row's last bracket", and at
     predict time replaces each row's first/last bin mass with the
     classifier outputs, rescaling the middle bins to (1 - p_lo - p_hi).
 
-    v0.3 — per-row brackets
+    v0.3, per-row brackets
     -----------------------
     Each row's first/last bracket can have *different* boundaries
     (Kalshi-style daily-rotating ladders). The training-time tail
     indicators are therefore "y in row's first bracket" /
-    "y in row's last bracket" — per-row searchsorted, not a fixed
+    "y in row's last bracket", per-row searchsorted, not a fixed
     threshold.
 
     Two global classifiers are still appropriate because the row's
     bracket geometry varies but the upstream-feature relationship to
     "tail event" doesn't. (Per-bracket classifier ensembles would
-    require ≥1 trainer per market — not what this trainer is for.)
+    require ≥1 trainer per market, not what this trainer is for.)
     """
 
     brackets_by_id: dict[Any, np.ndarray]
@@ -1073,7 +1073,7 @@ class TailSpecialist(BaseEstimator):
                 f"TailSpecialist: classifier tail probabilities disagree "
                 f"with upstream EMOS by up to {max_disagreement:.2f} on "
                 f"the outer bins. The classifier outputs *replace* the "
-                f"upstream's edge-bin mass — large disagreement on a "
+                f"upstream's edge-bin mass, large disagreement on a "
                 f"narrow ladder usually means the EMOS body is dominating "
                 f"the tails. Consider widening the ladder.",
                 UserWarning, stacklevel=2,
@@ -1102,7 +1102,7 @@ class TailSpecialist(BaseEstimator):
             if s <= 0:
                 raise ValueError(
                     f"TailSpecialist row {i}: row sum non-positive after "
-                    f"renormalisation — should be unreachable; investigate."
+                    f"renormalisation, should be unreachable; investigate."
                 )
             new_row = new_row / s
             out_probs[i, :B_i] = new_row
@@ -1115,7 +1115,7 @@ class TailSpecialist(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# LinearPoolDist — convex combination of upstream DistributionForecasts.
+# LinearPoolDist, convex combination of upstream DistributionForecasts.
 # ---------------------------------------------------------------------------
 
 
@@ -1127,14 +1127,14 @@ class LinearPoolDist(BaseEstimator):
 
     Weights are GLOBAL (not per-row) and fit by minimising weighted-empirical
     CRPS on OOF. Per-component samples drawn from a fixed mid-rank τ grid
-    via ppf — so each upstream backing must support ppf.
+    via ppf, so each upstream backing must support ppf.
 
     Output backing: quantile, evaluated at a 99-point τ grid by inverting
     the weighted empirical CDF of stacked component samples. Tail policy:
     clip.
 
     For Gaussian-only upstream a closed-form mixture-CRPS exists (Grimit
-    et al., 2006) — left as a v0.2 optimisation.
+    et al., 2006), left as a v0.2 optimisation.
     """
 
     n_samples: int = 200
@@ -1162,7 +1162,7 @@ class LinearPoolDist(BaseEstimator):
 
     @staticmethod
     def _weighted_crps(
-        stacked: np.ndarray,                       # (N, M) — M = K·S
+        stacked: np.ndarray,                       # (N, M), M = K·S
         sample_w: np.ndarray,                      # (M,) sums to 1
         y: np.ndarray,                             # (N,)
     ) -> np.ndarray:
@@ -1270,7 +1270,7 @@ class LinearPoolDist(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# CDFBoostBracket — B LightGBM heads on upstream-CDF features → bracket dist.
+# CDFBoostBracket, B LightGBM heads on upstream-CDF features → bracket dist.
 # ---------------------------------------------------------------------------
 
 
@@ -1285,7 +1285,7 @@ class CDFBoostBracket(BaseEstimator):
 
     Feature matrix per row (passed to all B heads): the CDF of each upstream
     dist evaluated at every ladder edge → shape ``(K * (B+1),)``. Optionally
-    concat raw X with ``include_raw_X=True`` (off by default — keeps the
+    concat raw X with ``include_raw_X=True`` (off by default, keeps the
     "dist features only" framing clean).
 
     Training: for each bin b, classifier_b predicts ``y_b = 1[edges[b] <= y < edges[b+1]]``.
@@ -1320,7 +1320,7 @@ class CDFBoostBracket(BaseEstimator):
             )
         # Uniform-B requirement: all rows must share the same bin count
         # so that B head classifiers can be trained. Edge *values* may
-        # differ — only B is fixed.
+        # differ, only B is fixed.
         Bs = set()
         for k, e in self.brackets_by_id.items():
             e_arr = np.asarray(e, dtype=float)

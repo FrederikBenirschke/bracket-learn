@@ -49,7 +49,7 @@ def test_blended_loss_tilts_with_lam():
 # ----------------------------------------------------------------- synthetic
 def _synth(seed=0, E=2500, K=5):
     """Events with a dominant shared latent (priced by the market) and an
-    orthogonal latent (un-priced) — so there is real mispricing to capture."""
+    orthogonal latent (un-priced), so there is real mispricing to capture."""
     rng = np.random.default_rng(seed)
     Fsh, Forth = 3, 2
     X = rng.normal(size=(E, Fsh + Forth))
@@ -102,7 +102,7 @@ def test_tilt_raises_oos_ea(Trainer):
 
     def run(lam):
         # Hyperparam-only construction; grids/references passed at call time.
-        # fit on train ids, predict on test ids — the trainer subsets by ids.
+        # fit on train ids, predict on test ids, the trainer subsets by ids.
         model = Trainer(lam=lam, **kw)
         model.fit(X[tr], y[tr], ids=ids[tr], brackets_by_id=bbi, reference_by_id=rbi)
         dist = model.predict_dist(X[te], ids=ids[te], timestamps=ts[te],
@@ -227,7 +227,7 @@ def test_walkforward_integration_forwards_grids():
 # --------------------------------------------------------- ea_scale (lam parity)
 def test_ea_scale_derives_from_reference_curvature():
     """The data-derived ea_scale is exactly 1 / mean(m(1-m)) over the expanded
-    reference contracts — read off the prices, not a magic constant."""
+    reference contracts, read off the prices, not a magic constant."""
     _, _, _, _, _, rbi, *_ = _synth(E=200)
     m_exp = np.concatenate([rbi[i] for i in sorted(rbi)])
     assert ea_scale_for_reference(m_exp) == pytest.approx(1.0 / np.mean(m_exp * (1 - m_exp)))

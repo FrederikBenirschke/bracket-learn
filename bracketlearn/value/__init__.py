@@ -1,8 +1,8 @@
 """Reference-relative **value** layer: scoring, training, and theory for "is my
-price more valuable to trade than the one already quoted?" — a step past pure
+price more valuable to trade than the one already quoted?", a step past pure
 forecasting (these tools take a reference price ``m``).
 
-- Trainers — :class:`BlendedBracketGBM`, :class:`BlendedBracketNet`: bracket
+- Trainers, :class:`BlendedBracketGBM`, :class:`BlendedBracketNet`: bracket
   models trained on ``L = CE − λ·EA`` (calibration tilted toward capturing the
   reference's mispricing), plus the shared objective helpers.
 - Metrics (re-exported from :mod:`bracketlearn.score` for one namespace):

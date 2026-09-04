@@ -1,11 +1,11 @@
-"""BaseEstimator — sklearn-style contract for bracketlearn forecasters.
+"""BaseEstimator, sklearn-style contract for bracketlearn forecasters.
 
 Inherits from ``sklearn.base.BaseEstimator`` so bracketlearn estimators
 are isinstance-compatible with sklearn helpers (``check_is_fitted``,
 ``__sklearn_tags__``, anything that does
 ``isinstance(est, sklearn.base.BaseEstimator)``). Note that
 ``sklearn.utils.estimator_checks.check_estimator`` will NOT pass on a
-bracketlearn forecaster — our ``predict`` returns a ``PointForecast``,
+bracketlearn forecaster, our ``predict`` returns a ``PointForecast``,
 ``predict_dist`` returns a ``DistributionForecast``, neither of which is
 the ndarray sklearn expects. The isinstance interop is the actual win
 of subclassing; ``check_estimator`` compliance is a separate workstream.
@@ -41,7 +41,7 @@ def _auto_fill_ids_ts(method):
     Lets sklearn-style callers write ``est.fit(X, y)`` or
     ``est.predict(X)`` without supplying the bracketlearn-specific
     ``ids=`` / ``timestamps=`` kwargs. We infer them from the first
-    positional argument (X) — ``ids = np.arange(N)``,
+    positional argument (X), ``ids = np.arange(N)``,
     ``timestamps = np.arange(N, dtype=float)``.
 
     Idempotent: if the caller explicitly passes ids/timestamps we
@@ -113,7 +113,7 @@ class BaseEstimator(_SklearnBaseEstimator):
     Subclasses whose ``fit`` / ``predict`` key per-row state by ``ids`` (the
     bracket-native trainers that hold a ``brackets_by_id`` dict) should set the
     class attribute ``_requires_explicit_ids = True``. The auto-fill then
-    *refuses* to fabricate ``ids = arange(N)`` for them and raises instead — a
+    *refuses* to fabricate ``ids = arange(N)`` for them and raises instead, a
     fabricated id would silently misalign each row with the wrong grid.
     """
 

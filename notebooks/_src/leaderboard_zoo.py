@@ -80,7 +80,7 @@ from bracketlearn.trainers import (
 )
 
 # %% [markdown]
-# ## Dataset 1 — California housing
+# ## Dataset 1. California housing
 
 # %%
 data = fetch_california_housing()
@@ -276,16 +276,16 @@ fig = leaderboard_bar(
     baseline_name="Empirical", baseline_value=base_crps,
     skill_label="CRPSS",
     families=families,
-    title="California housing — full zoo, family-colored",
+    title="California housing, full zoo, family-colored",
 )
 plt.show()
 
 # %% [markdown]
-# ## Distributional vs point — do the rankings agree?
+# ## Distributional vs point, do the rankings agree?
 #
 # Per-model scatter of CRPS skill vs RMSE skill (both vs Empirical).
 # Models on the diagonal rank the same way under both lenses; off-
-# diagonal points are the *interesting* ones — a model that beats
+# diagonal points are the *interesting* ones, a model that beats
 # baseline on CRPS but ties on RMSE has captured the **spread** rather
 # than improved the **mean**, and that's exactly what bracket
 # contracts pay for.
@@ -312,7 +312,7 @@ ax.axvline(0, color="gray", lw=0.5)
 ax.set_xlim(mn, mx); ax.set_ylim(mn, mx)
 ax.set_xlabel("RMSE skill vs Empirical (1 − RMSE / RMSE_emp)")
 ax.set_ylabel("CRPS skill vs Empirical (1 − CRPS / CRPS_emp)")
-ax.set_title("Distributional vs point — does CRPS reward what RMSE doesn't?")
+ax.set_title("Distributional vs point, does CRPS reward what RMSE doesn't?")
 # Build the family legend.
 present = sorted({f for f in families.values()})
 handles = [plt.Rectangle((0, 0), 1, 1, color=FAMILY_COLORS.get(f, "gray"))
@@ -324,7 +324,7 @@ fig.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ## Dataset 2 — Bike-sharing mini
+# ## Dataset 2. Bike-sharing mini
 #
 # Persistence lags + learned models, under expanding-window CV.
 
@@ -383,7 +383,7 @@ fig = leaderboard_bar(
     baseline_name="emp", baseline_value=base_ts,
     skill_label="CRPSS",
     families=ts_fams,
-    title="Bike-sharing — CRPSS vs marginal floor (expanding-window CV)",
+    title="Bike-sharing, CRPSS vs marginal floor (expanding-window CV)",
 )
 plt.show()
 
@@ -391,7 +391,7 @@ plt.show()
 # ## Putting the numbers in perspective
 #
 # **California housing** (y in $100k, std ≈ $115k):
-# - `Empirical` ≈ 0.61 — the marginal-CDF floor (~½ y-std), textbook
+# - `Empirical` ≈ 0.61, the marginal-CDF floor (~½ y-std), textbook
 #   climatology baseline.
 # - Well-tuned `QuantileReg` ≈ **0.25**, CRPSS ≈ 0.59. Published
 #   probabilistic-forecasting benchmarks see QReg/NGBoost/QF in the
@@ -401,7 +401,7 @@ plt.show()
 #
 # **Bike-sharing** (y is hourly rental count, range 0–977):
 # - `Empirical` ≈ 110.
-# - `Persistence(24)` ≈ 130 — sometimes *worse* than Empirical because the
+# - `Persistence(24)` ≈ 130, sometimes *worse* than Empirical because the
 #   seasonal baseline is volatile across week-to-week regime changes.
 # - A genuine model on raw features should reach ~80–90 CRPS on the
 #   full dataset (this notebook subsamples and uses a temperature-only

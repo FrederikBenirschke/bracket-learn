@@ -47,7 +47,7 @@ def _repair_quantile_crossings(
     )
 
 # ---------------------------------------------------------------------------
-# QuantileReg — per-τ LightGBM heads. Quantile-backed DistForecaster.
+# QuantileReg, per-τ LightGBM heads. Quantile-backed DistForecaster.
 # ---------------------------------------------------------------------------
 
 
@@ -133,7 +133,7 @@ class QuantileReg(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# QuantileForest — single random forest, quantiles from leaf empirical CDFs.
+# QuantileForest, single random forest, quantiles from leaf empirical CDFs.
 # ---------------------------------------------------------------------------
 
 

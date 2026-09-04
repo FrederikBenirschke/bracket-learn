@@ -23,7 +23,7 @@ def ridge(
     """RidgeCV point forecaster lifted to a Normal via `GlobalResidual`.
 
     Picks α from `alphas` via leave-one-out CV on the inner-fit slice.
-    Returns a `Pipeline([SklearnPoint(RidgeCV), GlobalResidual()])` — a
+    Returns a `Pipeline([SklearnPoint(RidgeCV), GlobalResidual()])`, a
     self-contained `DistForecaster`.
     """
     from sklearn.linear_model import RidgeCV

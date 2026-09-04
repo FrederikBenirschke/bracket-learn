@@ -1,4 +1,4 @@
-"""bracketlearn — sklearn-style probabilistic-forecasting and bracket-contract pricing.
+"""bracketlearn, sklearn-style probabilistic-forecasting and bracket-contract pricing.
 
 Most probabilistic-forecasting libraries stop at "predict a distribution."
 bracketlearn keeps going: every forecast is a typed `DistributionForecast`
@@ -14,11 +14,11 @@ Quick start::
     )
 
 Less commonly used symbols live in their submodules:
-- ``bracketlearn.protocols`` — Forecaster, PointForecaster, DistForecaster,
+- ``bracketlearn.protocols``. Forecaster, PointForecaster, DistForecaster,
   Lifter, Calibrator (for users writing custom stages).
-- ``bracketlearn.adapters.ContractAdapter`` — the contract-pricing protocol.
-- ``bracketlearn.forecast`` — ContractSpec, ProvenanceMeta, TailPolicyError.
-- ``bracketlearn.trainers`` — ``ridge``, ``emos_calibrated`` convenience
+- ``bracketlearn.adapters.ContractAdapter``, the contract-pricing protocol.
+- ``bracketlearn.forecast``. ContractSpec, ProvenanceMeta, TailPolicyError.
+- ``bracketlearn.trainers``, ``ridge``, ``emos_calibrated`` convenience
   factories.
 """
 

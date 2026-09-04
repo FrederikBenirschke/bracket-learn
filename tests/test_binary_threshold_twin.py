@@ -1,4 +1,4 @@
-"""Single-strike adapters — BinaryAbove, BinaryBelow, Twin, ThresholdLadder.
+"""Single-strike adapters. BinaryAbove, BinaryBelow, Twin, ThresholdLadder.
 
 These map directly onto prediction-market contracts: above/below thresholds
 (Kalshi single-threshold contracts), paired YES/NO at a strike (Polymarket
@@ -85,7 +85,7 @@ def test_binary_above_works_for_quantile_backing(prov, ids_ts, rng):
 
 
 # ---------------------------------------------------------------------------
-# Twin — paired YES/NO at a strike.
+# Twin, paired YES/NO at a strike.
 # ---------------------------------------------------------------------------
 
 
@@ -131,7 +131,7 @@ def test_twin_group_id_pairs(prov, ids_ts):
 
 
 # ---------------------------------------------------------------------------
-# ThresholdLadder — survival function at S strikes.
+# ThresholdLadder, survival function at S strikes.
 # ---------------------------------------------------------------------------
 
 

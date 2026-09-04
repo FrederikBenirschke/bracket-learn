@@ -1,4 +1,4 @@
-"""Cross-estimator invariants — pin behaviour that must hold across refactors.
+"""Cross-estimator invariants, pin behaviour that must hold across refactors.
 
 Audit item 5: ladder-sum invariant lives in test_ladder_sum.py; this
 file covers the rest:
@@ -6,10 +6,10 @@ file covers the rest:
 - ``clone(est).get_params() == est.get_params()`` for every BaseEstimator
   subclass. No shared mutable state, no fitted-state leak.
 - Bracket-ladder edge cases: B=1 (single bracket) and B=2.
-- DistributionForecast monotonicity invariants — quantile qvals
+- DistributionForecast monotonicity invariants, quantile qvals
   non-decreasing in tau; bracket cumulative probs non-decreasing.
 
-Skipped (deferred — concrete trainers vary too much for a clean
+Skipped (deferred, concrete trainers vary too much for a clean
 single test):
 - sample_weight invariance (doubling a row's weight ≈ duplicating the
   row). Some trainers honor this exactly (linear / OLS), others
@@ -36,7 +36,7 @@ from bracketlearn import (
 )
 
 # ---------------------------------------------------------------------------
-# 5a — clone equality across every BaseEstimator subclass
+# 5a, clone equality across every BaseEstimator subclass
 # ---------------------------------------------------------------------------
 
 
@@ -86,7 +86,7 @@ def test_every_baseestimator_subclass_clones_with_equal_params():
     """clone(est).get_params() == est.get_params() for every constructable
     BaseEstimator subclass."""
     subclasses = _all_baseestimator_subclasses()
-    assert subclasses, "no BaseEstimator subclasses found — import failure?"
+    assert subclasses, "no BaseEstimator subclasses found, import failure?"
     tested = 0
     skipped = []
     for cls in subclasses:
@@ -128,7 +128,7 @@ def test_clone_deep_copies_nested_estimators():
 
 
 # ---------------------------------------------------------------------------
-# 5b — bracket-ladder edge cases: B=1 and B=2
+# 5b, bracket-ladder edge cases: B=1 and B=2
 # ---------------------------------------------------------------------------
 
 
@@ -169,7 +169,7 @@ def test_bracket_ladder_b2_two_brackets_sum_to_one(_normal_dist):
 
 
 # ---------------------------------------------------------------------------
-# 5c — monotonicity invariants
+# 5c, monotonicity invariants
 # ---------------------------------------------------------------------------
 
 
@@ -179,7 +179,7 @@ def test_quantile_backing_qvals_monotone(prov, ids_ts):
     N = 3
     ids, ts = ids_ts(N)
     taus = np.array([0.1, 0.5, 0.9])
-    # Deliberate crossing — must raise.
+    # Deliberate crossing, must raise.
     bad = np.array([[1.0, 2.0, 1.5], [0.0, 1.0, 2.0], [0.0, 1.0, 2.0]])
     with pytest.raises(ValueError, match="monotone"):
         DistributionForecast.from_quantiles(
@@ -223,7 +223,7 @@ def test_bracket_dist_cumulative_probs_monotone(prov, ids_ts):
 
 
 # ---------------------------------------------------------------------------
-# 5d — fitted-state isolation across clones
+# 5d, fitted-state isolation across clones
 # ---------------------------------------------------------------------------
 
 
@@ -255,7 +255,7 @@ def test_empirical_distribution_clone_fits_independently():
 
 
 # ---------------------------------------------------------------------------
-# 5e — baselines: deterministic shapes
+# 5e, baselines: deterministic shapes
 # ---------------------------------------------------------------------------
 
 

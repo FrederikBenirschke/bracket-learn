@@ -3,7 +3,7 @@ matches the seeded-default-tree-learner reference.
 
 NGBoost's ``random_state`` only seeds its minibatching / column-subsampling
 RNG. Each boosting iteration ``clone(self.Base)`` with the default
-``DecisionTreeRegressor(random_state=None)`` — tree split tie-breaking
+``DecisionTreeRegressor(random_state=None)``, tree split tie-breaking
 draws from OS entropy and successive fits with the same NGBoost seed
 still produce different μ̂/σ̂.
 

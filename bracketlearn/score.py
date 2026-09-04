@@ -1,11 +1,11 @@
 """Scoring: distribution-level + contract-level.
 
 v0.1 supplies the essentials for the e2e demo:
-- dist.crps_gaussian       — CRPS for Gaussian parametric backing.
-- dist.log_score_gaussian  — predictive log-likelihood.
-- dist.pit                 — Probability Integral Transform values for diag.
-- contract.log_loss_bracket — categorical log-loss over a bracket ladder.
-- contract.brier_bracket    — multi-class Brier on a bracket ladder.
+- dist.crps_gaussian       - CRPS for Gaussian parametric backing.
+- dist.log_score_gaussian  - predictive log-likelihood.
+- dist.pit                 - Probability Integral Transform values for diag.
+- contract.log_loss_bracket, categorical log-loss over a bracket ladder.
+- contract.brier_bracket    - multi-class Brier on a bracket ladder.
 
 Free functions delegate via ``isinstance`` to the matching dist subclass. New
 backings should add their math as methods on the subclass; free functions
@@ -194,7 +194,7 @@ def to_point(
 ) -> np.ndarray:
     """Collapse any ``DistributionForecast`` to a 1-D point forecast.
 
-    Thin wrapper over ``dist.to_point(how=how)`` — each subclass implements
+    Thin wrapper over ``dist.to_point(how=how)``, each subclass implements
     the math. Kept as a free function for callers that pass a dist as first
     positional arg.
     """
@@ -430,7 +430,7 @@ def brier_bracket(
 # reference-relative value metrics
 # ---------------------------------------------------------------------------
 #
-# The metrics above answer "are my prices CALIBRATED?" — closeness of my price
+# The metrics above answer "are my prices CALIBRATED?", closeness of my price
 # ``q`` to the realized outcome ``r``. A prediction-market trader has a second,
 # distinct question: "is my price more VALUABLE than the one already quoted?"
 # That is a *relative* question, graded against a reference price ``m`` (a
@@ -475,7 +475,7 @@ def edge_alignment(q: np.ndarray, m: np.ndarray, r: np.ndarray) -> float:
     edge ``q − m`` against the reference price ``m``: you collect ``r − m`` per
     unit bet, sized by the edge. Positive EA means your edge points, on average,
     in the direction the reference turns out to be wrong. ``E[r] = π`` (the
-    latent truth), so ``E[EA] = E[(q − m)(π − m)]`` — the soft PnL — even though
+    latent truth), so ``E[EA] = E[(q − m)(π − m)]``, the soft PnL, even though
     ``π`` is never observed.
 
     EA is the value sibling of ``brier_bracket``: Brier measures ``‖q − r‖``
@@ -500,16 +500,16 @@ def edge_alignment_costed(
     Per contract: ``sign(q − m)·(r − m) − fee`` if ``|q − m| > tau`` else ``0``.
     ``tau`` defaults to ``fee`` (trade only when your edge clears the cost).
 
-    This is the metric to select/train on when fees are non-trivial — and it
+    This is the metric to select/train on when fees are non-trivial, and it
     behaves very differently from :func:`edge_alignment`. EA is frictionless and
     **linear in the edge**, so it rewards edge *magnitude* without bound (it
     always prefers a more extreme, more confident forecast). With a fee the
-    *magnitude* of your stated edge stops mattering for a unit bet — only its
-    **sign** and whether it clears the gate do — so over-confidence can only
+    *magnitude* of your stated edge stops mattering for a unit bet, only its
+    **sign** and whether it clears the gate do, so over-confidence can only
     hurt: it flips signs on noisy near-fair contracts and pays ``fee`` on
     sub-fee "junk" trades. The best achievable value is ``E[(|δ| − fee)₊]`` with
     ``δ = E[r − m | x]``: a *deductible* on the true mispricing. Fees convert the
-    objective from an inner product into a hinge — see
+    objective from an inner product into a hinge, see
     ``docs/guides/value_with_fees.md``.
 
     Returns a dict: ``mean_pnl`` (per contract, the headline number),
@@ -536,7 +536,7 @@ def edge_alignment_costed(
 
 
 def edge_alignment_corr(q: np.ndarray, m: np.ndarray, r: np.ndarray) -> float:
-    """Normalized EA: ``corr(q − m, r − m)`` — the cosine of the angle between
+    """Normalized EA: ``corr(q − m, r − m)``, the cosine of the angle between
     your edge and the reference's realized error. ``→ 0`` is the limit where the
     edge no longer points at the reference's mistakes (the shared-bias trap).
     """
@@ -551,7 +551,7 @@ def edge_alignment_corr(q: np.ndarray, m: np.ndarray, r: np.ndarray) -> float:
 def shared_bias_slope(q: np.ndarray, m: np.ndarray, r: np.ndarray) -> float:
     """OLS slope of your error ``(q − r)`` on the reference's error ``(m − r)``.
 
-    A large positive slope means your errors coincide with the reference's — you
+    A large positive slope means your errors coincide with the reference's, you
     are forfeiting edge to blind spots you *share* with it (e.g. both anchor to
     the same biased source). Driving this slope down is worth more for value than
     any calibration gain. Slope ``1`` means ``q = m`` (no edge); slope ``0``
@@ -572,9 +572,9 @@ def value_report(q: np.ndarray, m: np.ndarray, r: np.ndarray) -> dict[str, float
     Returns ``EA`` and its exact additive split ``EA = A − B`` (no latent ``π``
     needed):
 
-      * ``A = mean (r − m)²`` — the reference's mean-squared error (its Brier).
+      * ``A = mean (r − m)²``, the reference's mean-squared error (its Brier).
         How much mispricing is *available*. Outside your control.
-      * ``B = mean (r − q)(r − m)`` — co-projection of your error onto the
+      * ``B = mean (r − q)(r − m)``, co-projection of your error onto the
         reference's. How much of the available mispricing your forecast *fails*
         to capture because your errors coincide with the reference's.
 
@@ -583,7 +583,7 @@ def value_report(q: np.ndarray, m: np.ndarray, r: np.ndarray) -> dict[str, float
     attributes the change: ``A`` down ⇒ the reference got more efficient
     (less to capture); ``B`` up ⇒ your forecast lost orthogonality (a model
     problem, fixable). Both ``A`` and ``B`` sit on the same irreducible
-    Bernoulli-variance floor, which cancels in ``EA = A − B`` — read the levels
+    Bernoulli-variance floor, which cancels in ``EA = A − B``, read the levels
     with care, read the difference cleanly.
     """
     q, m, r = _check_qmr(q, m, r)
@@ -647,7 +647,7 @@ def edge_alignment_bracket(
 ) -> float:
     """Edge-Alignment of a bracket ladder vs a reference ladder (a scalar).
 
-    ``reference`` is the quoted/baseline price for the same contracts — a
+    ``reference`` is the quoted/baseline price for the same contracts, a
     ``ContractForecast`` or a raw array matching ``contracts.fair_price``. Each
     (entity, bracket) becomes a binary contract; EA averages ``(q−m)(r−m)`` over
     all of them. See :func:`edge_alignment`.
@@ -675,11 +675,11 @@ def _qmr_from_dist(
     y: np.ndarray | dict,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Flatten a bracket-backed ``DistributionForecast`` (a value trainer's
-    ``predict_dist`` output — ragged, NaN-padded), a per-id reference-price dict,
+    ``predict_dist`` output, ragged, NaN-padded), a per-id reference-price dict,
     and realized ``y`` into flat ``(q, m, r)`` over every (row, bracket) binary.
 
     Each row's model probabilities are renormalized over that row's **valid**
-    (finite) brackets — the edge you would actually trade. ``reference_by_id`` is
+    (finite) brackets, the edge you would actually trade. ``reference_by_id`` is
     keyed by the dist's ids and must match each row's bracket count. ``y`` may be
     an array aligned to the dist's row order, or a dict keyed by id.
     """
@@ -737,7 +737,7 @@ def edge_alignment_dist(
     y: np.ndarray | dict,
 ) -> float:
     """Edge-Alignment of a fitted bracket model's ``predict_dist`` output vs a
-    per-id reference — :func:`edge_alignment` with the ragged flatten done for
+    per-id reference, :func:`edge_alignment` with the ragged flatten done for
     you. See :func:`value_report_dist` for the full diagnostic."""
     q, m, r = _qmr_from_dist(dist, reference_by_id, y)
     return edge_alignment(q, m, r)
@@ -754,7 +754,7 @@ def value_report_dist(
     """One-call value report for a fitted bracket model's ``predict_dist`` output.
 
     Pass the distribution, the **same** ``reference_by_id`` you trained with, and
-    realized ``y`` (array in row order or dict by id) — this does the per-row
+    realized ``y`` (array in row order or dict by id), this does the per-row
     ragged flatten + renormalization and returns :func:`value_report`. When
     ``fee`` is given, the costed metrics (:func:`edge_alignment_costed`) are
     merged in under ``costed_*`` keys, so ``λ`` selection by costed value is a

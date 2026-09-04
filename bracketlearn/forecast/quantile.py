@@ -1,4 +1,4 @@
-"""QuantileForecast — distribution stored as per-row quantile pairs (τ, q_τ)."""
+"""QuantileForecast, distribution stored as per-row quantile pairs (τ, q_τ)."""
 
 from __future__ import annotations
 

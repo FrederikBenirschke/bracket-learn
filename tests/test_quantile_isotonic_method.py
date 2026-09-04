@@ -5,7 +5,7 @@ The parent repo's prediction_market_weather/ml/trainers/quantile_reg.py
 applies sklearn IsotonicRegression (pool-adjacent-violators) row-by-row
 for quantile-crossing repair. bracketlearn's default is the faster
 np.maximum.accumulate. These methods diverge whenever there are
-crossings — sklearn averages across the violator pool, accumulate
+crossings, sklearn averages across the violator pool, accumulate
 clamps to the running max.
 
 This test pins the snowflake-matching mode so the swap stays a true

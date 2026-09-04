@@ -186,10 +186,10 @@ class TestLinearPoolDist:
         ids, ts = ids_ts(100)
         rng = np.random.default_rng(2)
         y = rng.normal(0, 1, 100)
-        # A: N(y, 1) — perfect predictor with noise.
+        # A: N(y, 1), perfect predictor with noise.
         d_a = _normal_dist(y + rng.normal(0, 0.1, 100), np.full(100, 1.0),
                            prov, ids, ts)
-        # B: N(10, 1) — far off.
+        # B: N(10, 1), far off.
         d_b = _normal_dist(np.full(100, 10.0), np.full(100, 1.0), prov, ids, ts)
         pool = LinearPoolDist(n_samples=50)
         pool.fit(np.zeros((100, 1)), y, upstream=[d_a, d_b])

@@ -20,7 +20,7 @@ from bracketlearn.trainers._common import (
 )
 
 # ---------------------------------------------------------------------------
-# SklearnPoint — wrap any sklearn-style regressor as a PointForecaster.
+# SklearnPoint, wrap any sklearn-style regressor as a PointForecaster.
 # ---------------------------------------------------------------------------
 
 
@@ -30,7 +30,7 @@ class SklearnPoint(BaseEstimator):
     PointForecaster.
 
     Works with sklearn.linear_model.{Ridge, Lasso, LinearRegression, ...},
-    LightGBM/XGBoost regressors, sklearn ensembles, custom estimators —
+    LightGBM/XGBoost regressors, sklearn ensembles, custom estimators,
     anything matching the sklearn contract.
 
     Examples:
@@ -85,7 +85,7 @@ class SklearnPoint(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# OnlineAggregator — sleeping-experts AdaHedge (PointForecaster).
+# OnlineAggregator, sleeping-experts AdaHedge (PointForecaster).
 # ---------------------------------------------------------------------------
 
 
@@ -102,7 +102,7 @@ class OnlineAggregator(BaseEstimator):
     path: at fit time the final weight vector is snapshotted; at predict
     time we compute weighted mean over awake experts, renormalising the
     snapshot weights to the active subset. This is what the original ships
-    to inference — pure online behavior during fit, snapshot-and-apply at
+    to inference, pure online behavior during fit, snapshot-and-apply at
     predict.
 
     Grouped mode (per-group AdaHedge): pass ``groups`` to ``fit`` and
@@ -110,7 +110,7 @@ class OnlineAggregator(BaseEstimator):
     AdaHedge instance per group, each accumulating its own loss vector
     and snapshotting its own final weight vector. Useful when different
     groups have different optimal experts (e.g. weather forecast
-    vendors where ECMWF dominates Phoenix while ICON wins Boston) —
+    vendors where ECMWF dominates Phoenix while ICON wins Boston),
     a single global AdaHedge averages across the groups and loses that
     specialisation.
 
@@ -118,7 +118,7 @@ class OnlineAggregator(BaseEstimator):
     (Rule #0.5; silent fallback to global weights would mask coverage
     gaps).
 
-    Output: PointForecaster — pair with GlobalResidual (or other Lifter)
+    Output: PointForecaster, pair with GlobalResidual (or other Lifter)
     for distribution coverage. Composition is explicit, not baked in.
     """
 
@@ -190,7 +190,7 @@ class OnlineAggregator(BaseEstimator):
             try:
                 w_final, seen = self._run_adahedge_once(X_g, y_g, K)
             except RuntimeError:
-                # Group with no awake rows — skip loud rather than fail
+                # Group with no awake rows, skip loud rather than fail
                 # the whole fit (per-station data sparsity is normal).
                 n_skipped_groups += 1
                 continue
@@ -206,7 +206,7 @@ class OnlineAggregator(BaseEstimator):
         if not out:
             raise RuntimeError(
                 f"OnlineAggregator: no group yielded a usable weight vector "
-                f"({n_skipped_groups} groups skipped — all had < "
+                f"({n_skipped_groups} groups skipped, all had < "
                 f"{self.min_experts} awake experts in their training rows)"
             )
         self.final_w_by_group_ = out
@@ -262,7 +262,7 @@ class OnlineAggregator(BaseEstimator):
         if self.final_w_by_group_ is not None:
             if groups is None:
                 raise ValueError(
-                    "OnlineAggregator was fit with per-group AdaHedge — "
+                    "OnlineAggregator was fit with per-group AdaHedge, "
                     "predict requires groups too (one group-key per row)"
                 )
             return self._predict_grouped(
@@ -293,7 +293,7 @@ class OnlineAggregator(BaseEstimator):
         if self.final_w_by_group_ is None:
             raise RuntimeError(
                 "OnlineAggregator: grouped predict requested but no per-group "
-                "weights — was the model fit before predict, and with groups?"
+                "weights, was the model fit before predict, and with groups?"
             )
         if X.shape[1] != self.K_:
             raise ValueError(
@@ -326,7 +326,7 @@ class OnlineAggregator(BaseEstimator):
             mu[mask] = self._apply_weights(X[mask], w, int(mask.sum()))
         # _apply_weights already raises if any row has < min_experts awake;
         # since we mask through every group, no leftover NaN is possible
-        # unless a group's rows all failed — _apply_weights would have raised.
+        # unless a group's rows all failed, _apply_weights would have raised.
         prov = ProvenanceMeta.placeholder(self.name)
         return PointForecast(
             mu=mu, ids=np.asarray(ids), timestamps=np.asarray(timestamps),
@@ -338,7 +338,7 @@ class OnlineAggregator(BaseEstimator):
     ) -> np.ndarray:
         """Apply a snapshot weight vector to ``X``; renorm to awake subset."""
         awake = ~np.isnan(X)                      # (N, K) bool
-        w_mat = w[None, :] * awake                # (N, K) — zeroes on asleep
+        w_mat = w[None, :] * awake                # (N, K), zeroes on asleep
         x_mat = np.where(awake, X, 0.0)
         num = (w_mat * x_mat).sum(axis=1)         # (N,)
         denom = w_mat.sum(axis=1)                 # (N,)
@@ -373,7 +373,7 @@ class OnlineAggregator(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# RNNHourly — GRU on (24, C) hourly tensor (PointForecaster).
+# RNNHourly, GRU on (24, C) hourly tensor (PointForecaster).
 # ---------------------------------------------------------------------------
 
 
@@ -396,7 +396,7 @@ class RNNHourly(BaseEstimator):
     integer-encoded station for the embedding. If absent, embedding is
     skipped and the model uses GRU only.
 
-    Output: PointForecaster — pair with GlobalResidual (or other Lifter)
+    Output: PointForecaster, pair with GlobalResidual (or other Lifter)
     for distribution coverage.
     """
 

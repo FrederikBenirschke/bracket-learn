@@ -69,7 +69,7 @@ def main() -> None:
     keep = rng.choice(n, size=4000, replace=False)
     X, y = X[keep], y[keep]
     ids = np.arange(X.shape[0])
-    ts = ids.astype(float)                          # synthetic ordering — k-fold
+    ts = ids.astype(float)                          # synthetic ordering, k-fold
 
     # Bracket ladder over the realistic price range. Outer edges set wide
     # (-100 and 100) so the ladder covers the full distribution support

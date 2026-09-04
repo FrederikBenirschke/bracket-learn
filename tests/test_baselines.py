@@ -68,7 +68,7 @@ class TestEmpiricalDistribution:
         assert ed_w.quantiles_[0] > ed_un.quantiles_[0]
 
     def test_in_pipeline_beats_uniform(self):
-        """Empirical is a real baseline — its CRPS must be finite, and a
+        """Empirical is a real baseline, its CRPS must be finite, and a
         properly-fit QuantileReg must beat it on a signal-bearing dataset."""
         X, y, ids, ts = _signal_dataset()
         model = [
@@ -114,7 +114,7 @@ class TestPersistence:
         )
 
     def test_lag24_diurnal_cycle(self):
-        """lag=24 replays the last 24 hours — the diurnal-cycle baseline."""
+        """lag=24 replays the last 24 hours, the diurnal-cycle baseline."""
         rng = np.random.default_rng(0)
         y = rng.normal(0, 1, 200)
         p = Persistence(lag=24).fit(np.zeros((200, 1)), y)
@@ -169,7 +169,7 @@ class TestPersistenceDist:
         assert abs(p.sigma_ - 2.0) < 0.1
 
     def test_mu_tiles_tail_y(self):
-        """μ rule matches Persistence — last lag y's tiled across inference."""
+        """μ rule matches Persistence, last lag y's tiled across inference."""
         y = np.array([10., 11., 12., 13., 14., 99.])
         p = PersistenceDist(lag=1).fit(np.zeros((6, 1)), y)
         dist = p.predict_dist(

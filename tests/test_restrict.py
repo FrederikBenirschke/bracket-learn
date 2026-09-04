@@ -1,4 +1,4 @@
-"""Tests for BracketMask — per-row restriction of a bracket forecast.
+"""Tests for BracketMask, per-row restriction of a bracket forecast.
 
 Pins the invariants from restrict.py's docstring:
 - mass preservation per row (sum=1 over surviving brackets)

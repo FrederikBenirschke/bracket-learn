@@ -1,4 +1,4 @@
-"""Tests for normalize_bracket_probs — the 'valid distribution' primitive.
+"""Tests for normalize_bracket_probs, the 'valid distribution' primitive.
 
 Pins invariants:
 - 1-D input → 1-D output summing to 1

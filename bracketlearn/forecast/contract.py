@@ -1,4 +1,4 @@
-"""ContractForecast — output of ContractAdapter.price() (§5.3)."""
+"""ContractForecast, output of ContractAdapter.price() (§5.3)."""
 
 from __future__ import annotations
 

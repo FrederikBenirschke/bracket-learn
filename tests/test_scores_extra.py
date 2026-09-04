@@ -234,7 +234,7 @@ class TestToPoint:
 
 
 # ---------------------------------------------------------------------------
-# Pipeline integration — the n/a's are gone
+# Pipeline integration, the n/a's are gone
 # ---------------------------------------------------------------------------
 
 

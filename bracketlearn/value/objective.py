@@ -10,7 +10,7 @@ hit ``r ∈ {0,1}`` and reference price ``m``::
 ``λ ≥ 0`` is the tilt: ``λ = 0`` is a pure calibration objective; larger ``λ``
 tilts toward value (capturing the reference's mispricing). **Parameterized as
 ``CE − λ·EA``, not ``α·CE + (1−α)·EA``**, so the CE term always supplies full,
-correctly-scaled curvature — otherwise a gradient-boosted model just underfits
+correctly-scaled curvature, otherwise a gradient-boosted model just underfits
 as the tilt grows (the EA term alone is linear and curvature-free).
 
 Select ``λ`` by *costed* value (``score.edge_alignment_costed``), not by EA: EA
@@ -24,8 +24,8 @@ Gradient / Hessian w.r.t. the raw score ``z`` (for a LightGBM custom objective):
             ≈ q(1−q)                               (Newton metric we use)
 
 We keep **only** the CE curvature ``q(1−q)`` for the Newton step. The EA term's
-true curvature ``−λ·(r − m)·q(1−q)(1−2q)`` is *indefinite* — its sign flips with
-``(r − m)`` and ``(1 − 2q)`` — so including it would not give a positive-definite
+true curvature ``−λ·(r − m)·q(1−q)(1−2q)`` is *indefinite* - its sign flips with
+``(r − m)`` and ``(1 − 2q)``, so including it would not give a positive-definite
 metric. Dropping it (not "it's ~zero", it is not) leaves the stable PD CE
 curvature; the value tilt enters only through the gradient. ``hess_floor`` keeps
 the metric strictly positive as ``q → 0/1``.
@@ -71,13 +71,13 @@ def ea_scale_for_reference(reference: np.ndarray, *, eps: float = 1e-8) -> float
     - **LightGBM** takes a Newton step, dividing the gradient by the Hessian
       ``q(1−q)``. The ``q(1−q)`` factor *cancels*, so the GBM's effective EA
       update is ``≈ λ·(r − m)``.
-    - **The torch net** does plain (Adam) gradient descent — no Hessian
-      division — so its EA gradient keeps the ``q(1−q)`` factor and is therefore
+    - **The torch net** does plain (Adam) gradient descent, no Hessian
+      division, so its EA gradient keeps the ``q(1−q)`` factor and is therefore
       suppressed by a factor ``≈ E[q(1−q)]`` relative to the GBM.
 
     Multiplying the torch EA term by ``1 / E[q(1−q)]`` restores parity. Evaluated
     at initialization the model predicts the reference, ``q ≈ m``, so the scale
-    is ``1 / mean(m·(1−m))`` over the expanded (row, bracket) contracts — a
+    is ``1 / mean(m·(1−m))`` over the expanded (row, bracket) contracts, a
     quantity read directly off the reference prices, not a hand-tuned constant.
 
     Caveat: this matches the gradient scale at *initialization*; as ``q`` moves
@@ -93,7 +93,7 @@ def ea_scale_for_reference(reference: np.ndarray, *, eps: float = 1e-8) -> float
     if curvature < eps:
         raise ValueError(
             f"mean reference curvature m(1-m)={curvature:.2e} is ~0 (degenerate "
-            f"reference at 0/1); cannot derive an EA scale — pass ea_scale explicitly"
+            f"reference at 0/1); cannot derive an EA scale, pass ea_scale explicitly"
         )
     return 1.0 / curvature
 

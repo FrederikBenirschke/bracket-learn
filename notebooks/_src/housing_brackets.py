@@ -78,7 +78,7 @@ from bracketlearn.trainers import QuantileReg, SklearnPoint
 # %% [markdown]
 # ## Data
 #
-# California housing — sklearn-bundled, 20 640 rows, target = median house
+# California housing, sklearn-bundled, 20 640 rows, target = median house
 # value in $100k units. We subsample to 4 000 rows for notebook speed.
 
 # %%
@@ -118,7 +118,7 @@ result = wf.fit_predict(model, X, y, ids=ids, timestamps=ts)
 print(result.to_table(y, metrics=["crps", "log_score", "pit"]))
 
 # %% [markdown]
-# ## Headline diagnostic — predicted vs realized
+# ## Headline diagnostic, predicted vs realized
 #
 # This is the "OK but does the model actually work?" plot, modelled on
 # sklearn's
@@ -126,7 +126,7 @@ print(result.to_table(y, metrics=["crps", "log_score", "pit"]))
 # example. One scatter panel per model; each panel has:
 #
 # - dots for `(realized, predicted-mean)` per row
-# - a black dashed diagonal — perfect prediction
+# - a black dashed diagonal, perfect prediction
 # - the model's CRPS / RMSE / MAE annotated inside the panel
 #
 # Points clinging to the diagonal = good. Wide vertical scatter at one
@@ -148,18 +148,18 @@ for name in ["emp", "ridge", "qreg"]:
 
 fig = predicted_vs_realized_grid(
     panels, ncols=3, units="$100k",
-    title="Predicted vs realized — all three models, OOF predictions",
+    title="Predicted vs realized, all three models, OOF predictions",
 )
 plt.show()
 
 # %% [markdown]
 # **Read it:** `emp` predicts the same number for every row (the marginal
-# mean), so all dots collapse onto one horizontal stripe — instructive
+# mean), so all dots collapse onto one horizontal stripe, instructive
 # floor. `ridge` shows clear linear structure but underpredicts at the
 # top end. `qreg` tracks the diagonal across the full range.
 
 # %% [markdown]
-# ## PIT histograms — is each forecast *calibrated*?
+# ## PIT histograms, is each forecast *calibrated*?
 #
 # The Probability Integral Transform of the realized y under the forecast
 # CDF should be **uniform on [0, 1]** if the model is well-calibrated.
@@ -193,7 +193,7 @@ plt.show()
 # ## Quantile fan vs the feature most correlated with price
 #
 # For QuantileReg, plot the 10/50/90 % predictive band as a function of
-# the feature most correlated with the target — here `MedInc` (median
+# the feature most correlated with the target, here `MedInc` (median
 # income, by far the dominant signal in California housing). A
 # well-calibrated forecast has ~80 % of realised dots inside the band.
 
@@ -266,12 +266,12 @@ fig = cdf_overlay_for_examples(
     y_realized=y[example_ids],
     edges=edges,
     units="$100k",
-    title="Forecast CDFs vs realized price — three example houses",
+    title="Forecast CDFs vs realized price, three example houses",
 )
 plt.show()
 
 # %% [markdown]
-# ## Reliability — bracket probabilities calibrated?
+# ## Reliability, bracket probabilities calibrated?
 
 # %%
 def _reliability(dist, edges, y_oof, n_bins=10):
@@ -362,7 +362,7 @@ fig = leaderboard_bar(
     [(n, m["crps"]) for n, m in rows],
     baseline_name="Empirical", baseline_value=base_crps,
     skill_label="CRPSS",
-    title="California housing — CRPSS vs Empirical baseline",
+    title="California housing, CRPSS vs Empirical baseline",
 )
 plt.show()
 
@@ -417,5 +417,5 @@ plt.show()
 # %% [markdown]
 # The probabilistic models give you everything `LGBMRegressor` gives you
 # (point prediction, comparable RMSE) **plus** a full forecast
-# distribution — which is the only thing you can use to price the
+# distribution, which is the only thing you can use to price the
 # bracket contracts in this notebook.

@@ -17,7 +17,7 @@ Three orthogonal concepts, object-nested, names only label the leaderboard::
   cloned per fold, fit on the fold's train slice, and predicted on train+test;
   a meta receives its upstreams' fold dists **positionally** via ``upstream=``.
 
-This is the homogeneous composition surface — `Pipeline` (chain), `Stacker`
+This is the homogeneous composition surface, `Pipeline` (chain), `Stacker`
 (parallel combiner), `WalkForward` (CV). It replaces the retired
 retired ``ForecastPipeline`` / ``LiftedForecaster`` / ``CalibratedForecaster``
 wrappers and the name-keyed ``deps_oof`` contract.
@@ -43,20 +43,20 @@ from bracketlearn.pipeline import (
 )
 
 # ---------------------------------------------------------------------------
-# Stacker — parallel combiner over upstream model objects.
+# Stacker, parallel combiner over upstream model objects.
 # ---------------------------------------------------------------------------
 
 
 class Stacker:
     """Combine upstream models with a meta-combiner.
 
-    ``Stacker([p1, p2], meta, name=...)`` — the upstreams are `Pipeline` /
+    ``Stacker([p1, p2], meta, name=...)``, the upstreams are `Pipeline` /
     forecaster *objects* (not name strings); ``meta`` is a meta-combiner
     (`StackedParametric`, `BMAStacking`, `BracketStacking`, `DistAsFeatures`)
     that receives the upstreams' out-of-fold distributions positionally, in
     declared order, via ``upstream=[...]`` when run under `WalkForward`.
 
-    ``Stacker`` is pure structure — it holds no fitted state and is not run
+    ``Stacker`` is pure structure, it holds no fitted state and is not run
     directly; pass it to `WalkForward.fit_predict`.
     """
 
@@ -109,7 +109,7 @@ def _flatten(model) -> list[dict]:
     for n in nodes:
         if n["name"] in seen:
             raise ValueError(
-                f"WalkForward: duplicate node name {n['name']!r} — names label "
+                f"WalkForward: duplicate node name {n['name']!r} - names label "
                 f"leaderboard rows and must be unique across the graph"
             )
         seen.add(n["name"])
@@ -117,7 +117,7 @@ def _flatten(model) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# WalkForward — the CV / OOF driver.
+# WalkForward, the CV / OOF driver.
 # ---------------------------------------------------------------------------
 
 
@@ -180,8 +180,8 @@ class WalkForward:
         **row_meta: Any,
     ) -> PipelineResult:
         """``row_meta`` are id-keyed side inputs (e.g. ``brackets_by_id`` /
-        ``reference_by_id`` for the value trainers) forwarded **verbatim** — not
-        index-sliced like ``sample_weight`` / ``groups`` — to every node's
+        ``reference_by_id`` for the value trainers) forwarded **verbatim** - not
+        index-sliced like ``sample_weight`` / ``groups``, to every node's
         ``fit`` / ``predict_dist``. Each trainer subsets them by the ``ids`` it
         receives; a node whose signature doesn't declare a given key drops it
         (signature-filtered in ``_fit_with_optional_weight`` /
@@ -290,7 +290,7 @@ class WalkForward:
         """Predict on unseen rows with the canonical (full-train) models.
 
         Requires ``refit_on_full=True`` and a prior ``fit_predict``. Returns
-        ``{node_name: DistributionForecast}`` — every node addressable, same as
+        ``{node_name: DistributionForecast}``, every node addressable, same as
         the leaderboard. ``row_meta`` (e.g. ``brackets_by_id`` for the unseen
         rows) is forwarded verbatim, exactly as in ``fit_predict``.
         """

@@ -151,7 +151,7 @@ class TestGARCHResidual:
         mu_hat = np.zeros(T)
         y = r
         g = GARCHResidual().fit(_point(mu_hat, prov), y)
-        # Persistence (α+β) is the cleanest target — sum tends to be well-identified.
+        # Persistence (α+β) is the cleanest target, sum tends to be well-identified.
         assert abs((g.alpha_ + g.beta_) - (true_alpha + true_beta)) < 0.05
         # ω is harder; just check it's positive and order-of-magnitude.
         assert 0.0 < g.omega_ < 1.0
@@ -252,7 +252,7 @@ class TestConformalCalibrate:
 
     def test_fit_learns_per_tau_offset(self, prov, rng):
         n = 500
-        # Forecast quantiles biased high by 1.0 — calibration should learn
+        # Forecast quantiles biased high by 1.0, calibration should learn
         # offsets ≈ +1.0 across τ to recover coverage.
         y = rng.normal(0, 1.0, n)
         from scipy.stats import norm
@@ -352,7 +352,7 @@ class TestPITCalibrate:
         out = cal.transform(d)
         from scipy.stats import norm
         expected = norm.ppf([0.1, 0.5, 0.9])
-        # Allow generous tolerance — empirical CDF noise on N=1000.
+        # Allow generous tolerance, empirical CDF noise on N=1000.
         for row in out.qvals[:5]:
             np.testing.assert_allclose(row, expected, atol=0.25)
 

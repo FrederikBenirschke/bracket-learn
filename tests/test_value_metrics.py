@@ -131,7 +131,7 @@ def test_costed_zero_fee_is_sign_strategy():
 def test_costed_value_decreases_with_fee_at_fixed_gate():
     """At a FIXED trade gate the same trades each pay more fee, so value falls.
     (With tau tied to fee it is NOT monotone: a higher gate also drops losing
-    trades — only the oracle E[(|δ|−fee)₊] is monotone in fee.)"""
+    trades, only the oracle E[(|δ|−fee)₊] is monotone in fee.)"""
     q, _, m, r = _toy()
     vals = [edge_alignment_costed(q, m, r, fee=f, tau=0.0)["mean_pnl"]
             for f in (0.0, 0.01, 0.02, 0.05)]

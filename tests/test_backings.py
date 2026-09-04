@@ -213,7 +213,7 @@ class TestFromQuantiles:
 
     def test_requires_tail_policy(self, prov, ids_ts):
         ids, ts = ids_ts(1)
-        # tail_policy is a required kwarg per the constructor signature —
+        # tail_policy is a required kwarg per the constructor signature,
         # omitting it should fail at the Python call layer.
         with pytest.raises(TypeError):
             DistributionForecast.from_quantiles(   # type: ignore[call-arg]
@@ -305,7 +305,7 @@ class TestFromBrackets:
 
 
 # ---------------------------------------------------------------------------
-# PIT calibration — well-calibrated forecasts produce uniform PIT.
+# PIT calibration, well-calibrated forecasts produce uniform PIT.
 # ---------------------------------------------------------------------------
 
 
