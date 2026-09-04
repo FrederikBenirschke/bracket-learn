@@ -1,0 +1,49 @@
+{
+  "built_at": "2026-09-04T19:23:06.167513+00:00",
+  "server_git": {
+    "sha": "1f35b7bb9a6db07506599acea1747183c6fbd994",
+    "short": "1f35b7b",
+    "committed_at": "2026-09-04T13:53:25-04:00",
+    "subject": "feat(research): serve the training feature matrix, with open tails intact",
+    "branch": "fix/forecast-publication-lag",
+    "dirty": false,
+    "dirty_files": 0
+  },
+  "data_max": {
+    "settlement_decision": "2026-09-04",
+    "observation": "2026-09-05T06:59:00+00:00",
+    "market_snapshot": "2026-09-04T19:18:04.272074+00:00",
+    "forecast_point": "2026-09-07",
+    "forecast_hourly": "2026-09-11T05:00:00+00:00",
+    "weather_market": "2026-09-05"
+  },
+  "query": {
+    "from": "2026-03-17",
+    "to": "2026-09-03",
+    "lead_hours": 28,
+    "ensemble": "all",
+    "sides": "HIGH,LOW"
+  },
+  "n_rows": 5429,
+  "by_side": {
+    "LOW": 2534,
+    "HIGH": 2895
+  },
+  "skipped": {
+    "HIGH": {
+      "no_brackets": 2201,
+      "no_realized": 0,
+      "no_quotes": 0,
+      "thin_ensemble": 165,
+      "no_climo": 0
+    },
+    "LOW": {
+      "no_brackets": 2548,
+      "no_realized": 0,
+      "no_quotes": 0,
+      "thin_ensemble": 179,
+      "no_climo": 0
+    }
+  },
+  "built_by": "scripts/research/export_bracketlearn_value_sample.py"
+}

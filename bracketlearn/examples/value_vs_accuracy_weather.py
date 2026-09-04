@@ -80,12 +80,14 @@ def _brier(p, r):
 
 
 def run_side(df: pl.DataFrame, side: str) -> None:
-    rows = df.filter(pl.col("side") == side).to_dicts()
-    rng = np.random.default_rng(0)
-    idx = rng.permutation(len(rows))
-    cut = int(0.6 * len(idx))
-    tr = [rows[i] for i in idx[:cut]]
-    te = [rows[i] for i in idx[cut:]]
+    # Chronological split. Weather is strongly autocorrelated day to day, so a
+    # random permutation puts adjacent days on opposite sides of the boundary
+    # and leaks. The earlier version of this example permuted; the fixture now
+    # carries event_date, so it does not have to.
+    rows = (df.filter(pl.col("side") == side)
+              .sort(["event_date", "station_id"]).to_dicts())
+    cut = int(0.6 * len(rows))
+    tr, te = rows[:cut], rows[cut:]
 
     Xtr = np.array([[r["ens_mean"], r["ens_std"]] for r in tr])
     ytr = np.array([r["realized"] for r in tr])
@@ -115,11 +117,16 @@ def run_side(df: pl.DataFrame, side: str) -> None:
     print(f"\n===== {side}  (train {len(tr)}, test {len(te)}) =====")
     print(f"  {'forecast':28s} {'Brier':>8s} {'EA ×100':>9s}")
     print(f"  {'reference (market)':28s} {bm:8.4f} {0.0:9.4f}")
-    print(f"  {'EMOS (raw)':28s} {b0:8.4f} {ea0:+9.4f}   <- {acc}, EA > 0")
-    print(f"  {'EMOS + mean de-bias':28s} {_brier(qd, r):8.4f} {edge_alignment(qd, m, r) * 100:+9.4f}"
-          f"   <- value falls vs raw")
-    print(f"  {'EMOS + edge-recal':28s} {_brier(q2, r):8.4f} {edge_alignment(q2, m, r) * 100:+9.4f}"
-          f"   <- best Brier, value collapses")
+    ead, ea2 = edge_alignment(qd, m, r) * 100, edge_alignment(q2, m, r) * 100
+    bd, b2 = _brier(qd, r), _brier(q2, r)
+    print(f"  {'EMOS (raw)':28s} {b0:8.4f} {ea0:+9.4f}   <- {acc}, "
+          f"EA {'>' if ea0 > 0 else '<'} 0")
+    print(f"  {'EMOS + mean de-bias':28s} {bd:8.4f} {ead:+9.4f}"
+          f"   <- Brier {'falls' if bd < b0 else 'rises'}, "
+          f"EA {'falls' if ead < ea0 else 'rises'} vs raw")
+    print(f"  {'EMOS + edge-recal':28s} {b2:8.4f} {ea2:+9.4f}"
+          f"   <- Brier {'falls' if b2 < b0 else 'rises'}, "
+          f"EA {'falls' if ea2 < ea0 else 'rises'} vs raw")
     rep = value_report(q0, m, r)
     print(f"    value_report(EMOS raw): A(ref MSE)={rep['A_reference_mse']:.4f}  "
           f"B(non-orth)={rep['B_non_orthogonality']:.4f}  align_corr={rep['align_corr']:+.3f}")
@@ -129,8 +136,12 @@ def main() -> None:
     warnings.filterwarnings("ignore")
     df = pl.read_parquet(DATA)
     print(f"loaded {df.height} rows from {os.path.basename(DATA)}")
-    print("EMOS is LESS accurate than the market (worse Brier) yet has positive")
-    print("value (EA > 0). Calibrating it harder does not add value.")
+    print(f"window {df['event_date'].min()} .. {df['event_date'].max()}, "
+          f"{df['station_id'].n_unique()} stations, chronological 60/40 split")
+    print("Brier measures ACCURACY (distance to truth); EA measures VALUE "
+          "(whether\nthe deviations from the market price point the right "
+          "way). They are\ndifferent quantities and can rank the same "
+          "forecasts oppositely.")
     for side in ("HIGH", "LOW"):
         run_side(df, side)
 
