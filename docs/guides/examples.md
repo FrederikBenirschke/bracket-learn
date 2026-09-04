@@ -2,7 +2,7 @@
 
 bracketlearn ships seven runnable examples in [`bracketlearn/examples/`](https://github.com/FrederikBenirschke/bracket-learn/tree/main/bracketlearn/examples).
 Three use **public sklearn / OpenML datasets** so they run anywhere with
-no extra credentials; two bundle an anonymized real-data sample.
+no extra credentials; two use the bundled weather sample.
 
 ## Public-dataset examples (recommended starting point)
 
@@ -79,25 +79,26 @@ lifted to a parametric normal via `GlobalResidual`.
 
 ### `value_vs_accuracy_weather.py`
 
-Fits EMOS on an **anonymized real weather sample** bundled at
-`bracketlearn/examples/data/weather_value_sample.parquet` (ensemble mean/spread, realized
-temps, per-row bracket grids, normalized reference prices; no venue, station,
-or date), prices it onto each row's grid, and scores it against the reference
-price two ways: Brier (accuracy) and `score.edge_alignment` (value).
+Fits EMOS on the bundled weather sample at
+`bracketlearn/examples/data/weather_value_sample.parquet`: 5,429 station-days
+of Kalshi contracts over 2026-03-17 to 2026-09-03 across 18 stations, carrying
+multi-model ensemble mean and spread, realized temperatures, per-row bracket
+grids with open tails, and normalized reference prices. It prices the fitted
+distribution onto each row's grid and scores it against the reference price
+two ways: Brier (accuracy) and `score.edge_alignment` (value), with a
+station-day clustered bootstrap interval on the latter.
 
 ```bash
 python -m bracketlearn.examples.value_vs_accuracy_weather
 ```
 
-Runs the [value-vs-accuracy guide](value_vs_accuracy.md)'s question on real
-data: EMOS fit on a multi-model ensemble, priced onto real bracket grids and
-scored against real quotes both ways. On this sample EMOS is less accurate
-than the market *and* negative-EA, the guide's synthetic "worse Brier, still
-tradeable" case does not reproduce here, but Brier and EA still move
-independently across the two calibration "fixes", which is the point being
-made. The one example here that scores forecasts the way a trader cares about.
-See §5b of the guide for the numbers and for what changed from an earlier,
-corrupted fixture.
+On this sample EMOS is less accurate than the market and its EA is negative,
+with an interval containing zero. The synthetic case in §5 of the
+[value guide](value_vs_accuracy.md), a forecast with worse Brier but positive
+value, does not reproduce here. The two metrics do still order the calibration
+adjustments differently, which is the property the guide is concerned with.
+Section 5b gives the numbers and the decomposition of what changed from an
+earlier result computed against a fixture whose bracket edges were wrong.
 
 ### `value_trainers_demo.py`
 

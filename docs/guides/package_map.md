@@ -53,7 +53,7 @@ trait of a combiner, so they sit with the other combiners rather than in
 | Module | Owns |
 |---|---|
 | `bracketlearn.adapters` | `BracketLadder`, `BinaryAbove`, `BinaryBelow`, `Twin`, `ThresholdLadder`: turn a dist into priced `ContractForecast`s. |
-| `bracketlearn.score` | CRPS / log-score / PIT / `log_loss_bracket` / `brier_bracket` and the `to_point` helper. |
+| `bracketlearn.score` | CRPS / log-score / PIT / `log_loss_bracket` / `brier_bracket`, the reference-relative value metrics (`edge_alignment`, `edge_alignment_costed`, `value_report` and their `_bracket` forms), `bootstrap_ci` for clustered confidence intervals, and the `to_point` helper. Imported from `bracketlearn.score`, not re-exported at the top level. |
 
 ## Higher-level helpers
 

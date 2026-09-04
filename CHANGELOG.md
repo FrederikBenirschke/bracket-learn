@@ -7,6 +7,44 @@ minor release; patch releases are bug-fixes and additive tests.
 ## [Unreleased]
 
 ### Fixed
+- **`edge_alignment_bracket` / `value_report_bracket` scored every row against
+  the first row's ladder.** The per-row-edges fix below was applied to the
+  accuracy scorers and not to their value twins, which shared the same 1-D-only
+  flattening. On a rotating ladder this inverted the sign of EA (-0.0205
+  against a correct +0.0013), and passing per-row edges correctly was
+  impossible because the row count was read off the edge vector. Both now route
+  through the same normalisation as `brier_bracket` and accept all three edge
+  shapes.
+- **`Stacker` trained its meta on in-sample upstream predictions.** Each leaf
+  predicted on the rows it had just been fit on, and those predictions were
+  passed to the meta as `upstream=`, so an upstream that overfits appeared
+  better to the meta than one that generalises. Measured on a linear DGP with a
+  depth-8 tree beside a ridge: the stack scored CRPS 0.809 against the ridge's
+  0.555, worse than either of its inputs; it now scores 0.555. Leaves feeding a
+  meta are fit on each half of the fold's train slice in turn so their
+  train-side predictions are out-of-sample; leaves not consumed by a meta are
+  unaffected.
+- **Transformers were fit on the calibration tail held out from the core.** The
+  `Pipeline.fit` fix above reserved a tail for the calibrator but the
+  transformer loop still ran on every row first, so `GroupByZScore` learned its
+  scale from data including that tail (22.19 against 9.96 on a wide-tailed
+  synthetic). Transformers now fit on the same slice as the core and are refit
+  on all rows before prediction.
+- **`PipelineResult.score` passed `edges` unsliced against OOF-sliced `y`**, so
+  per-row ladders raised a row-count mismatch through the one API that scores
+  them. `edges` is now sliced to each stage's OOF coverage.
+- **`bootstrap_ci` returned a zero-width interval for a single cluster.** The
+  guard added for `cluster=None` did not cover a caller passing one label for
+  every row. It now raises, and warns below 20 clusters, where the percentile
+  interval under-covers (measured 0.74 coverage at K=3 against a nominal 0.95).
+- **The lower panel of the reliability figures measured nothing.** The helper
+  histogrammed the binned means rather than the predictions, placing one
+  observation in each bin by construction and drawing a flat line for every
+  model. It now takes the raw per-contract probabilities, and omits the panel
+  when they are not supplied.
+- **`value_trainers_demo` crashed on the rebuilt fixture**, from null `nws`
+  values producing an object-dtype design matrix and from the fixture's honest
+  open tails reaching the network as `+/-inf` feature columns.
 - **`Pipeline.fit` fit its Calibrator on in-sample core predictions.** The
   docstring promised a held-out tail; the tail was held out from the calibrator
   but not from the core, which had already trained on those rows. In-sample
