@@ -7,75 +7,62 @@
 ![Type checked: mypy](https://img.shields.io/badge/types-mypy-2A6DB2.svg)
 ![Tests: pytest](https://img.shields.io/badge/tests-pytest-0A9EDC.svg)
 
-**A scikit-learn-style toolkit for forecasting a continuous number, then
-pricing the prediction-market contracts that pay out on it.**
+**A scikit-learn-style toolkit for estimating the predictive distribution of a
+scalar outcome and pricing the prediction-market contracts written on it.**
 
-## Contents
+```bash
+pip install -e ".[demo]"
+python -m bracketlearn.examples.value_vs_accuracy_weather
+```
 
-- [Prediction markets and the pricing problem](#prediction-markets-and-the-pricing-problem)
-- [The three steps](#the-three-steps)
-- [Install](#install)
-- [Quickstart: the three steps end to end](#quickstart-the-three-steps-end-to-end)
-- [Step 1: forecast a distribution](#step-1-forecast-a-distribution) (Pipeline, protocols, distribution backings, estimator families)
-- [Step 2: price the contracts](#step-2-price-the-contracts) (the adapter catalogue and venue mappings)
-- [Step 3: score the prices](#step-3-score-the-prices)
-- [Operating the pipeline](#operating-the-pipeline) (CV, sample weights, pooling, multi-target, search)
-- [Out of scope: trade decisions](#out-of-scope-trade-decisions)
-- [Status](#status)
-- [License](#license)
+## What it does, on real data
 
-## Prediction markets and the pricing problem
+Fit a distributional model, price it onto a venue's bracket ladder, and score
+it two ways — for **accuracy** (closeness to the outcome) and for **value**
+(whether its deviations from the market price point the right way). On 5,429
+station-days of Kalshi weather contracts (2026-03-17..09-03, 18 stations,
+chronological 60/40 split):
 
-A prediction market sells contracts that pay **$1 when an event happens** and
-**$0 when it doesn't**. Browse [Kalshi](https://kalshi.com) or
-[Polymarket](https://polymarket.com) and you find markets like this:
+```
+===== HIGH  (train 1737, test 1158) =====
+  forecast                        Brier   EA x100
+  reference (market)             0.1066    0.0000
+  EMOS (raw)                     0.1257   -0.0487   <- less accurate than market
+  EMOS + mean de-bias            0.1256   -0.0588   <- Brier falls, EA falls
+  EMOS + edge-recal              0.1069   +0.0042   <- Brier falls, EA rises
+  EA 95% CI (clustered by station-day): [-0.1708, +0.0779]  — crosses zero
+```
 
-> **"Will today's high temperature in New York land between 70°F and 72°F?"**
-> YES trades at 31¢.
+Read the last two rows: the two calibration "fixes" move Brier and EA in
+*different directions*. Accuracy and value are separate axes, which is the
+point of the [Edge-Alignment metric](docs/guides/value_vs_accuracy.md) and the
+reason a leaderboard sorted by Brier can pick the wrong forecast. On this
+sample EMOS is both less accurate and not positive-value, and the interval
+crosses zero — reported as it lands; see §5b of the guide for what changed from
+an earlier, corrupted fixture.
 
-A YES contract pays $1 when the event happens, so its price reads as a
-probability: 31¢ means traders put the chance near 31%. You meet the same
-underlying quantity sold three ways. Brackets split it into mutually-exclusive
-buckets (`68–70°F`, `70–72°F`, `72–74°F`). Thresholds ask one cutoff ("high
-above 75°F"). Spreads and totals settle a game ("Eagles −3.5", "over 47.5
-points").
+![CRPS leaderboard](docs/_static/leaderboard_crps.png)
 
-Trading these contracts takes two things the venue won't give you. First, your
-own probability distribution over the underlying number: tomorrow's high, the
-final margin, the next GDP print. Calibrate it so the events you call
-30%-likely arrive about 30% of the time. Second, a way to read a fair price for
-every contract shape off that one distribution. A bracket needs a bucket
-probability, a threshold needs a tail probability, a ladder needs a survival
-value. bracketlearn turns your features into those fair prices.
+## Problem statement
 
-## The three steps
+Let `Y` be a continuous outcome (tomorrow's high temperature, a game's final
+margin, the next GDP print) with features `X`. A prediction-market contract
+pays a known function `g(Y) ∈ {0, 1}` of that outcome, so its risk-neutral fair
+price is the conditional expectation `E[g(Y) | X]`, a functional of the
+conditional predictive distribution `F(y | X) = P(Y ≤ y | X)`. Every contract a
+venue lists reduces to one such functional:
 
-You forecast, you price, you score, all through a scikit-learn-style API.
+| Contract | Payoff `g(Y)` | Fair price as a functional of `F` |
+|---|---|---|
+| Bracket `[a, b)` | `1[a ≤ Y < b]` | `F(b) − F(a)` |
+| Threshold above `k` | `1[Y > k]` | `1 − F(k)` |
+| Threshold below `k` | `1[Y ≤ k]` | `F(k)` |
+| Twin (paired) at `k` | `(1[Y ≤ k], 1[Y > k])` | `(F(k), 1 − F(k))` |
 
-1. **Forecast a distribution.** Fit a probabilistic model on your features:
-   `EMOS`, `NGBoostNormal`, `QuantileReg`, `MixtureNormals`, `CumulativeBinary`,
-   and more. Cross-validation, calibration, and conformal correction come built
-   in. You get back a typed `DistributionForecast` that carries the full
-   predictive density.
-2. **Price the contracts.** Convert that distribution into fair prices for each
-   venue shape: single-threshold binaries, paired YES/NO twins, threshold
-   ladders, and bracket ladders whose edges rotate per row. Kalshi reshuffles
-   its temperature, GDP, and Fed-decision ladders daily; pass repeated edges
-   when every row shares one grid.
-3. **Score the prices.** Check the fair prices against realized outcomes with
-   proper scoring rules: CRPS, log-score, and PIT on the distribution, Brier
-   and log-loss on the contracts. The numbers tell you whether your prices were
-   calibrated.
-
-Most probabilistic-forecasting libraries stop at step 1. bracketlearn carries
-the same typed forecast through pricing and scoring, so the contract math and
-the calibration check live in the library instead of scattered glue in your
-notebook.
-
-> **Beyond weather.** This README runs on temperature because it makes the
-> cleanest continuous underlying. Nothing in the library knows about weather.
-> Any continuous quantity with bracket, threshold, or spread contracts uses the
-> same API: sports margins, index levels, economic releases.
+Pricing a venue therefore decomposes into two estimands: the predictive
+distribution `F(· | X)`, and the functionals of `F` that the listed contracts
+select. bracketlearn estimates the first and evaluates the second, then scores
+both against realized outcomes with proper scoring rules.
 
 ## Install
 
@@ -183,14 +170,7 @@ BracketLadder Brier:    0.4684
 BracketLadder log-loss: 0.7950
 ```
 
-`.price(dist)` returns a `ContractForecast`: a `fair_price` array plus the typed
-`entity_ids`, `contract_ids`, and `group_id` indexing you need to line it up
-against venue quotes, with provenance attached. Gating on edge, sizing by Kelly,
-hedging across a ladder: that trading layer is yours to write.
-
-The example fits a bare EMOS on a train/test split. In practice you wrap the
-forecaster in a `Pipeline` and run it under `WalkForward` for cross-validated,
-calibrated forecasts. [Step 1](#step-1-forecast-a-distribution) shows how.
+Full walkthrough with output: [Quickstart guide](docs/guides/quickstart.md).
 
 ## Step 1: forecast a distribution
 
@@ -239,6 +219,14 @@ supports `get_params`, `set_params`, and `clone()`. `WalkForward` clones each
 model before every fold's fit, so your instances stay unmutated and you reuse
 them across runs.
 
+**What "sklearn-style" does not mean here:** these estimators are *not*
+`sklearn.utils.estimator_checks.check_estimator`-compliant, and are not
+intended to be. A `DistForecaster` returns a typed `DistributionForecast`
+rather than an array, which several of sklearn's checks require. What is
+borrowed is the parameter protocol (`get_params`/`set_params`/`clone`), the
+compose-and-cross-validate shape, and the naming — not API-level
+substitutability inside sklearn's own meta-estimators.
+
 ### The five protocols
 
 | Protocol          | Input → Output                                | Examples                                                       |
@@ -255,140 +243,12 @@ List stages in a `Pipeline` and it wires them left-to-right by protocol type. A
 objects in a `Stacker`. `WalkForward` drives the CV and OOF. Names label the
 leaderboard; they never wire anything.
 
-### Distribution backings
+### Distribution backings and estimator families
 
-`DistributionForecast` is an `abc.ABC` base with five concrete subclasses. Each
-subclass owns typed storage and its own math; metrics and adapters dispatch
-through `isinstance` (or the compat `dist.backing` property).
-
-| Subclass                  | Storage                                | Math notes                                            |
-|---------------------------|----------------------------------------|-------------------------------------------------------|
-| `NormalForecast`          | `mu, sigma` per row                    | Closed-form scipy.stats.norm                          |
-| `StudentTForecast`        | `mu, sigma, df` per row                | Closed-form scipy.stats.t; requires df > 2            |
-| `MixtureNormalForecast`   | `weights, mus, sigmas` per row (N, K)  | CDF = Σ w_k Φ((x−μ_k)/σ_k); PPF via bisection        |
-| `QuantileForecast`        | shared `taus` + per-row `qvals` (N, Q) | Pinball-trapezoidal CRPS; `TailPolicy` required      |
-| `BracketForecast`         | per-row `edges` (N, B+1) + `probs`     | Uniform-within-bin; NaN-padded ragged rows supported |
-
-Construct a subclass directly:
-
-```python
-from bracketlearn import NormalForecast
-d = NormalForecast.from_arrays(
-    mu=mu, sigma=sigma,
-    ids=ids, timestamps=ts, provenance=prov,
-)
-```
-
-The `DistributionForecast.from_*` classmethods route to the subclasses
-(`from_normal` calls `NormalForecast.from_arrays`, and so on).
-
-#### Per-row brackets
-
-`BracketForecast.edges` has shape `(N, B+1)`. Each row carries its own bracket
-grid. The Kalshi temperature contract listed on May 26 shares no edges with the
-May 27 listing, and bracketlearn stores them apart. Ragged rows ride on NaN
-padding: row i's valid prefix runs to the first `B_i + 1` non-NaN edges and the
-first `B_i` non-NaN probs.
-
-`BracketForecast.from_arrays` also takes a 1-D shared edge vector and broadcasts
-it to every row, so callers on a genuine shared ladder pay no ergonomic cost.
-Per-row `self.edges` (2-D, NaN-padded for ragged rows) stays the canonical
-access path.
-
-#### The `integrate()` bridge
-
-Every `DistributionForecast` subclass implements
-`integrate(edges_per_row) → BracketForecast`. One method turns a continuous
-distribution into a discrete one on a specific grid:
-
-```python
-# EMOS emits a NormalForecast; price it on per-row Kalshi ladders.
-normal_dist = emos.predict_dist(X, ids=ids, timestamps=ts)
-bracket_dist = normal_dist.integrate(edges_per_row)
-# bracket_dist.probs has shape (N, B_max) with each row's prob mass on
-# its own grid (NaN-padded if rows differ in length).
-```
-
-`edges_per_row` takes three shapes: 1-D shared `(B+1,)`, 2-D dense `(N, B+1)`,
-or a length-N sequence of 1-D arrays (NaN-padded for you). Each row renormalises
-to sum to 1. A row that lands entirely outside the distribution's support raises
-rather than fabricate a silent uniform.
-
-### Estimator families
-
-Seven families group the trainers by **what they model**. Pick the family from
-the shape of your signal; inside a family the members trade off linearity,
-priors, and compute.
-
-| Family | Estimators | What it models |
-|---|---|---|
-| **Point** | `SklearnPoint`, `OnlineAggregator`, `RNNHourly` | a single μ̂ per row; lift to a distribution with a residual σ (or a calibration stage) |
-| **Parametric distribution** | `EMOS`, `HeteroscedasticNormal`, `NGBoostNormal`, `MixtureNormals`, `BayesianRidge`, `HierarchicalNormal` | a closed-form density (Normal / mixture) whose moments are functions of the features |
-| **Quantile / non-parametric** | `QuantileReg`, `QuantileForest` | a quantile function / empirical CDF, no distributional shape assumed |
-| **Bracket-native** | `CumulativeBinary` (+ the `BracketExpander` entry point) | bracket / cutpoint indicators directly on each row's own grid |
-| **Value (reference-relative)** | `BlendedBracketGBM`, `BlendedBracketNet` (in `bracketlearn.value`) | a bracket dist tilted to capture a **reference price's** mispricing (`L = CE − λ·EA`); needs `reference_by_id` at fit (see [§ Accuracy is not value](#accuracy-is-not-value)) |
-| **Stacking / combiners** | `StackedParametric`, `BMAStacking`, `BracketStacking`, `LinearPoolDist`, `TailSpecialist`, `CDFBoostBracket`, `DistAsFeatures` | a combination of upstream forecasts (parametric meta-learner, Bayesian average, opinion pool, tail specialist) |
-| **Baselines** | `Persistence`, `PersistenceDist`, `EmpiricalDistribution` | reference forecasts to beat; plus convenience factories `ridge`, `emos_calibrated` |
-
-Within the parametric family, the mean/variance flexibility ladder is the part
-to learn:
-
-- `EMOS` puts an affine mean on `ens_mean` and a fixed-function scale on
-  `ens_std`. Two hard-wired inputs.
-- `HeteroscedasticNormal` generalises it to the features: `μ = Xμ·βμ`,
-  `log σ = Xσ·βσ`. Any columns (cloud, wind, dewpoint, spread) drive both the
-  location and the width, with readable linear coefficients. `EMOS` is the
-  special case `Xμ=[ens_mean]`, `Xσ=[ens_std]`.
-- `NGBoostNormal` targets the same `(μ̂, σ̂)`-from-features but gradient-boosts
-  it: non-linear, noisier at low N, and you lose interpretability.
-- `MixtureNormals` handles bi- and multi-modal outcomes.
-- `BayesianRidge` and `HierarchicalNormal` bring conjugate priors and cross-site
-  partial pooling for small samples.
-
-#### Distribution-first vs bracket-aware trainers
-
-A second axis cuts across the families: what a trainer sees at fit time.
-
-- **Distribution-first** (`EMOS`, `NGBoostNormal`, `MixtureNormals`,
-  `QuantileReg`, `QuantileForest`, `StackedParametric`, `BMAStacking`,
-  `BayesianRidge`, `HierarchicalNormal`, `OnlineAggregator`, `RNNHourly`,
-  `ridge`, `emos_calibrated`) never touch brackets at fit time. They fit on
-  `(X, y)`, emit a continuous-ish distribution, and you call
-  `.integrate(edges_per_row)` to price on a grid.
-- **Bracket-aware** (`CumulativeBinary`, `BlendedBracketGBM`/`BlendedBracketNet`,
-  `TailSpecialist`, `CDFBoostBracket`) train on bracket-derived indicators on a
-  per-row grid. The leaf trainers (`CumulativeBinary` with `cutpoints_by_id` /
-  `outer_edges_by_id`, and the value trainers with `brackets_by_id` /
-  `reference_by_id`) take their grids at **call time**, passed to
-  `fit` / `predict_dist` alongside `X`/`y` (construction is hyperparameters
-  only). The `TailSpecialist` / `CDFBoostBracket` combiners take `brackets_by_id`
-  at construction. All require an explicit `ids=` kwarg at fit; a `Pipeline` /
-  `WalkForward` forwards `ids` and the call-time grids for you.
-
-  For the "fit any sklearn classifier or regressor on brackets" path, reach for
-  `BracketExpander` (in `bracketlearn.transformers`). It owns the per-row to
-  per-(row, bracket) reshape and leaves model choice and target construction to
-  you. `fit_transform(X, y, ids=...)` returns `(X_expanded, y_expanded)`:
-  `X_expanded` is `(M, F+2)` with `[..., lo, hi]` appended, and `y_expanded` is
-  the default bracket-hit indicator `1[y ∈ [lo, hi))`. Fit any sklearn estimator
-  on those arrays, then pack the predictions back into a row-renormalised
-  `BracketForecast` with `assemble_dist`.
-
-  ```python
-  from bracketlearn import BracketExpander
-  from lightgbm import LGBMClassifier
-
-  exp = BracketExpander(brackets_by_id=bbi)
-  X_exp, y_exp = exp.fit_transform(X, y, ids=ids)
-  clf = LGBMClassifier(...).fit(X_exp, y_exp)
-  X_pred_exp, _ = exp.transform(X_pred, ids=pred_ids)
-  scores = clf.predict_proba(X_pred_exp)[:, 1]
-  d = exp.assemble_dist(scores, ids=pred_ids, timestamps=ts)
-  ```
-
-  For a custom per-(row, bracket) target (a mispricing residual, an
-  importance-weighted hit), build it on top of `fit_transform` output. The
-  expander holds no opinion about the loss.
+A `DistributionForecast` carries an explicit backing — Normal, Student-t,
+mixture, quantile, or bracket — and every backing answers `cdf`, `crps`,
+`pit`, `integrate` and `log_score`. Which trainers emit which backing, what
+each is for, and when to prefer one over another: **[Catalog](docs/guides/catalog.md)**.
 
 ## Step 2: price the contracts
 
@@ -497,94 +357,17 @@ The sections above cover a single fit. These control how `WalkForward` runs
 across folds and how the pipeline scales to more data, more sites, and more
 targets.
 
-### CV variants
+Covered in the guides rather than here, because each has more detail than a
+README should carry:
 
-`cv=` takes three modes:
-
-- `"expanding-window"` (default) grows the train window by one chunk per fold.
-  Use it for sequential and time-series data.
-- `"rolling-window"` slides a fixed-width train window forward and needs
-  `rolling_window=<int>`. It forgets old rows, which helps through regime change.
-- `"kfold"` runs i.i.d. k-fold. Pass `shuffle=True, random_state=...` to permute
-  rows. Use it only when rows are exchangeable.
-
-### Sample weights
-
-`WalkForward(...).fit_predict(model, X, y, ids=..., timestamps=...,
-sample_weight=w)` threads `w` through every stage. Trainers whose `fit`
-signature accepts `sample_weight=` receive it: EMOS, StackedParametric, NGBoost,
-the LightGBM-based QuantileReg / QuantileForest / CumulativeBinary /
-TailSpecialist, MixtureNormals, and SklearnPoint when its inner estimator
-supports it. `WalkForward` detects the online and sequence trainers without
-weight support (OnlineAggregator, RNNHourly) by signature and passes them
-through unweighted, so nothing crashes.
-
-### Cross-site partial pooling
-
-Multi-city and multi-entity workloads fit here: Kalshi weather across NYC, CHI,
-and LAX; NHL spreads across teams; fixture pricing across players. Pass a per-row
-site label through `groups=` and use `HierarchicalNormal`:
-
-```python
-from bracketlearn import Pipeline, WalkForward
-from bracketlearn.trainers import HierarchicalNormal
-
-hn = Pipeline([HierarchicalNormal()], name="hn")
-wf = WalkForward(cv="kfold", n_folds=5, refit_on_full=True)
-res = wf.fit_predict(hn, X, y, ids=ids, timestamps=ts, groups=city_id)
-hn_pred = wf.predict(X_new, ids=..., timestamps=..., groups=city_id_new)["hn"]
-```
-
-Each city earns its own coefficient vector β_s, all shrunk toward a common β₀
-with the shrinkage strength learned from data (empirical-Bayes on τ²). A city
-with little history borrows strength from the rest; a city with deep history
-stays close to its own data. For a city unseen at fit, predictive σ inflates
-(and raises by default; set `allow_unseen_sites=True` to opt in).
-
-`groups=` routes through `WalkForward` by signature introspection. A trainer
-without a `groups` kwarg ignores it, so you mix `HierarchicalNormal` with
-site-blind stages like EMOS or ridge and it runs.
-
-### Multi-target
-
-For `y` of shape `(N, M)`, wrap a single-target model and its `WalkForward`
-driver in `MultiOutput`:
-
-```python
-from bracketlearn import MultiOutput, Pipeline, WalkForward
-from bracketlearn.trainers import EMOS
-
-mt = MultiOutput(
-    Pipeline([EMOS()], name="emos"),
-    WalkForward(n_folds=5),
-    target_names=["high", "low"],
-)
-result = mt.fit_predict(X, Y, ids=ids, timestamps=ts)
-print(result.score(Y, metrics=["crps"]))   # per-target × per-stage
-```
-
-Each target trains its own cloned model, with no cross-target sharing.
-
-### Hyperparameter search
-
-`GridSearch` enumerates a param grid, cloning the model and its `WalkForward`
-driver at each grid point. (It skips `sklearn.GridSearchCV` because that KFold
-would shred time ordering.) Use `node__field` syntax for nested params;
-`WalkForward` params like `n_folds` and `cv` appear unprefixed:
-
-```python
-from bracketlearn import Pipeline, WalkForward
-from bracketlearn.search import GridSearch
-from bracketlearn.trainers import EMOS
-
-gs = GridSearch(Pipeline([EMOS()], name="emos"),
-                WalkForward(cv="expanding-window", n_folds=5),
-                param_grid={"emos__sigma_floor": [0.3, 0.5, 1.0],
-                            "n_folds": [3, 5]},
-                scoring="crps", refit_node="emos")
-gs.fit(X, y, ids=ids, timestamps=ts)
-print(gs.best_params_, gs.best_score_)
-```
+| Topic | Guide |
+|---|---|
+| Expanding / rolling window, embargo, purging | [cv.md](docs/guides/cv.md) |
+| Sample weights and recency decay | [weights.md](docs/guides/weights.md) |
+| Cross-site partial pooling | [concepts.md](docs/guides/concepts.md) |
+| Multi-target (HIGH and LOW together) | [multitarget.md](docs/guides/multitarget.md) |
+| Hyperparameter search | [search.md](docs/guides/search.md) |
+| Saving and loading fitted pipelines | [persistence.md](docs/guides/persistence.md) |
 
 ## Out of scope: trade decisions
 
