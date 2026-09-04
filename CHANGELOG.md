@@ -6,6 +6,42 @@ minor release; patch releases are bug-fixes and additive tests.
 
 ## [Unreleased]
 
+### Fixed
+- **Rebuilt `examples/data/weather_value_sample.parquet`; the weather example's
+  result changed.** The old fixture was hand-built, never committed as a
+  script, and carried corrupted ladder edges: open tails flattened to finite
+  sentinels, and the fifth inner edge written one degree low, which mislabelled
+  the outcome bracket on 162 of its 2,168 rows (7.5%). Repairing only the edges
+  moves HIGH EA x100 from +0.4938 to +0.3326 and LOW from +1.2960 to +0.5922;
+  the remaining move to today's figures (HIGH -0.049, LOW -0.110) is
+  population — the new sample covers 2026-03-17..09-03, 5,429 rows over 18
+  stations, where the old one was a subset. The fixture is now produced by a
+  committed script that asserts, per row, that tails stay open and inner
+  brackets are width-2.
+- **The weather example splits chronologically** rather than by random
+  permutation; weather is strongly autocorrelated day to day, so a permutation
+  put adjacent days on opposite sides of the boundary. Worth about -0.199 ->
+  -0.151 on matched data — the smallest of the three effects above.
+- **The example's printed annotations derive from the computed numbers** instead
+  of asserting a fixed conclusion, so a data change cannot leave the prose
+  contradicting the table (which is what happened here).
+
+### Changed
+- **`ens_mean`/`ens_std` in the weather fixture are now a declared definition**
+  — multi-model mean/std across all available forecast sources — rather than
+  one inherited from the older export, whose definition is unrecoverable
+  (its ens_std averages 1.917; multi-model gives 2.150 and the GEFS
+  percentile fan 1.268). Numbers off this fixture are a new measurement, not a
+  correction of the old ones, and carry no confidence intervals.
+- **`docs/guides/value_vs_accuracy.md` §5b rewritten** to report what the data
+  now shows: on this sample EMOS is less accurate than the market *and*
+  negative-EA, so the synthetic section's "worse Brier, still tradeable" case
+  does not reproduce on real data here. The mechanism the guide teaches —
+  accuracy and value are different axes that move independently — is unchanged
+  and still visible in the table. The guide's earlier claim that the sign of
+  EMOS's EA was robust across splits is withdrawn; it was made on the corrupted
+  fixture.
+
 ## [0.8.0] — 2026-06-14
 
 ### Removed

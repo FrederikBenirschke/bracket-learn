@@ -89,11 +89,15 @@ price two ways: Brier (accuracy) and `score.edge_alignment` (value).
 python -m bracketlearn.examples.value_vs_accuracy_weather
 ```
 
-Shows the headline of the [value-vs-accuracy guide](value_vs_accuracy.md) on
-real data: EMOS is *less accurate* than the market yet has positive
-Edge-Alignment (it is tradeable), and calibrating it harder (a mean de-bias,
-an edge-recalibration) *reduces* its value. The one example here that scores
-forecasts the way a trader cares about.
+Runs the [value-vs-accuracy guide](value_vs_accuracy.md)'s question on real
+data: EMOS fit on a multi-model ensemble, priced onto real bracket grids and
+scored against real quotes both ways. On this sample EMOS is less accurate
+than the market *and* negative-EA — the guide's synthetic "worse Brier, still
+tradeable" case does not reproduce here — but Brier and EA still move
+independently across the two calibration "fixes", which is the point being
+made. The one example here that scores forecasts the way a trader cares about.
+See §5b of the guide for the numbers and for what changed from an earlier,
+corrupted fixture.
 
 ### `value_trainers_demo.py`
 

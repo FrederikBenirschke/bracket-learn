@@ -169,48 +169,79 @@ Brier. Selecting on accuracy would have shipped the wrong forecast.
 ## 5b. The same thing on real data: EMOS vs a market
 
 The synthetic toy is rigged to make the point. Real forecasts and real prices
-test it. [`bracketlearn/examples/value_vs_accuracy_weather.py`](https://github.com/FrederikBenirschke/bracket-learn/blob/main/bracketlearn/examples/value_vs_accuracy_weather.py)
-fits EMOS on an anonymized weather sample
-(`bracketlearn/examples/data/weather_value_sample.parquet`: ensemble mean/spread, realized
-temperatures, per-row bracket grids, and a normalized reference price per
-bracket; no venue, station, or date), prices it onto each row's grid with
-`dist.integrate`, and scores it against the reference both ways:
+test it — and on this sample they do not reproduce it.
+[`bracketlearn/examples/value_vs_accuracy_weather.py`](https://github.com/FrederikBenirschke/bracket-learn/blob/main/bracketlearn/examples/value_vs_accuracy_weather.py)
+fits EMOS on a weather sample
+(`bracketlearn/examples/data/weather_value_sample.parquet`: 5,429 station-days
+over 2026-03-17..09-03 across 18 stations — multi-model ensemble mean/spread,
+realized temperatures, per-row bracket grids, and a normalized reference price
+per bracket), prices it onto each row's grid with `dist.integrate`, and scores
+it against the reference both ways. Split is chronological, 60/40.
 
 ```
-===== HIGH  (train 901, test 602) =====
-  forecast                        Brier   EA ×100
-  reference (market)             0.1121    0.0000
-  EMOS (raw)                     0.1220   +0.4938   <- less accurate than market, EA > 0
-  EMOS + mean de-bias            0.1232   +0.4586   <- value falls vs raw
-  EMOS + edge-recal              0.1109   +0.1288   <- best Brier, value collapses
+===== HIGH  (train 1737, test 1158) =====
+  forecast                        Brier   EA x100
+  reference (market)             0.1066    0.0000
+  EMOS (raw)                     0.1257   -0.0487   <- less accurate, EA < 0
+  EMOS + mean de-bias            0.1256   -0.0588   <- Brier falls, EA falls
+  EMOS + edge-recal              0.1069   +0.0042   <- Brier falls, EA rises
 ```
 
-Read the HIGH block top to bottom. It is the whole guide in four rows:
+Read it top to bottom:
 
-* **EMOS is *less* accurate than the market** (Brier 0.122 vs 0.112). On a
+* **EMOS is less accurate than the market** (Brier 0.126 vs 0.107). On a
   calibration scoreboard EMOS loses.
-* **EMOS is tradeable anyway** (EA `+0.494 > 0`). Its errors are decorrelated
-  from the market's, so its edge points where the market is wrong, the case
-  §2–3 says calibration cannot see.
-* **Calibrating it harder does not help.** A mean de-bias toward the truth
-  *lowers* value. An edge-recalibration produces the **best Brier of all
-  four rows** (0.111, matching the market) while its value **collapses** (from
-  `+0.494` to `+0.129`). Closeness to the outcome and value-vs-a-reference are
-  different axes.
+* **It is not tradeable here either** (EA `-0.049 < 0`). Unlike the synthetic
+  case, its errors are *not* decorrelated from the market's in a useful
+  direction — `align_corr = -0.011` — so this sample does not exhibit the
+  "worse Brier, positive value" case §2-3 describes.
+* **The two axes still move independently.** The edge-recalibration improves
+  Brier (0.1069, close to the market's 0.1066) *and* raises EA; the mean
+  de-bias barely moves Brier while lowering EA further. Accuracy and value do
+  not track each other in either direction. That is the mechanism this guide
+  is about, and it is visible here — just without a positive-value example
+  behind it.
 
-(The LOW side lands the other way on accuracy: EMOS there is *more* accurate
-than the market *and* positive-EA, yet the same two "fixes" still cut its value.
-The robust, side-independent lesson is the last bullet, not the sign of the
-accuracy gap.)
+The LOW side lands the same way (EMOS raw EA `-0.110`, `align_corr = -0.023`).
 
-> Honest caveats. EA here is on a normalized reference price, not a tradeable
-> order book net of fees; a positive EA is necessary, not sufficient, for live
-> profit. The exact numbers wobble with the split; what is robust across splits
-> is the *sign* of EMOS's EA and that both calibration "fixes" reduce it. An
-> earlier version tried σ-recalibration; that "worked" only when EMOS was misfit
-> to a constant σ. Fit with `fit_method="crps_nelder_mead"`, EMOS is not
-> over-dispersed here and a σ-scale does nothing. Verify a fix is real before
-> believing it.
+### What changed, and why the older numbers are gone
+
+An earlier version of this section reported HIGH EA `+0.4938` and read it as
+real-data confirmation of the synthetic result. Those numbers came off a
+fixture with two defects, in a file that was hand-built and never committed as
+a script, so nothing could re-derive it:
+
+* the ladder's open tails were flattened to finite sentinels, and
+* the fifth inner edge was written one degree low, collapsing one bracket to
+  width 1 and shifting the next boundary.
+
+Prices were intact, so the file looked right — but edges decide which bracket
+the realized temperature fell in, and 162 of its 2,168 rows (7.5%) carried the
+wrong outcome label. Repairing only the edges, holding rows and split fixed,
+moves HIGH from `+0.4938` to `+0.3326` and LOW from `+1.2960` to `+0.5922`.
+The rest of the move to today's negative figures is population: that fixture
+was a subset, and the current one covers a longer window. The chronological
+split (replacing a random permutation, which leaks across an autocorrelated
+series) accounts for little — about `-0.199` to `-0.151` on matched data.
+
+The fixture is now generated by a committed script that pulls from the source
+pipeline's research API and asserts, per row, that tails stay open and inner
+brackets are width-2; a `.provenance.json` sidecar records the source commit
+and query.
+
+> **Scope.** EA here is computed against the bid-ask midpoint of a real
+> exchange's quotes, frictionless — not a tradeable price net of fees and
+> spread. `ens_mean`/`ens_std` are a declared definition (multi-model spread
+> across all available sources), not one recovered from the older fixture,
+> whose definition is unrecoverable; numbers here are a new measurement rather
+> than a correction of the old ones. No confidence intervals are attached and
+> the contracts are day-clustered, so the effective sample is nearer the day
+> count than the contract count — treat a figure this close to zero as
+> "not distinguishable from zero on this evidence", not as a measured negative.
+>
+> An earlier caveat here claimed the *sign* of EMOS's EA was robust across
+> splits. It was not. That claim was made on the corrupted fixture and is
+> withdrawn.
 
 ## 6. Improving value: edge-recalibration
 
