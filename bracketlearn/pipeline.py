@@ -41,9 +41,11 @@ def _compute_metric(
     """Dispatch one (metric, distribution) pair to a scalar value, or to
     a small dict (PIT contributes both mean and std).
 
-    ``edges`` is a shared 1-D bracket ladder ``(B+1,)`` for the bracket
-    metrics (None otherwise). The per-row ragged ``BracketLadder`` is built
-    here, sized to the dist, so the caller passes only the edge vector.
+    ``edges`` is the bracket ladder for the bracket metrics (None otherwise),
+    in any of the three shapes ``integrate`` accepts: a shared 1-D ``(B+1,)``
+    vector, a dense ``(N, B+1)`` grid, or a ragged per-row sequence. A shared
+    vector is broadcast to every row; per-row grids are passed through, which
+    is what a rotating venue ladder (Kalshi relists daily) needs.
     """
     if metric == "crps":
         return {"crps": float(dist.crps(y).mean())}
@@ -55,11 +57,26 @@ def _compute_metric(
     if metric in ("log_loss_bracket", "brier_bracket"):
         from bracketlearn.adapters import BracketLadder
 
-        edges_arr = np.asarray(edges, dtype=float)
-        ladder = BracketLadder(edges_per_row=[edges_arr] * dist.ids.shape[0])
+        n_rows = dist.ids.shape[0]
+        if isinstance(edges, np.ndarray) and edges.ndim == 1:
+            per_row = [edges.astype(float)] * n_rows
+        elif isinstance(edges, np.ndarray) and edges.ndim == 2:
+            per_row = [np.asarray(e, float) for e in edges]
+        else:
+            seq = list(edges)
+            per_row = (
+                [np.asarray(seq, float)] * n_rows
+                if seq and np.ndim(seq[0]) == 0
+                else [np.asarray(e, float) for e in seq]
+            )
+        if len(per_row) != n_rows:
+            raise ValueError(
+                f"edges describe {len(per_row)} rows; the forecast has "
+                f"{n_rows}")
+        ladder = BracketLadder(edges_per_row=per_row)
         contracts = ladder.price(dist)
         fn = getattr(scoremod, metric)
-        return {metric: fn(contracts, edges_arr, y)}
+        return {metric: fn(contracts, per_row, y)}
     raise ValueError(f"unknown metric: {metric!r}")
 
 

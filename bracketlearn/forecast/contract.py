@@ -11,10 +11,20 @@ from bracketlearn.forecast._meta import ProvenanceMeta
 
 @dataclass(frozen=True)
 class ContractSpec:
-    """Typed serialisable spec for an adapter."""
+    """Typed serialisable spec for an adapter.
+
+    ``edges_per_row`` is set by ladder adapters and carries the exact grid each
+    entity was priced on. It exists so a scorer can VERIFY the edges it is
+    handed rather than trust them: ``brier_bracket``/``log_loss_bracket`` use
+    ``edges`` to decide which bracket the outcome fell in, and on a rotating
+    ladder (Kalshi relists daily) a caller passing one row's vector for all
+    rows used to get a wrong number back with no error, because the shapes
+    still lined up. Left ``None`` by non-ladder adapters.
+    """
 
     kind: str
     schema_version: int = 1
+    edges_per_row: tuple[tuple[float, ...], ...] | None = None
 
 
 @dataclass(frozen=True)

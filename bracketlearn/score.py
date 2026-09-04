@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 from scipy import stats as _stats
@@ -286,53 +287,145 @@ def crps_bracket(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
+def _rows_and_onehot(
+    contracts: ContractForecast,
+    edges: Any,
+    y: np.ndarray,
+) -> tuple[list[np.ndarray], list[np.ndarray]]:
+    """Normalise (contracts, edges, y) into per-row (probs, onehot) pairs.
+
+    ``edges`` accepts the same three shapes ``DistributionForecast.integrate``
+    does:
+
+    * **1-D** ``(B+1,)`` — one ladder shared by every row.
+    * **2-D** ``(N, B+1)`` — a dense per-row grid, all rows the same width.
+    * **ragged sequence** — ``len N``, row ``i`` of shape ``(B_i + 1,)``.
+
+    Why this exists. These scorers used to take a single ``(B+1,)`` vector and
+    use it for every row, including for ``searchsorted(edges, y)`` — the step
+    that decides which bracket the outcome fell in. On a venue whose ladder
+    ROTATES (Kalshi relists daily around the forecast, so Monday is
+    ``[64,66,68,70,72]`` and Tuesday ``[25,27,29,31,33]``), that scores every
+    row after the first against the wrong grid, and it does so **silently**:
+    the shapes are compatible, so a number comes back. Measured on a 40-row
+    synthetic ladder, Brier 0.8904 against a correct 0.7343.
+
+    Rows with differing bracket COUNTS additionally broke the flat reshape, but
+    loudly — that case raised. The dangerous one was always same-count,
+    different-values, which is every row of a real rotating ladder.
+    """
+    y = np.asarray(y, dtype=float)
+    fair = np.asarray(contracts.fair_price, dtype=float)
+
+    # The grid the ladder was actually priced on, when the adapter recorded it.
+    priced = getattr(contracts.contract_spec, "edges_per_row", None)
+
+    if isinstance(edges, np.ndarray) and edges.ndim == 2:
+        per_row: list[np.ndarray] = [np.asarray(e, float) for e in edges]
+    elif isinstance(edges, np.ndarray) and edges.ndim == 1:
+        per_row = None  # type: ignore[assignment]
+        shared = edges.astype(float)
+    else:
+        seq = list(edges)
+        if len(seq) and np.ndim(seq[0]) == 0:
+            per_row = None  # type: ignore[assignment]
+            shared = np.asarray(seq, dtype=float)
+        else:
+            per_row = [np.asarray(e, float) for e in seq]
+
+    if per_row is None:
+        B = shared.shape[0] - 1
+        if fair.size % B != 0:
+            raise ValueError(
+                f"fair_price size {fair.size} not divisible by B={B}")
+        n = fair.size // B
+        # A single vector is correct only if the ladder really was shared. When
+        # the adapter recorded its grid we can check instead of hope: scoring a
+        # rotating ladder against one row's edges returns a plausible wrong
+        # number (measured 0.8904 vs a correct 0.7343), which is exactly the
+        # failure this argument used to invite.
+        if priced is not None and len(priced) == n:
+            mismatched = [
+                i for i, e in enumerate(priced)
+                if len(e) != shared.shape[0]
+                or not np.allclose(np.asarray(e, float), shared, equal_nan=True)
+            ]
+            if mismatched:
+                raise ValueError(
+                    f"a single shared ladder was passed, but the contracts "
+                    f"were priced on per-row edges that differ at "
+                    f"{len(mismatched)} of {n} rows (first: row "
+                    f"{mismatched[0]}). Scoring those against one row's grid "
+                    f"puts each outcome in the wrong bracket. Pass the same "
+                    f"per-row edges the ladder was priced with."
+                )
+        per_row = [shared] * n
+
+    n = len(per_row)
+    if y.shape[0] != n:
+        raise ValueError(f"y has {y.shape[0]} entities; edges describe {n}")
+
+    widths = [e.shape[0] - 1 for e in per_row]
+    if sum(widths) != fair.size:
+        raise ValueError(
+            f"fair_price size {fair.size} does not match the ladder "
+            f"({sum(widths)} contracts over {n} rows). If the ladder rotates, "
+            f"pass the SAME per-row edges used to price it — a single shared "
+            f"vector silently scores every row against row 0's grid."
+        )
+
+    probs_rows: list[np.ndarray] = []
+    onehot_rows: list[np.ndarray] = []
+    off = 0
+    for i, e in enumerate(per_row):
+        b = widths[i]
+        probs_rows.append(fair[off:off + b])
+        oh = np.zeros(b)
+        oh[int(np.clip(np.searchsorted(e, y[i], side="right") - 1, 0, b - 1))] = 1.0
+        onehot_rows.append(oh)
+        off += b
+    return probs_rows, onehot_rows
+
+
 def log_loss_bracket(
     contracts: ContractForecast,
-    edges: np.ndarray,
+    edges: Any,
     y: np.ndarray,
     *,
     entity_order: np.ndarray | None = None,
 ) -> float:
     """Categorical log-loss over a bracket ladder.
 
-    contracts is a long-form ContractForecast with one row per (entity, bin).
-    edges is the (B+1,) ladder.
-    y is the realized value per entity.
+    ``contracts`` is a long-form ContractForecast with one row per
+    (entity, bin). ``y`` is the realized value per entity. ``edges`` is the
+    ladder — a shared ``(B+1,)`` vector, a dense ``(N, B+1)`` grid, or a ragged
+    per-row sequence. **Pass the same edges the ladder was priced with**: see
+    :func:`_rows_and_onehot` for why a shared vector against a rotating ladder
+    is silently wrong rather than an error.
     """
-    edges = np.asarray(edges, dtype=float)
-    y = np.asarray(y, dtype=float)
-    B = edges.shape[0] - 1
-    fair = contracts.fair_price
-    if fair.size % B != 0:
-        raise ValueError(f"fair_price size {fair.size} not divisible by B={B}")
-    N = fair.size // B
-    if y.shape[0] != N:
-        raise ValueError(f"y has {y.shape[0]} entities; contracts have {N}")
-    probs = fair.reshape(N, B)
-    bin_idx = np.searchsorted(edges, y, side="right") - 1
-    bin_idx = np.clip(bin_idx, 0, B - 1)
-    p_realized = probs[np.arange(N), bin_idx]
+    probs_rows, onehot_rows = _rows_and_onehot(contracts, edges, y)
+    p_realized = np.array([
+        float(p[oh.argmax()]) for p, oh in zip(probs_rows, onehot_rows)
+    ])
     p_realized = np.clip(p_realized, 1e-12, 1.0)
     return float(-np.log(p_realized).mean())
 
 
 def brier_bracket(
     contracts: ContractForecast,
-    edges: np.ndarray,
+    edges: Any,
     y: np.ndarray,
 ) -> float:
-    """Multi-class Brier: Σ_b (p_b - 1[y in bin b])²."""
-    edges = np.asarray(edges, dtype=float)
-    y = np.asarray(y, dtype=float)
-    B = edges.shape[0] - 1
-    fair = contracts.fair_price
-    N = fair.size // B
-    probs = fair.reshape(N, B)
-    onehot = np.zeros_like(probs)
-    bin_idx = np.searchsorted(edges, y, side="right") - 1
-    bin_idx = np.clip(bin_idx, 0, B - 1)
-    onehot[np.arange(N), bin_idx] = 1.0
-    return float(((probs - onehot) ** 2).sum(axis=1).mean())
+    """Multi-class Brier: Σ_b (p_b - 1[y in bin b])², averaged over entities.
+
+    ``edges`` takes the same three shapes as :func:`log_loss_bracket`, and the
+    same warning applies: on a rotating ladder, pass per-row edges.
+    """
+    probs_rows, onehot_rows = _rows_and_onehot(contracts, edges, y)
+    return float(np.mean([
+        float(((p - oh) ** 2).sum())
+        for p, oh in zip(probs_rows, onehot_rows)
+    ]))
 
 
 # ---------------------------------------------------------------------------

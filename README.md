@@ -321,7 +321,11 @@ on two levels, both through `result.to_table(y, metrics=[...])` on a
 - **Distribution metrics** read the predictive density directly: `crps`,
   `log_score`, and `pit`.
 - **Contract metrics** read the priced ladder: `brier_bracket` and
-  `log_loss_bracket`, each taking the shared `edges=` vector. They answer the
+  `log_loss_bracket`, each taking `edges=` in any of the three shapes
+  `integrate` accepts — a shared `(B+1,)` vector, a dense `(N, B+1)` grid, or a
+  ragged per-row sequence. On a rotating ladder pass the per-row edges the
+  ladder was priced with; the scorers raise if handed one row's vector
+  instead. They answer the
   practical question, were the bracket prices calibrated.
 
 The standalone `score.brier_bracket` and `score.log_loss_bracket` helpers, used

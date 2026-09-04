@@ -290,7 +290,12 @@ class BracketLadder:
             timestamps=np.asarray(timestamps_list),
             fair_price=np.asarray(fair_price_list, dtype=float),
             group_id=np.asarray(group_id_list),
-            contract_spec=ContractSpec(kind="bracket_ladder"),
+            contract_spec=ContractSpec(
+                kind="bracket_ladder",
+                edges_per_row=tuple(
+                    tuple(float(v) for v in e) for e in self.edges_per_row
+                ),
+            ),
             provenance=_provenance_for(dist, self.name),
         )
 
