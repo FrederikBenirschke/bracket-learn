@@ -1,30 +1,33 @@
-"""Accuracy vs value on a real (anonymized) weather sample.
+"""Accuracy vs value: EMOS against a real market reference.
 
-An honest, end-to-end demonstration of the reference-relative value metrics
-(``score.edge_alignment`` / ``score.value_report``) on real data:
+End-to-end demonstration of the reference-relative value metrics
+(``score.edge_alignment`` / ``score.value_report``):
 
-  1. Fit EMOS (bracketlearn) on ensemble mean/spread.
+  1. Fit EMOS on multi-model ensemble mean/spread.
   2. Price it onto each row's own bracket grid via ``dist.integrate``.
-  3. Score it against a real *reference price* ``m`` (a normalized market quote,
-     anonymized) two ways: Brier (accuracy) and Edge-Alignment (value).
+  3. Score it against the market's normalized mid ``m`` two ways: Brier
+     (accuracy) and Edge-Alignment (value).
 
-The honest finding (robust across random splits):
+What this sample shows: EMOS is less accurate than the market (worse Brier)
+AND negative-EA, with a 95% interval that crosses zero. The synthetic case in
+the value guide's §5 — worse Brier, still positive value — does not reproduce
+here. What does hold is that the two axes move independently: of the two
+calibration "fixes" below, one improves Brier while raising EA and the other
+barely moves Brier while lowering it. That is the mechanism the metric exists
+to expose, and it does not depend on the sign.
 
-  * EMOS is **less accurate than the market** — its multiclass Brier is
-    consistently *worse* than the reference price's. On a calibration
-    scoreboard, EMOS loses.
-  * EMOS nevertheless has **positive Edge-Alignment** — it is tradeable. Where
-    it is wrong is decorrelated from where the market is wrong, so its edge
-    points at the market's mistakes. Accuracy and value disagree, on real data.
-  * The two things a calibration-minded person would try to "improve" it — a
-    mean de-bias toward the truth, and an edge-recalibration toward the market's
-    realized error — both *reduce* the value. Calibrating harder is not the same
-    as capturing more mispricing (the value guide's §3).
+An earlier version of this file claimed positive EA that was "robust across
+random splits". That rested on a fixture whose bracket edges were corrupted,
+and on a random split of an autocorrelated series. Both are fixed; the claim is
+withdrawn. See ``docs/guides/value_vs_accuracy.md`` §5b for the decomposition.
 
-Data: ``examples/data/weather_value_sample.parquet`` — an anonymized
-sample (forecast inputs, realized values, per-row bracket edges, normalized
-reference prices with NaN where a bracket had no quote). No venue, station, or
-date information.
+Data: ``examples/data/weather_value_sample.parquet`` — 5,429 station-days of
+Kalshi weather contracts over 2026-03-17..09-03 across 18 stations, carrying
+forecast inputs, realized values, per-row bracket edges (open tails as ±inf),
+and normalized reference prices with NaN where a bracket had no quote. Built by
+a committed exporter; see the ``.provenance.json`` sidecar for the source
+commit. The reference price is a bid-ask midpoint, frictionless — necessary for
+value, not sufficient for profit.
 
 Run::
 

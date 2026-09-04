@@ -339,11 +339,8 @@ def _rows_and_onehot(
             raise ValueError(
                 f"fair_price size {fair.size} not divisible by B={B}")
         n = fair.size // B
-        # A single vector is correct only if the ladder really was shared. When
-        # the adapter recorded its grid we can check instead of hope: scoring a
-        # rotating ladder against one row's edges returns a plausible wrong
-        # number (measured 0.8904 vs a correct 0.7343), which is exactly the
-        # failure this argument used to invite.
+        # A single vector is correct only if the ladder really was shared.
+        # When the adapter recorded its grid, verify rather than assume.
         if priced is not None and len(priced) == n:
             mismatched = [
                 i for i, e in enumerate(priced)
@@ -784,15 +781,15 @@ def bootstrap_ci(
     is smaller here than the "one shared outcome" framing suggests. Measured on
     this repo's weather sample (~6 brackets per station-day, ~1,000 station-day
     clusters): the clustered interval is **1.02x wider on HIGH and 1.07x on
-    LOW** than the i.i.d. one. EA is a per-contract product whose within-ladder
-    correlation is weak even though the outcome is shared — the one-hot
+    LOW** than the i.i.d. one. A plausible reading is that EA's within-ladder
+    correlation stays weak even though the outcome is shared: the one-hot
     constraint ties the r's, but the (q-m) edges vary freely across brackets.
+    That mechanism is not itself measured here — the width ratio is.
     Expect a large inflation only when the metric itself aggregates at the
     cluster level, or when clusters are few and heterogeneous.
 
-    Use it anyway: it costs nothing, it is the correct estimator for dependent
-    data, and the factor is a property of your sample rather than something to
-    assume.
+    Prefer it whenever contracts share an outcome; the factor is
+    sample-specific, so measure it rather than assume one.
 
     ``cluster`` is a per-contract label (a station-day id). Whole clusters are
     then resampled with replacement — the block bootstrap — so the resample has
@@ -808,10 +805,6 @@ def bootstrap_ci(
     * **This is a percentile interval, not a bias-corrected one.** For a
       near-symmetric statistic like EA it is fine. For a strongly skewed one,
       prefer BCa; this function does not implement it.
-    * **The CI is about sampling noise only.** It says nothing about whether
-      the population is the one you meant, whether the split leaked, or whether
-      the reference price is the one you could trade. A tight interval around a
-      wrong number is still wrong.
 
     Draws whose resample makes ``fn`` undefined (a degenerate cluster draw
     giving zero-variance input, say) are skipped and excluded from ``n_boot``

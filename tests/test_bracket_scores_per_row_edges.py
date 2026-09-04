@@ -11,9 +11,9 @@ around the forecast, so one day is ``[64,66,68,70,72]`` and the next
 against a grid it never traded on. The shapes still line up, so a plausible
 number comes back — measured Brier 0.8904 against a correct 0.7343.
 
-Note which case was dangerous. Rows with different bracket COUNTS broke the
-flat reshape and raised. Rows with the same count and different VALUES — every
-row of a real rotating ladder — returned the wrong answer quietly.
+Rows with different bracket COUNTS broke the flat reshape and raised. Rows with
+the same count and different VALUES, which is every row of a real rotating
+ladder, returned the wrong answer quietly.
 """
 
 from __future__ import annotations

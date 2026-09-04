@@ -7,6 +7,23 @@ minor release; patch releases are bug-fixes and additive tests.
 ## [Unreleased]
 
 ### Fixed
+- **`Pipeline.fit` fit its Calibrator on in-sample core predictions.** The
+  docstring promised a held-out tail; the tail was held out from the calibrator
+  but not from the core, which had already trained on those rows. In-sample
+  predictions are better than the out-of-sample ones the calibrator is applied
+  to, so the learned correction came out too small. The core is now fit on the
+  head, the calibrator on the genuinely out-of-sample tail, then the core refit
+  on everything for prediction. Both the plain-forecaster and Point->Lifter
+  branches are covered.
+- **`brier_bracket` / `log_loss_bracket` scored every row against the FIRST
+  row's ladder.** They took one `(B+1,)` edge vector and used it for the
+  `searchsorted` deciding which bracket the outcome fell in. On a rotating
+  ladder (Kalshi relists daily) that puts every row after the first in the
+  wrong bracket and returns a plausible number rather than raising — measured
+  0.8904 against a correct 0.7343 on a 40-row synthetic ladder. Both scorers,
+  and `Pipeline`'s bracket metrics, now accept a shared `(B+1,)` vector, a
+  dense `(N, B+1)` grid, or a ragged per-row sequence; per-row bracket counts
+  are supported too.
 - **Rebuilt `examples/data/weather_value_sample.parquet`; the weather example's
   result changed.** The old fixture was hand-built, never committed as a
   script, and carried corrupted ladder edges: open tails flattened to finite
@@ -26,13 +43,31 @@ minor release; patch releases are bug-fixes and additive tests.
   of asserting a fixed conclusion, so a data change cannot leave the prose
   contradicting the table (which is what happened here).
 
+### Added
+- **`score.bootstrap_ci`** — percentile bootstrap for any contract-level
+  scorer, with optional clustering. Pass `cluster` when contracts share an
+  outcome (a bracket ladder resolves off one realized value); whole clusters
+  are resampled together. Returns point, lo, hi, se, and the cluster and
+  observation counts. Measured inflation over the i.i.d. interval on this
+  repo's weather sample is 1.02x (HIGH) / 1.07x (LOW) — sample-specific, so
+  measure it rather than assume a factor. The weather example prints a
+  clustered 95% CI beside each EA.
+- **`ContractSpec.edges_per_row`** — ladder adapters record the grid each
+  entity was priced on, so a scorer can verify the edges it is handed rather
+  than trust them.
+
 ### Changed
+- **Breaking (narrow):** passing a single shared edge vector to
+  `brier_bracket` / `log_loss_bracket` for contracts priced on per-row edges
+  now raises instead of returning a wrong number. Code doing that against a
+  rotating ladder was already silently incorrect; pass the per-row edges the
+  ladder was priced with. A genuinely shared ladder is unaffected.
 - **`ens_mean`/`ens_std` in the weather fixture are now a declared definition**
   — multi-model mean/std across all available forecast sources — rather than
   one inherited from the older export, whose definition is unrecoverable
   (its ens_std averages 1.917; multi-model gives 2.150 and the GEFS
   percentile fan 1.268). Numbers off this fixture are a new measurement, not a
-  correction of the old ones, and carry no confidence intervals.
+  correction of the old ones.
 - **`docs/guides/value_vs_accuracy.md` §5b rewritten** to report what the data
   now shows: on this sample EMOS is less accurate than the market *and*
   negative-EA, so the synthetic section's "worse Brier, still tradeable" case

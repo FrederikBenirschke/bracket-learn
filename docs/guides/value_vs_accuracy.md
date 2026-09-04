@@ -185,6 +185,8 @@ it against the reference both ways. Split is chronological, 60/40.
   EMOS (raw)                     0.1257   -0.0487   <- less accurate, EA < 0
   EMOS + mean de-bias            0.1256   -0.0588   <- Brier falls, EA falls
   EMOS + edge-recal              0.1069   +0.0042   <- Brier falls, EA rises
+  EA 95% CI (clustered by station-day, 1158 clusters / 6945
+                       contracts): [-0.1708, +0.0779] — crosses zero
 ```
 
 Read it top to bottom:
@@ -202,7 +204,8 @@ Read it top to bottom:
   is about, and it is visible here — just without a positive-value example
   behind it.
 
-The LOW side lands the same way (EMOS raw EA `-0.110`, `align_corr = -0.023`).
+The LOW side lands the same way: EMOS raw EA `-0.110`, 95% CI
+`[-0.2662, +0.0464]`, `align_corr = -0.023`.
 
 ### What changed, and why the older numbers are gone
 
@@ -234,10 +237,11 @@ and query.
 > spread. `ens_mean`/`ens_std` are a declared definition (multi-model spread
 > across all available sources), not one recovered from the older fixture,
 > whose definition is unrecoverable; numbers here are a new measurement rather
-> than a correction of the old ones. No confidence intervals are attached and
-> the contracts are day-clustered, so the effective sample is nearer the day
-> count than the contract count — treat a figure this close to zero as
-> "not distinguishable from zero on this evidence", not as a measured negative.
+> than a correction of the old ones. The intervals above are percentile
+> bootstraps clustered by station-day, since contracts on one ladder resolve
+> off a single realized temperature; both cross zero, so read these as "not
+> distinguishable from zero on this evidence" rather than as measured
+> negatives.
 >
 > An earlier caveat here claimed the *sign* of EMOS's EA was robust across
 > splits. It was not. That claim was made on the corrupted fixture and is

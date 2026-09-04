@@ -1,14 +1,9 @@
 """Committed notebooks carry no outputs.
 
-Executed notebooks embed every figure as base64 PNG. The four here were 2.5 MB
-of which ~2.4 MB was output: it bloats every clone, makes diffs unreadable
-(one re-run rewrites thousands of base64 lines), and GitHub's viewer often
-refuses to render a file that large — so the cost was paid and the charts were
-not even visible. Figures that should be seen live in ``docs/_static/`` and are
-referenced from the docs.
-
-The jupytext pairs under ``notebooks/_src/`` hold the same code as plain .py,
-so nothing is lost by stripping.
+Executed notebooks embed every figure as base64: these four were 2.5 MB, of
+which ~2.4 MB was output, and GitHub often refuses to render a file that size.
+Figures worth seeing live in ``docs/_static/``; the jupytext pairs under
+``notebooks/_src/`` hold the same code as plain .py.
 """
 
 from __future__ import annotations
@@ -22,8 +17,7 @@ NOTEBOOKS = sorted((Path(__file__).parent.parent / "notebooks").glob("*.ipynb"))
 
 
 def test_there_are_notebooks_to_check():
-    """Guard the guard: a glob that silently matches nothing passes every
-    parametrised test below."""
+    """A glob matching nothing would pass every parametrised test below."""
     assert NOTEBOOKS, "no notebooks found — has the directory moved?"
 
 

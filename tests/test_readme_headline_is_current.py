@@ -42,37 +42,40 @@ def test_readme_quotes_some_numbers():
 
 @pytest.mark.filterwarnings("ignore")
 def test_readme_headline_matches_the_example():
-    import sys
-    sys.path.insert(0, str(ROOT / "bracketlearn" / "examples"))
-    from value_vs_accuracy_weather import DATA, _brier, _price  # noqa: E402
+    """Compare against what the EXAMPLE prints, not a reimplementation.
 
-    from bracketlearn.score import edge_alignment  # noqa: E402
-    from bracketlearn.trainers import EMOS  # noqa: E402
+    An earlier version of this test re-derived the split and fit here, which
+    pinned the README to a copy of the example rather than to the example. A
+    change to run_side's split fraction would have left this passing.
+    """
+    import io
+    import runpy
+    from contextlib import redirect_stdout
 
-    df = pl.read_parquet(DATA)
-    rows = (df.filter(pl.col("side") == "HIGH")
-              .sort(["event_date", "station_id"]).to_dicts())
-    cut = int(0.6 * len(rows))
-    tr, te = rows[:cut], rows[cut:]
-    Xtr = np.array([[r["ens_mean"], r["ens_std"]] for r in tr])
-    ytr = np.array([r["realized"] for r in tr])
-    emos = EMOS(input_form="aggregates", fit_method="crps_nelder_mead").fit(Xtr, ytr)
-    X = np.array([[r["ens_mean"], r["ens_std"]] for r in te])
-    dist = emos.predict_dist(X, ids=np.arange(len(te)),
-                             timestamps=np.arange(len(te), dtype=float))
-    q, m, r = _price(dist, te)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        runpy.run_module("bracketlearn.examples.value_vs_accuracy_weather",
+                         run_name="__main__")
+    out = buf.getvalue()
+    start = out.index("===== HIGH")
+    nxt = out.find("===== LOW", start)
+    high = out[start:nxt if nxt != -1 else len(out)]
+
+    printed: dict[str, tuple[float, float]] = {}
+    for line in high.splitlines():
+        m = re.match(r"\s{2}(\S.*?)\s{2,}([\d.]+)\s+([+-][\d.]+|0\.0000)", line)
+        if m:
+            printed[m.group(1).strip()] = (float(m.group(2)), float(m.group(3)))
+    assert len(printed) >= 3, f"parsed only {list(printed)} from example output"
 
     claimed = _readme_high_rows()
-    ref = next(k for k in claimed if k.startswith("reference"))
-    raw = next(k for k in claimed if k.startswith("EMOS (raw)"))
-
-    assert claimed[ref][0] == pytest.approx(_brier(m, r), abs=5e-5), (
-        "README's reference Brier is stale")
-    assert claimed[raw][0] == pytest.approx(_brier(q, r), abs=5e-5), (
-        "README's EMOS Brier is stale")
-    assert claimed[raw][1] == pytest.approx(edge_alignment(q, m, r) * 100,
-                                            abs=5e-5), (
-        "README's EMOS EA is stale — regenerate the headline block")
+    for label, (brier, ea) in claimed.items():
+        assert label in printed, (
+            f"README row {label!r} is not in the example's output")
+        assert brier == pytest.approx(printed[label][0], abs=5e-5), (
+            f"README Brier for {label!r} is stale")
+        assert ea == pytest.approx(printed[label][1], abs=5e-5), (
+            f"README EA for {label!r} is stale — regenerate the headline block")
 
 
 def test_no_competing_readme():
