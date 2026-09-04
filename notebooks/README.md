@@ -2,8 +2,8 @@
 
 Jupyter notebooks built on top of the public-dataset examples. Each
 notebook produces ~6 plots that make the headline numbers
-interpretable — PIT histograms, quantile fans, reliability diagrams,
-bracket-price bars, skill-score bars — and ends with a **leaderboard**
+interpretable. PIT histograms, quantile fans, reliability diagrams,
+bracket-price bars, skill-score bars, and ends with a **leaderboard**
 ranking multiple trainers against trivial baselines.
 
 | Notebook | Dataset | Highlights |
@@ -12,6 +12,18 @@ ranking multiple trainers against trivial baselines.
 | [`bike_sharing_timeseries.ipynb`](bike_sharing_timeseries.ipynb) | OpenML Bike_Sharing_Demand (17k rows) | expanding-window CV; **two** baselines (marginal + lag-24 seasonal); 7-model leaderboard |
 | [`grid_search_demo.ipynb`](grid_search_demo.ipynb) | sklearn California housing | 3×3 grid heatmap; competing-models leaderboard |
 | [`leaderboard_zoo.ipynb`](leaderboard_zoo.ipynb) | both | **Exhaustive zoo:** 16+ models across baselines, single-stage dists, point+lifter combos, calibrated wrappers, multi-stage DAGs (`StackedParametric`, `DistAsFeatures`, `LinearPoolDist`, `CDFBoostBracket`). Distributional-vs-point skill scatter. |
+
+## Outputs are stripped
+
+The committed `.ipynb` files carry code but no output. Executed notebooks embed
+every figure as base64: these four totalled 2.5 MB, of which 2.4 MB was output,
+which makes diffs unreadable and exceeds the size GitHub will render. A test
+(`tests/test_notebooks_are_stripped.py`) keeps them stripped.
+
+Reading them on GitHub therefore shows the code and not the results. The
+figures worth seeing are committed separately under
+[`docs/_static/`](../docs/_static/) and referenced from the README and the
+guides; run the notebooks locally for the rest.
 
 ## Running the notebooks
 
@@ -29,7 +41,7 @@ Edit either side and run `jupytext --sync notebooks/<name>.ipynb` to
 keep them in sync. Diffs are much cleaner against the `.py` source.
 
 All four notebooks share a single style module
-[`_src/_style.py`](_src/_style.py) — rcParams, a `tab10`-based
+[`_src/_style.py`](_src/_style.py), rcParams, a `tab10`-based
 model-family palette, and four plot helpers:
 `predicted_vs_realized_grid` (sklearn-style scatter grid headline plot),
 `reliability_with_histogram`, `cdf_overlay_for_examples`, and
@@ -48,11 +60,11 @@ jupyter nbconvert --to notebook --execute housing_brackets.ipynb \
 ## Baselines
 
 Every notebook reports skill scores against trivial baselines from
-[`bracketlearn.baselines`](../baselines.py):
+[`bracketlearn.baselines`](../bracketlearn/baselines.py):
 
-- `EmpiricalDistribution` — predicts the marginal CDF of training y;
+- `EmpiricalDistribution`, predicts the marginal CDF of training y;
   ignores features. The "you must beat this" floor.
-- `Persistence(lag=k)` — predicts `y_{t-k}`; lag=1 is the naive
+- `Persistence(lag=k)`, predicts `y_{t-k}`; lag=1 is the naive
   baseline, lag=24 captures daily seasonality on hourly data.
 
 A model with CRPSS = +0.5 against `Empirical` cuts the baseline CRPS in

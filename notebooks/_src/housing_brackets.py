@@ -292,15 +292,15 @@ def _reliability(dist, edges, y_oof, n_bins=10):
             continue
         means.append(p_flat[mask].mean())
         hits.append(r_flat[mask].mean())
-    return np.array(means), np.array(hits)
+    return np.array(means), np.array(hits), p_flat
 
 
 series = []
 for name in ["emp", "ridge", "qreg"]:
     dist = result[name]
     y_oof = y[dist.ids.astype(int)]
-    mp, hr = _reliability(dist, edges, y_oof)
-    series.append((name, mp, hr))
+    mp, hr, raw = _reliability(dist, edges, y_oof)
+    series.append((name, mp, hr, raw))
 fig = reliability_with_histogram(
     series, title="Bracket-probability reliability (all rows × all brackets pooled)",
 )

@@ -325,18 +325,18 @@ class WalkForward:
 
         ``up_tr``/``up_te`` are the upstream fold dists for a meta node (None
         for a plain node). ``groups`` is index-sliced per fold; ``row_meta``
-        (id-keyed side inputs) is forwarded **verbatim** — the node subsets it
+        (id-keyed side inputs) is forwarded **verbatim**, the node subsets it
         by the ``ids`` it gets. The helpers drop any kwarg the node's signature
         doesn't declare.
 
         ``inner_oof`` changes what ``dist_tr`` MEANS. By default it is the
-        node's prediction on the very rows it was just fit on — in-sample, and
+        node's prediction on the very rows it was just fit on, in-sample, and
         systematically better than anything the node will produce in
-        production. That is fine for a leaf whose ``dist_tr`` nothing consumes,
-        but a Stacker feeds it to the meta as ``upstream=``, so the meta learns
-        to trust whichever upstream overfits hardest. Measured on a
+        production. This is immaterial for a leaf whose ``dist_tr`` is unused, but a Stacker
+        passes it to the meta as ``upstream=``, so the meta is trained to
+        weight whichever upstream overfits most. Measured on a
         pure-linear DGP with a depth-8 tree beside a ridge: the stack scored
-        CRPS 0.809 against ridge's 0.555 — the combination was worse than
+        CRPS 0.809 against ridge's 0.555, the combination was worse than
         either input.
 
         With ``inner_oof``, the train half is split once more: the node is fit
@@ -372,7 +372,7 @@ class WalkForward:
             a, b = tr[:half], tr[half:]
             # Stitch by ABSOLUTE row index so the result's ids are the same
             # ids, in the same order, that a single fit-on-tr would have
-            # produced — the meta checks exactly that and refuses a mismatch.
+            # produced, the meta checks exactly that and refuses a mismatch.
             parts = []
             for fit_rows, pred_rows in ((a, b), (b, a)):
                 _fit_on(fit_rows)

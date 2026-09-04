@@ -5,10 +5,10 @@ tail of the (transformed) training data". Before this test, the tail was held
 out from the CALIBRATOR but not from the CORE: the core was fit on all n rows
 first, so the calibrator was fit on the core's own IN-SAMPLE predictions.
 
-That matters in one direction. In-sample predictions are systematically better
+The error has a definite sign. In-sample predictions are systematically better
 than the out-of-sample ones the calibrator is applied to in production, so the
-correction it learns is too small — it under-corrects exactly when it is
-needed. The Point->Lifter path in the same method already avoided this (fit on
+learned correction is too small and under-corrects where correction is
+required. The Point->Lifter path in the same method already avoided this (fit on
 a half, predict OOF, fit the lifter, refit on everything); the calibrator path
 did not.
 
@@ -82,7 +82,7 @@ def test_core_does_not_see_the_calibration_tail_while_it_is_being_produced():
             f"core param {k} at calibration time should equal the HEAD-only "
             "fit; the calibration tail must be out-of-sample")
         assert v != pytest.approx(getattr(full, k), rel=1e-12), (
-            f"core param {k} equals the FULL-data fit — the calibrator is "
+            f"core param {k} equals the FULL-data fit, the calibrator is "
             "being fit on in-sample predictions (the original bug)")
 
 
@@ -183,7 +183,7 @@ def test_transformers_do_not_see_the_calibration_tail():
         "the transformer's scale at calibration time must come from the head "
         "only; the tail must not set the scale its own rows are divided by")
     assert seen["scale"] != pytest.approx(full.scale_global_, rel=1e-6), (
-        "scale equals the full-data fit — the transformer saw the tail")
+        "scale equals the full-data fit, the transformer saw the tail")
 
 
 def test_transformers_are_refit_on_everything_before_predicting():

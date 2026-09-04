@@ -1,17 +1,17 @@
 """A Stacker's meta must see out-of-sample upstream predictions.
 
-`_fit_node` returned `dist_tr` — the node's prediction on the very rows it had
-just been fit on — and `Stacker` fed that to the meta as `upstream=`. An
-upstream that overfits therefore looks *better* to the meta than one that
-generalises, so the meta learns to weight the overfitter.
+`_fit_node` returned `dist_tr`, the node's prediction on the very rows it had
+just been fit on, and `Stacker` passed that to the meta as `upstream=`. An
+upstream that overfits therefore appears better to the meta than one that
+generalises, and the meta is trained to weight it accordingly.
 
 This is the same leak as the calibrator's (a component fit on another's
 in-sample output), one level up the composition.
 
-`StackedParametric` already catches the extreme case with a good error
-("upstream μ collinearity with y (data leak)") — a fully-grown tree raises.
-Mild overfitting, which is the common case, passed silently and produced a
-stack worse than either of its inputs.
+`StackedParametric` rejects the extreme case with an explicit error on
+upstream collinearity with y, so a fully-grown tree raises. Mild overfitting,
+the more common regime, passed silently and produced a stack scoring worse
+than either of its inputs.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def _run():
 
 def test_meta_is_not_dragged_below_its_best_upstream():
     """The regression. With in-sample upstream inputs the meta scored CRPS
-    0.809 against ridge's 0.555 — the stack was 46% worse than one of the
+    0.809 against ridge's 0.555, the stack was 46% worse than one of the
     things it was combining."""
     table, _ = _run()
     best_upstream = min(table["ridge"]["crps"], table["overfit"]["crps"])
@@ -79,7 +79,7 @@ def test_leaves_not_feeding_a_meta_are_unaffected():
 
 def test_stitched_train_dist_keeps_row_order():
     """The inner split predicts the halves out of order, so the stitched
-    result must be reordered back — the meta refuses a mismatch, and a silent
+    result must be reordered back, the meta refuses a mismatch, and a silent
     reorder would misalign every upstream row against y."""
     table, _ = _run()
     # If ordering were wrong the meta's own alignment guard raises during

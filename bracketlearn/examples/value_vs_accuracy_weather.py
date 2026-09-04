@@ -10,7 +10,7 @@ End-to-end demonstration of the reference-relative value metrics
 
 What this sample shows: EMOS is less accurate than the market (worse Brier)
 AND negative-EA, with a 95% interval that crosses zero. The synthetic case in
-the value guide's §5 — worse Brier, still positive value — does not reproduce
+the value guide's §5, worse Brier, still positive value, does not reproduce
 here. What does hold is that the two axes move independently: of the two
 calibration "fixes" below, one improves Brier while raising EA and the other
 barely moves Brier while lowering it. That is the mechanism the metric exists
@@ -21,12 +21,12 @@ random splits". That rested on a fixture whose bracket edges were corrupted,
 and on a random split of an autocorrelated series. Both are fixed; the claim is
 withdrawn. See ``docs/guides/value_vs_accuracy.md`` §5b for the decomposition.
 
-Data: ``examples/data/weather_value_sample.parquet`` — 5,429 station-days of
+Data: ``examples/data/weather_value_sample.parquet``, 5,429 station-days of
 Kalshi weather contracts over 2026-03-17..09-03 across 18 stations, carrying
 forecast inputs, realized values, per-row bracket edges (open tails as ±inf),
 and normalized reference prices with NaN where a bracket had no quote. Built by
 a committed exporter; see the ``.provenance.json`` sidecar for the source
-commit. The reference price is a bid-ask midpoint, frictionless — necessary for
+commit. The reference price is a bid-ask midpoint, frictionless, necessary for
 value, not sufficient for profit.
 
 Run::
@@ -50,7 +50,7 @@ DATA = os.path.join(os.path.dirname(__file__), "data", "weather_value_sample.par
 
 
 def _clusters(rows):
-    """One label per CONTRACT, naming its (station, day) ladder — the unit the
+    """One label per CONTRACT, naming its (station, day) ladder, the unit the
     outcome is shared over. Mirrors _price's flattening exactly, including the
     finite-quote mask, or the labels would not line up with the contracts."""
     out = []
@@ -149,7 +149,7 @@ def run_side(df: pl.DataFrame, side: str) -> None:
     print(f"    EA 95% CI (clustered by station-day, {ci['n_clusters']:.0f} "
           f"clusters / {ci['n_obs']:.0f} contracts): "
           f"[{ci['lo'] * 100:+.4f}, {ci['hi'] * 100:+.4f}]"
-          f"{'  — crosses zero' if ci['lo'] < 0 < ci['hi'] else ''}")
+          f"{'  (crosses zero)' if ci['lo'] < 0 < ci['hi'] else ''}")
     rep = value_report(q0, m, r)
     print(f"    value_report(EMOS raw): A(ref MSE)={rep['A_reference_mse']:.4f}  "
           f"B(non-orth)={rep['B_non_orthogonality']:.4f}  align_corr={rep['align_corr']:+.3f}")

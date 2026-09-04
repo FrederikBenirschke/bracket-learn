@@ -5,7 +5,7 @@ known to be wrong. Prose does not fail a test suite, so nothing caught it. This
 does: the numbers in the README's headline block are parsed and checked against
 the values the example actually computes.
 
-Kept cheap deliberately — it re-runs one example, not the doc.
+Kept cheap deliberately, it re-runs one example, not the doc.
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ def test_readme_headline_matches_the_example():
         assert brier == pytest.approx(printed[label][0], abs=5e-5), (
             f"README Brier for {label!r} is stale")
         assert ea == pytest.approx(printed[label][1], abs=5e-5), (
-            f"README EA for {label!r} is stale — regenerate the headline block")
+            f"README EA for {label!r} is stale, regenerate the headline block")
 
 
 def test_no_competing_readme():

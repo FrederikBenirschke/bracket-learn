@@ -1,7 +1,7 @@
 """Tests for ``score.bootstrap_ci``.
 
-What is pinned here is mostly the ways a bootstrap is silently wrong — it
-returns a plausible-looking interval in every one of them.
+These tests pin the failure modes in which a bootstrap returns a
+plausible-looking interval that is wrong.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def test_unclustered_is_not_a_single_group():
 
 
 def test_point_is_the_full_sample_statistic():
-    """`point` must be fn on the DATA, never a bootstrap mean — the two differ
+    """`point` must be fn on the DATA, never a bootstrap mean, the two differ
     by the bootstrap bias and only one of them is the estimate."""
     q, m, r, cl = _ladders()
     out = bootstrap_ci(edge_alignment, q, m, r, cluster=cl, n_boot=300, seed=3)
@@ -58,7 +58,7 @@ def test_clustering_changes_the_interval_and_keeps_the_point():
 
 
 def test_cluster_labels_may_be_strings_and_unsorted():
-    """Real labels are "KATL|2026-08-20", arriving in event order — not ints,
+    """Real labels are "KATL|2026-08-20", arriving in event order, not ints,
     not sorted. Grouping must not depend on either."""
     q, m, r, cl = _ladders(n_days=60)
     labels = np.array([f"stn|{int(c):03d}" for c in cl])
@@ -137,7 +137,7 @@ def test_mismatched_lengths_raise():
 
 def test_degenerate_metric_raises_rather_than_returning_nan():
     """A metric that scores on the full sample but almost never on a resample
-    is a broken setup, not an uncertain one — it must raise rather than return
+    is a broken setup, not an uncertain one, it must raise rather than return
     an interval built from a handful of surviving draws.
 
     Note the order: the point estimate is computed BEFORE any resampling, so a
@@ -169,7 +169,7 @@ def test_bad_alpha_and_n_boot_raise():
 # ---------------------------------------------------------------------------
 # Coverage. The property that makes an interval an interval.
 #
-# The tests above pin mechanics — grouping, determinism, error paths. None of
+# The tests above pin mechanics, grouping, determinism, error paths. None of
 # them would fail if the interval were systematically too narrow, which is the
 # way a bootstrap is usually wrong. These simulate a known truth and count how
 # often the interval contains it.
@@ -178,7 +178,7 @@ def test_bad_alpha_and_n_boot_raise():
 
 def _ea_draw(rng, n_clusters, per_cluster, shared):
     """One dataset. With ``shared``, the whole cluster gets ONE edge draw and
-    ONE outcome — the dependence a clustered bootstrap must account for and an
+    ONE outcome, the dependence a clustered bootstrap must account for and an
     i.i.d. one cannot. Sharing only the edge is not enough: measured width
     ratio 0.99 (edge alone) vs 2.69 (edge and outcome)."""
     q, m, r, cl = [], [], [], []
@@ -214,7 +214,7 @@ def test_clustered_interval_covers_at_about_the_nominal_rate(shared):
 
 def test_iid_bootstrap_undercovers_when_clusters_are_dependent():
     """The reason `cluster` exists. With a cluster-wide shared edge, the i.i.d.
-    interval must be visibly narrower than the clustered one — if it is not,
+    interval must be visibly narrower than the clustered one, if it is not,
     `cluster` is doing nothing and the parameter is decorative."""
     rng = np.random.default_rng(7)
     widths_iid, widths_cl = [], []

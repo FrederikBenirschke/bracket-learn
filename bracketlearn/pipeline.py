@@ -146,8 +146,8 @@ class PipelineResult:
           - "log_score"        — mean predictive negative log-likelihood
           - "pit_mean"         — mean PIT (≈ 0.5 if calibrated)
           - "pit_std"          — std of PIT
-          - "log_loss_bracket" — requires ``edges`` (any ladder shape)
-          - "brier_bracket"    — requires ``edges`` (any ladder shape)
+          - "log_loss_bracket", requires ``edges`` (any ladder shape)
+          - "brier_bracket"   , requires ``edges`` (any ladder shape)
 
         ``edges`` is a single 1-D bracket ladder shared across rows; the
         per-row ragged ``BracketLadder`` is built internally per stage.
@@ -174,7 +174,7 @@ class PipelineResult:
             # `edges` must be sliced alongside `y`: a stage's OOF coverage can
             # be a subset of the rows, and a per-row ladder is indexed by row.
             # Passing the full-length ladder against a sliced y raised "edges
-            # describe N rows; the forecast has M" — which made the per-row
+            # describe N rows; the forecast has M", which made the per-row
             # shape unusable through exactly this API.
             edges_oof = _slice_edges(edges, idx)
             row: dict[str, float] = {"n_oof": int(dist.ids.shape[0])}
@@ -498,8 +498,8 @@ class Pipeline:
         def _fit_transformers(rows: slice) -> tuple[np.ndarray, np.ndarray]:
             """Fit every transformer on ``rows``, then apply to ALL n rows.
 
-            Fitting is what must not see the tail; transforming it is required
-            — the calibrator needs its tail rows in the model's working space.
+            Fitting must not see the tail; transforming it is required, since the
+            calibrator needs those rows in the model's working space.
             """
             Xw, yw = np.asarray(X, dtype=float), np.asarray(y, dtype=float)
             for t in self._transformers:

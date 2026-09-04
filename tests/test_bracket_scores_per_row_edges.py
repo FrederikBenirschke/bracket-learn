@@ -1,15 +1,16 @@
 """Bracket scorers must use each row's OWN ladder.
 
 ``brier_bracket``/``log_loss_bracket`` take ``edges`` and use it for
-``searchsorted(edges, y)`` — the step deciding which bracket the outcome fell
+``searchsorted(edges, y)``, the step deciding which bracket the outcome fell
 in. They used to accept only a single ``(B+1,)`` vector and apply it to every
 row.
 
 On a venue whose ladder rotates that is silently wrong. Kalshi relists daily
 around the forecast, so one day is ``[64,66,68,70,72]`` and the next
 ``[25,27,29,31,33]``; passing row 0's vector scores every later row's outcome
-against a grid it never traded on. The shapes still line up, so a plausible
-number comes back — measured Brier 0.8904 against a correct 0.7343.
+against a grid it never traded on. The shapes remain compatible, so a
+plausible number is returned: measured Brier 0.8904 against a correct
+0.7343.
 
 Rows with different bracket COUNTS broke the flat reshape and raised. Rows with
 the same count and different VALUES, which is every row of a real rotating
@@ -36,7 +37,7 @@ def _fitted(n=40, seed=0):
 
 
 def _rotating(X):
-    """Same bracket COUNT, different VALUES per row — a real Kalshi ladder."""
+    """Same bracket COUNT, different VALUES per row, a real Kalshi ladder."""
     return [np.array([-np.inf, m - 2, m, m + 2, np.inf]) for m in X[:, 0]]
 
 
@@ -71,7 +72,7 @@ def test_all_three_edge_shapes_agree():
 
 def test_shared_ladder_expressed_two_ways_agrees():
     """A genuinely shared ladder scored as a 1-D vector and as N copies must
-    give the same number — the invariant that ties the old path to the new."""
+    give the same number, the invariant that ties the old path to the new."""
     X, y, d = _fitted()
     shared = np.array([-np.inf, 55.0, 60.0, 65.0, np.inf])
     c = BracketLadder(edges_per_row=[shared] * len(y)).price(d)

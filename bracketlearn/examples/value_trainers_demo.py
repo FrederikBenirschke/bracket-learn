@@ -45,7 +45,7 @@ def load():
         # Features must be finite too, not just the reference. `nws` is null
         # wherever the NWS hourly forecast was missing for that station-day
         # (772 of 5,429 rows). Polars hands those back as Python None, so
-        # np.array(X) would come back OBJECT dtype — LightGBM tolerates it and
+        # np.array(X) would come back OBJECT dtype. LightGBM tolerates it and
         # prints a table, then the torch trainer dies on the same data. Skip
         # the row rather than impute: this is a demo, and a silently imputed
         # feature is worse than a smaller N.
@@ -59,7 +59,7 @@ def load():
         # into the design matrix: the net's per-feature standardisation then
         # yields NaN, which .clamp() passes through and torch reports as the
         # unhelpful "all elements of input should be between 0 and 1".
-        # Substitute a finite outer bound for the FEATURE only — the scoring
+        # Substitute a finite outer bound for the FEATURE only, the scoring
         # path keeps the true ±inf edges, so no probability mass moves.
         e = np.asarray(r["edges"], float)
         span = e[-2] - e[1]

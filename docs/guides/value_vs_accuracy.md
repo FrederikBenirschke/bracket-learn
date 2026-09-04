@@ -166,17 +166,19 @@ information the market lacks, so its edge points where the market is wrong. An
 independent thresholded, costed betting strategy agrees with EA here, not with
 Brier. Selecting on accuracy would have shipped the wrong forecast.
 
-## 5b. The same thing on real data: EMOS vs a market
+## 5b. Real data: EMOS against a market reference
 
-The synthetic toy is rigged to make the point. Real forecasts and real prices
-test it — and on this sample they do not reproduce it.
+The construction in §5 is synthetic and chosen to separate the two metrics.
+This section applies the same measurement to observed forecasts and observed
+prices, where the separation does not reproduce.
+
 [`bracketlearn/examples/value_vs_accuracy_weather.py`](https://github.com/FrederikBenirschke/bracket-learn/blob/main/bracketlearn/examples/value_vs_accuracy_weather.py)
-fits EMOS on a weather sample
-(`bracketlearn/examples/data/weather_value_sample.parquet`: 5,429 station-days
-over 2026-03-17..09-03 across 18 stations — multi-model ensemble mean/spread,
-realized temperatures, per-row bracket grids, and a normalized reference price
-per bracket), prices it onto each row's grid with `dist.integrate`, and scores
-it against the reference both ways. Split is chronological, 60/40.
+fits EMOS on `bracketlearn/examples/data/weather_value_sample.parquet`: 5,429
+station-days over 2026-03-17 to 2026-09-03 across 18 stations, carrying
+multi-model ensemble mean and spread, realized temperatures, per-row bracket
+grids, and a normalized reference price per bracket. It prices the fitted
+distribution onto each row's grid with `dist.integrate` and scores it against
+the reference under both metrics. The split is chronological, 60/40.
 
 ```
 ===== HIGH  (train 1737, test 1158) =====
@@ -186,26 +188,26 @@ it against the reference both ways. Split is chronological, 60/40.
   EMOS + mean de-bias            0.1256   -0.0588   <- Brier falls, EA falls
   EMOS + edge-recal              0.1069   +0.0042   <- Brier falls, EA rises
   EA 95% CI (clustered by station-day, 1158 clusters / 6945
-                       contracts): [-0.1708, +0.0779] — crosses zero
+                       contracts): [-0.1708, +0.0779]  (crosses zero)
 ```
 
-Read it top to bottom:
+Three observations follow from the table.
 
-* **EMOS is less accurate than the market** (Brier 0.126 vs 0.107). On a
-  calibration scoreboard EMOS loses.
-* **It is not tradeable here either** (EA `-0.049 < 0`). Unlike the synthetic
-  case, its errors are *not* decorrelated from the market's in a useful
-  direction — `align_corr = -0.011` — so this sample does not exhibit the
-  "worse Brier, positive value" case §2-3 describes.
-* **The two axes still move independently.** The edge-recalibration improves
-  Brier (0.1069, close to the market's 0.1066) *and* raises EA; the mean
-  de-bias barely moves Brier while lowering EA further. Accuracy and value do
-  not track each other in either direction. That is the mechanism this guide
-  is about, and it is visible here — just without a positive-value example
-  behind it.
+* EMOS is less accurate than the reference (Brier 0.126 against 0.107), so it
+  is ranked below the market on a calibration criterion.
+* Its Edge-Alignment is also negative (-0.049, `align_corr = -0.011`). The
+  errors are not decorrelated from the reference's in a direction that would
+  be exploitable, so this sample does not exhibit the case §2 and §3 describe,
+  in which a less accurate forecast retains positive value.
+* The two metrics nonetheless order the adjustments differently. The edge
+  recalibration improves Brier (0.1069, near the reference's 0.1066) and
+  raises EA; the mean de-bias leaves Brier almost unchanged and lowers EA
+  further. Accuracy and value do not covary in either direction, which is the
+  property this guide is concerned with, and it is observable here without a
+  positive-value instance.
 
-The LOW side lands the same way: EMOS raw EA `-0.110`, 95% CI
-`[-0.2662, +0.0464]`, `align_corr = -0.023`.
+The LOW side gives the same qualitative result: EMOS raw EA -0.110, 95% CI
+[-0.2662, +0.0464], `align_corr = -0.023`.
 
 ### What changed, and why the older numbers are gone
 
@@ -218,14 +220,14 @@ a script, so nothing could re-derive it:
 * the fifth inner edge was written one degree low, collapsing one bracket to
   width 1 and shifting the next boundary.
 
-Prices were intact, so the file looked right — but edges decide which bracket
+Prices were intact, so the file looked right, but edges decide which bracket
 the realized temperature fell in, and 162 of its 2,168 rows (7.5%) carried the
 wrong outcome label. Repairing only the edges, holding rows and split fixed,
 moves HIGH from `+0.4938` to `+0.3326` and LOW from `+1.2960` to `+0.5922`.
 The rest of the move to today's negative figures is population: that fixture
 was a subset, and the current one covers a longer window. The chronological
 split (replacing a random permutation, which leaks across an autocorrelated
-series) accounts for little — about `-0.199` to `-0.151` on matched data.
+series) accounts for little, about `-0.199` to `-0.151` on matched data.
 
 The fixture is now generated by a committed script that pulls from the source
 pipeline's research API and asserts, per row, that tails stay open and inner
@@ -233,7 +235,7 @@ brackets are width-2; a `.provenance.json` sidecar records the source commit
 and query.
 
 > **Scope.** EA here is computed against the bid-ask midpoint of a real
-> exchange's quotes, frictionless — not a tradeable price net of fees and
+> exchange's quotes, frictionless, not a tradeable price net of fees and
 > spread. `ens_mean`/`ens_std` are a declared definition (multi-model spread
 > across all available sources), not one recovered from the older fixture,
 > whose definition is unrecoverable; numbers here are a new measurement rather

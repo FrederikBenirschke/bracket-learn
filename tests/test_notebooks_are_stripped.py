@@ -18,7 +18,7 @@ NOTEBOOKS = sorted((Path(__file__).parent.parent / "notebooks").glob("*.ipynb"))
 
 def test_there_are_notebooks_to_check():
     """A glob matching nothing would pass every parametrised test below."""
-    assert NOTEBOOKS, "no notebooks found — has the directory moved?"
+    assert NOTEBOOKS, "no notebooks found, has the directory moved?"
 
 
 @pytest.mark.parametrize("nb_path", NOTEBOOKS, ids=lambda p: p.name)

@@ -298,12 +298,12 @@ def _rows_and_onehot(
     ``edges`` accepts the same three shapes ``DistributionForecast.integrate``
     does:
 
-    * **1-D** ``(B+1,)`` — one ladder shared by every row.
-    * **2-D** ``(N, B+1)`` — a dense per-row grid, all rows the same width.
-    * **ragged sequence** — ``len N``, row ``i`` of shape ``(B_i + 1,)``.
+    * **1-D** ``(B+1,)``, one ladder shared by every row.
+    * **2-D** ``(N, B+1)``, a dense per-row grid, all rows the same width.
+    * **ragged sequence**, ``len N``, row ``i`` of shape ``(B_i + 1,)``.
 
     Why this exists. These scorers used to take a single ``(B+1,)`` vector and
-    use it for every row, including for ``searchsorted(edges, y)`` — the step
+    use it for every row, including for ``searchsorted(edges, y)``, the step
     that decides which bracket the outcome fell in. On a venue whose ladder
     ROTATES (Kalshi relists daily around the forecast, so Monday is
     ``[64,66,68,70,72]`` and Tuesday ``[25,27,29,31,33]``), that scores every
@@ -312,7 +312,7 @@ def _rows_and_onehot(
     synthetic ladder, Brier 0.8904 against a correct 0.7343.
 
     Rows with differing bracket COUNTS additionally broke the flat reshape, but
-    loudly — that case raised. The dangerous one was always same-count,
+    loudly, that case raised. The dangerous one was always same-count,
     different-values, which is every row of a real rotating ladder.
     """
     y = np.asarray(y, dtype=float)
@@ -368,7 +368,7 @@ def _rows_and_onehot(
         raise ValueError(
             f"fair_price size {fair.size} does not match the ladder "
             f"({sum(widths)} contracts over {n} rows). If the ladder rotates, "
-            f"pass the SAME per-row edges used to price it — a single shared "
+            f"pass the SAME per-row edges used to price it, a single shared "
             f"vector silently scores every row against row 0's grid."
         )
 
@@ -396,7 +396,7 @@ def log_loss_bracket(
 
     ``contracts`` is a long-form ContractForecast with one row per
     (entity, bin). ``y`` is the realized value per entity. ``edges`` is the
-    ladder — a shared ``(B+1,)`` vector, a dense ``(N, B+1)`` grid, or a ragged
+    ladder, a shared ``(B+1,)`` vector, a dense ``(N, B+1)`` grid, or a ragged
     per-row sequence. **Pass the same edges the ladder was priced with**: see
     :func:`_rows_and_onehot` for why a shared vector against a rotating ladder
     is silently wrong rather than an error.
@@ -608,13 +608,13 @@ def _qmr_from_bracket(
     """Flatten a model ladder, a reference ladder, and realized y into (q, m, r)
     over every (entity, bracket) binary contract.
 
-    ``edges`` takes the three shapes :func:`_rows_and_onehot` documents — a
+    ``edges`` takes the three shapes :func:`_rows_and_onehot` documents, a
     shared ``(B+1,)`` vector, a dense ``(N, B+1)`` grid, or a ragged per-row
-    sequence — and, like the Brier/log-loss scorers, refuses a single vector
-    when the ladder was priced per-row. This function used to be 1-D only, and
-    on a rotating ladder that flipped EA's sign (measured -0.0205 against a
-    true +0.0013), which is worse here than in the accuracy scorers: EA's sign
-    is the whole verdict.
+    sequence, and, like the Brier/log-loss scorers, refuses a single vector
+    when the ladder was priced per-row. This function accepted only a 1-D vector
+    until v0.8; on a rotating ladder that inverted the sign of EA (-0.0205
+    against a correct +0.0013). The consequence is more severe than in the
+    accuracy scorers, since the sign of EA determines the verdict.
     """
     y = np.asarray(y, dtype=float)
     q = np.asarray(contracts.fair_price, dtype=float)
@@ -778,8 +778,8 @@ def bootstrap_ci(
 ) -> dict[str, float]:
     """Percentile bootstrap CI for a contract-level metric, clustered.
 
-    ``fn`` is any of this module's scorers — ``edge_alignment``,
-    ``edge_alignment_costed``, a Brier — called as ``fn(*arrays)`` on a
+    ``fn`` is any of this module's scorers, ``edge_alignment``,
+    ``edge_alignment_costed``, a Brier, called as ``fn(*arrays)`` on a
     resample. ``arrays`` are the per-contract vectors it takes (``q, m, r``),
     resampled together so a draw keeps each contract's triple intact.
 
@@ -802,7 +802,7 @@ def bootstrap_ci(
     uncorrelated within a ladder (ICC +0.004 HIGH, +0.037 LOW). The factor is
     bigger on LOW because 1.6% of its ladders have an unquoted winning bracket,
     which partly breaks the sum-to-zero constraint; HIGH has one such row in
-    2,895. Expect a large inflation where that constraint does NOT hold — an
+    2,895. Expect a large inflation where that constraint does NOT hold, an
     unnormalised reference, or a metric aggregating at the cluster level.
     Expect a large inflation only when the metric itself aggregates at the
     cluster level, or when clusters are few and heterogeneous.
@@ -811,7 +811,7 @@ def bootstrap_ci(
     sample-specific, so measure it rather than assume one.
 
     ``cluster`` is a per-contract label (a station-day id). Whole clusters are
-    then resampled with replacement — the block bootstrap — so the resample has
+    then resampled with replacement, the block bootstrap, so the resample has
     the same dependence structure as the sample.
 
     Returns ``point`` (``fn`` on the full sample), ``lo``/``hi`` (the
@@ -819,16 +819,16 @@ def bootstrap_ci(
     deviation), ``n_boot`` (draws that scored finite), ``n_clusters`` and
     ``n_obs``.
 
-    Two properties worth stating, because they decide how to read the output:
+    Two properties determine how the output should be read:
 
-    * **This is a percentile interval, not a bias-corrected one.** For a
-      near-symmetric statistic like EA it is fine. For a strongly skewed one,
-      prefer BCa; this function does not implement it.
+    * The interval is a percentile interval, not bias-corrected. This is
+      adequate for a near-symmetric statistic such as EA; for a strongly
+      skewed one, prefer BCa, which is not implemented here.
 
-    Draws whose resample makes ``fn`` undefined (a degenerate cluster draw
-    giving zero-variance input, say) are skipped and excluded from ``n_boot``
-    rather than counted as zero. If fewer than half the draws survive, that is
-    a broken setup and it raises (Rule: no silent fallback).
+    Draws whose resample leaves ``fn`` undefined, for instance a degenerate
+    cluster draw giving zero-variance input, are skipped and excluded from ``n_boot``
+    rather than counted as zero. Fewer than half the draws surviving indicates
+    a degenerate metric rather than an uncertain one, and raises.
     """
     if not arrays:
         raise ValueError("bootstrap_ci needs at least one data array")
@@ -849,7 +849,7 @@ def bootstrap_ci(
 
     if cluster is None:
         # One observation per group: the ordinary i.i.d. bootstrap. NOT a
-        # single group containing everything — that resamples the identical
+        # single group containing everything, that resamples the identical
         # sample every draw and yields a zero-width interval.
         groups = [np.array([i]) for i in range(n)]
     else:
@@ -867,7 +867,7 @@ def bootstrap_ci(
         raise ValueError(
             f"bootstrap_ci: all {n} observations fall in ONE cluster, so every "
             f"resample is the identical sample and the interval collapses to "
-            f"zero width — which reads as extraordinary precision rather than "
+            f"zero width, which reads as extraordinary precision rather than "
             f"as a broken input. Pass a cluster label that varies, or "
             f"cluster=None for the i.i.d. bootstrap."
         )

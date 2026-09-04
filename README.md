@@ -15,13 +15,14 @@ pip install -e ".[demo]"
 python -m bracketlearn.examples.value_vs_accuracy_weather
 ```
 
-## What it does, on real data
+## Worked result
 
-Fit a distributional model, price it onto a venue's bracket ladder, and score
-it two ways — for **accuracy** (closeness to the outcome) and for **value**
-(whether its deviations from the market price point the right way). On 5,429
-station-days of Kalshi weather contracts (2026-03-17..09-03, 18 stations,
-chronological 60/40 split):
+The package fits a distributional model, prices it onto a venue's bracket
+ladder, and scores the resulting prices two ways: for **accuracy**, the
+distance from the realized outcome, and for **value**, whether the deviations
+from the quoted price are directionally correct. The bundled example runs this
+on 5,429 station-days of Kalshi weather contracts (2026-03-17 to 2026-09-03,
+18 stations, chronological 60/40 split):
 
 ```
 ===== HIGH  (train 1737, test 1158) =====
@@ -30,16 +31,21 @@ chronological 60/40 split):
   EMOS (raw)                     0.1257   -0.0487   <- less accurate than market
   EMOS + mean de-bias            0.1256   -0.0588   <- Brier falls, EA falls
   EMOS + edge-recal              0.1069   +0.0042   <- Brier falls, EA rises
-  EA 95% CI (clustered by station-day): [-0.1708, +0.0779]  — crosses zero
+  EA 95% CI (clustered by station-day): [-0.1708, +0.0779]  (crosses zero)
 ```
 
-Read the last two rows: the two calibration "fixes" move Brier and EA in
-*different directions*. Accuracy and value are separate axes, which is the
-point of the [Edge-Alignment metric](docs/guides/value_vs_accuracy.md) and the
-reason a leaderboard sorted by Brier can pick the wrong forecast. On this
-sample EMOS is both less accurate and not positive-value, and the interval
-crosses zero — reported as it lands; see §5b of the guide for what changed from
-an earlier, corrupted fixture.
+The two calibration adjustments move Brier and Edge-Alignment in opposite
+directions. The mean de-bias leaves Brier essentially unchanged while lowering
+EA; the edge recalibration improves both. Accuracy and value are therefore
+distinct orderings over the same forecasts, which is the property the
+[Edge-Alignment metric](docs/guides/value_vs_accuracy.md) is constructed to
+measure, and the reason a leaderboard ranked by Brier can select the wrong
+model for a trading application.
+
+On this sample EMOS is less accurate than the market and its EA is negative,
+with a bootstrap interval that contains zero. Section 5b of the value guide
+gives the decomposition, including the correction of an earlier result computed
+against a fixture whose bracket edges were wrong.
 
 ![CRPS leaderboard](docs/_static/leaderboard_crps.png)
 
@@ -63,6 +69,31 @@ Pricing a venue therefore decomposes into two estimands: the predictive
 distribution `F(· | X)`, and the functionals of `F` that the listed contracts
 select. bracketlearn estimates the first and evaluates the second, then scores
 both against realized outcomes with proper scoring rules.
+
+## Relation to existing libraries
+
+The first estimand above is well served. The second is not, and the gap is the
+reason this package exists.
+
+| Library | Provides | Does not provide |
+|---|---|---|
+| NGBoost, `sklearn.QuantileRegressor`, quantile-forest | a conditional distribution or its quantiles | contract pricing; scoring against a reference price |
+| `properscoring`, `scoringrules` | CRPS, log score, Brier on arrays | a typed distribution object; per-row contract ladders |
+| statsmodels | inference for parametric models | distributional CV, bracket adapters |
+| MAPIE, crepes | conformal prediction intervals | full `F`, and the functionals a venue lists |
+
+Composing those covers the forecasting half. What remains is the part specific
+to prediction markets: mapping `F(· | X)` onto a venue's listed contracts,
+including the per-row rotating ladders Kalshi relists daily, and scoring the
+resulting prices both for accuracy against the outcome and for value against
+the quoted price. A distribution that is closer to the truth is not always the
+one with more edge over the market, and the two orderings can disagree; §5 of
+the [value guide](docs/guides/value_vs_accuracy.md) constructs a case where
+they do.
+
+If the goal is a predictive distribution and nothing else, NGBoost or
+quantile-forest is the shorter path, and this package will call them for you as
+`SklearnPoint` / `NGBoostNormal` / `QuantileForest` stages.
 
 ## Install
 
@@ -224,7 +255,7 @@ them across runs.
 intended to be. A `DistForecaster` returns a typed `DistributionForecast`
 rather than an array, which several of sklearn's checks require. What is
 borrowed is the parameter protocol (`get_params`/`set_params`/`clone`), the
-compose-and-cross-validate shape, and the naming — not API-level
+compose-and-cross-validate shape, and the naming, not API-level
 substitutability inside sklearn's own meta-estimators.
 
 ### The five protocols
@@ -245,8 +276,8 @@ leaderboard; they never wire anything.
 
 ### Distribution backings and estimator families
 
-A `DistributionForecast` carries an explicit backing — Normal, Student-t,
-mixture, quantile, or bracket — and every backing answers `cdf`, `crps`,
+A `DistributionForecast` carries an explicit backing. Normal, Student-t,
+mixture, quantile, or bracket, and every backing answers `cdf`, `crps`,
 `pit`, `integrate` and `log_score`. Which trainers emit which backing, what
 each is for, and when to prefer one over another: **[Catalog](docs/guides/catalog.md)**.
 
@@ -322,7 +353,7 @@ on two levels, both through `result.to_table(y, metrics=[...])` on a
   `log_score`, and `pit`.
 - **Contract metrics** read the priced ladder: `brier_bracket` and
   `log_loss_bracket`, each taking `edges=` in any of the three shapes
-  `integrate` accepts — a shared `(B+1,)` vector, a dense `(N, B+1)` grid, or a
+  `integrate` accepts, a shared `(B+1,)` vector, a dense `(N, B+1)` grid, or a
   ragged per-row sequence. On a rotating ladder pass the per-row edges the
   ladder was priced with; the scorers raise if handed one row's vector
   instead. They answer the
@@ -382,15 +413,31 @@ fee schedules, queue assumptions. Ship a default and it lands wrong for the next
 user or leaks the edge of the one who had it. You get the calibrated fair price.
 You write the trading layer.
 
-## Status
+## Status and test suite
 
-Version 0.8.0, pre-PyPI. The pieces this README documents are built and covered
-by the test suite: the composition API (`Pipeline`, `Stacker`, `WalkForward`),
-the trainer families, the five contract adapters, the distribution- and
-contract-level scoring, and the `bracketlearn.value` layer (reference-relative
-value metrics + the `BlendedBracketGBM` / `BlendedBracketNet` value trainers).
-[CHANGELOG.md](CHANGELOG.md) records the version history and the migration
-recipes for past API changes.
+Version 0.8.0, pre-PyPI. 12,355 lines across the package, 472 tests in 37
+files, `mypy --strict` on the gated modules, and a CI job that installs the
+built wheel into a clean virtualenv and imports it.
+
+The suite is written against past defects rather than for coverage. Several
+tests exist because the corresponding bug shipped:
+
+| Test | Property it pins |
+|---|---|
+| `test_readme_headline_is_current.py` | the numbers in this README match what the example prints, parsed from its stdout |
+| `test_pipeline_calibration_oof.py` | the calibrator and the transformers above it never see the tail they are calibrated on |
+| `test_stacker_inner_oof.py` | a stack's meta receives out-of-sample upstream predictions, so it cannot learn to weight whichever upstream overfits |
+| `test_bracket_scores_per_row_edges.py` | a rotating ladder is scored against each row's own edges, and passing one row's edges raises |
+| `test_bootstrap_ci.py` | interval coverage is near nominal, and clustering widens the interval when clusters share a component |
+| `test_no_silent_fallbacks.py` | a missing input raises rather than defaulting |
+| `test_notebooks_are_stripped.py` | committed notebooks carry no output |
+
+The README test is there because this file carried a headline number for
+several weeks after the fixture behind it was found to be corrupted. Prose does
+not fail a test suite; that one does.
+
+[CHANGELOG.md](CHANGELOG.md) records the version history, the migration recipes
+for past API changes, and a decomposition of every result that has moved.
 
 ## License
 

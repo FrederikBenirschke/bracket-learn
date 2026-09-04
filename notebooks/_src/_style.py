@@ -10,7 +10,7 @@ the metrics annotated inside the panel rather than in a separate bar chart.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Sequence, Mapping
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -204,40 +204,55 @@ def predicted_vs_realized_grid(
 
 
 def reliability_with_histogram(
-    series: list[tuple[str, np.ndarray, np.ndarray]],
+    series: Sequence[tuple[str, np.ndarray, np.ndarray] |
+                     tuple[str, np.ndarray, np.ndarray, np.ndarray]],
     *,
     title: str = "Reliability",
 ) -> plt.Figure:
-    """Top: reliability curve per model. Bottom: predicted-probability
-    histogram per model (same x-axis). Tells you both calibration AND
-    whether the model is ever confident.
+    """Reliability curve per model, over a histogram of predicted probabilities.
 
-    Each entry in ``series`` is ``(name, mean_predicted, hit_rate)`` from
-    a binning, plus optionally raw predicted probabilities for the bottom
-    panel — we accept ``(name, mp, hr)`` and also infer raw via the
-    third return if a 1-D vector matches the bin count.
+    Each entry is ``(name, mean_predicted, hit_rate)`` or
+    ``(name, mean_predicted, hit_rate, raw_probs)``. The first three are the
+    binned curve; ``raw_probs`` is the unbinned per-contract predicted
+    probability vector and is what the lower panel counts.
+
+    Without ``raw_probs`` the lower panel is omitted. It previously
+    histogrammed ``mean_predicted`` -- roughly ten bin means dropped into ten
+    bins -- which placed one observation in each bin by construction and drew
+    a flat line at height one for every model. That conveys nothing about
+    where the model places mass, which is the only reason the panel exists.
     """
-    fig, (ax_top, ax_bot) = plt.subplots(
-        2, 1, figsize=(7, 6.5),
-        sharex=True, gridspec_kw={"height_ratios": [2.4, 1]},
-    )
+    have_raw = [s for s in series if len(s) == 4]
+    if have_raw:
+        fig, (ax_top, ax_bot) = plt.subplots(
+            2, 1, figsize=(7, 6.5),
+            sharex=True, gridspec_kw={"height_ratios": [2.4, 1]},
+        )
+    else:
+        fig, ax_top = plt.subplots(figsize=(7, 4.6))
+        ax_bot = None
+
     ax_top.plot([0, 1], [0, 1], color="black", lw=0.8, linestyle="--",
                 label="perfect")
-    for name, mp, hr in series:
-        color = color_for(name)
-        ax_top.plot(mp, hr, marker="o", color=color, label=name, lw=1.2)
+    for entry in series:
+        name, mp, hr = entry[0], entry[1], entry[2]
+        ax_top.plot(mp, hr, marker="o", color=color_for(name), label=name,
+                    lw=1.2)
     ax_top.set_ylabel("empirical hit rate")
     ax_top.set_title(title)
     ax_top.legend(loc="upper left")
+    if ax_bot is None:
+        ax_top.set_xlabel("mean predicted bracket probability")
+        fig.tight_layout()
+        return fig
 
-    # Bottom panel — stacked histograms of the binned mean-predicted-prob
-    # values themselves (rough proxy for "where is the model placing mass").
-    for name, mp, _ in series:
-        color = color_for(name)
-        ax_bot.hist(mp, bins=np.linspace(0, 1, 11),
-                    histtype="step", color=color, lw=1.4, label=name)
-    ax_bot.set_xlabel("mean predicted bracket probability")
-    ax_bot.set_ylabel("# bins")
+    for entry in have_raw:
+        name, raw = entry[0], np.asarray(entry[3], dtype=float).ravel()
+        ax_bot.hist(raw[np.isfinite(raw)], bins=np.linspace(0, 1, 41),
+                    histtype="step", color=color_for(name), lw=1.4, label=name)
+    ax_bot.set_yscale("log")
+    ax_bot.set_xlabel("predicted bracket probability")
+    ax_bot.set_ylabel("contracts (log)")
     fig.tight_layout()
     return fig
 
