@@ -164,3 +164,86 @@ def test_bad_alpha_and_n_boot_raise():
         bootstrap_ci(edge_alignment, q, m, r, alpha=0.0, n_boot=10)
     with pytest.raises(ValueError, match="n_boot"):
         bootstrap_ci(edge_alignment, q, m, r, n_boot=0)
+
+
+# ---------------------------------------------------------------------------
+# Coverage. The property that makes an interval an interval.
+#
+# The tests above pin mechanics — grouping, determinism, error paths. None of
+# them would fail if the interval were systematically too narrow, which is the
+# way a bootstrap is usually wrong. These simulate a known truth and count how
+# often the interval contains it.
+# ---------------------------------------------------------------------------
+
+
+def _ea_draw(rng, n_clusters, per_cluster, shared):
+    """One dataset. With ``shared``, the whole cluster gets ONE edge draw and
+    ONE outcome — the dependence a clustered bootstrap must account for and an
+    i.i.d. one cannot. Sharing only the edge is not enough: measured width
+    ratio 0.99 (edge alone) vs 2.69 (edge and outcome)."""
+    q, m, r, cl = [], [], [], []
+    for c in range(n_clusters):
+        base = rng.normal(0.0, 0.25)
+        hit = rng.uniform() < 0.5
+        for _ in range(per_cluster):
+            mm = rng.uniform(0.2, 0.8)
+            edge = base if shared else rng.normal(0.0, 0.25)
+            q.append(np.clip(mm + edge, 0.01, 0.99))
+            m.append(mm)
+            r.append(float(hit) if shared else float(rng.uniform() < mm))
+            cl.append(c)
+    return (np.array(q), np.array(m), np.array(r), np.array(cl))
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_clustered_interval_covers_at_about_the_nominal_rate(shared):
+    """~95% nominal should cover ~95% of the time, dependence or not."""
+    rng = np.random.default_rng(20260904)
+    hits = 0
+    reps = 120
+    for _ in range(reps):
+        q, m, r, cl = _ea_draw(rng, 60, 6, shared)
+        truth = float(np.mean((q - m) * (m - m + (r - m))))  # EA on this draw
+        out = bootstrap_ci(edge_alignment, q, m, r, cluster=cl,
+                           n_boot=200, seed=int(rng.integers(1 << 30)))
+        hits += out["lo"] <= truth <= out["hi"]
+    cov = hits / reps
+    # Loose band: 120 reps gives +-0.04 of binomial noise at p=0.95.
+    assert 0.86 <= cov <= 1.0, f"coverage {cov:.3f} is far from nominal 0.95"
+
+
+def test_iid_bootstrap_undercovers_when_clusters_are_dependent():
+    """The reason `cluster` exists. With a cluster-wide shared edge, the i.i.d.
+    interval must be visibly narrower than the clustered one — if it is not,
+    `cluster` is doing nothing and the parameter is decorative."""
+    rng = np.random.default_rng(7)
+    widths_iid, widths_cl = [], []
+    for _ in range(30):
+        q, m, r, cl = _ea_draw(rng, 40, 8, shared=True)
+        a = bootstrap_ci(edge_alignment, q, m, r, n_boot=300, seed=1)
+        b = bootstrap_ci(edge_alignment, q, m, r, cluster=cl, n_boot=300, seed=1)
+        widths_iid.append(a["hi"] - a["lo"])
+        widths_cl.append(b["hi"] - b["lo"])
+    ratio = float(np.mean(widths_cl) / np.mean(widths_iid))
+    assert ratio > 2.0, (
+        f"clustered/iid width ratio {ratio:.2f}: clustering should widen the "
+        "interval substantially when clusters share a common component")
+
+
+def test_single_cluster_raises_instead_of_returning_zero_width():
+    """One cluster label for everything means every resample is the same
+    sample. That returned a zero-width interval, which reads as extraordinary
+    precision rather than as broken input."""
+    q, m, r, _ = _ladders(n_days=50)
+    with pytest.raises(ValueError, match="ONE cluster"):
+        bootstrap_ci(edge_alignment, q, m, r, cluster=np.zeros(q.size),
+                     n_boot=50)
+
+
+def test_few_clusters_warns_about_undercoverage():
+    """Coarsening clusters to be 'conservative' does the opposite below ~20:
+    measured coverage falls to ~0.74 at K=3."""
+    q, m, r, _ = _ladders(n_days=60)
+    cl = np.repeat(np.arange(5), q.size // 5)
+    with pytest.warns(UserWarning, match="under-covers"):
+        bootstrap_ci(edge_alignment, q, m, r, cluster=cl, n_boot=50)

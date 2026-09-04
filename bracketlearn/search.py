@@ -70,7 +70,8 @@ class GridSearch:
             Lower is better for all four (this is a *loss*).
         refit_node: name of the node whose OOF metric is the objective. If
             ``None``, the *mean* across all nodes is used.
-        edges: shared 1-D bracket ladder ``(B+1,)``; required if ``scoring``
+        edges: bracket ladder — shared ``(B+1,)``, dense ``(N, B+1)``, or a
+            ragged per-row sequence; required if ``scoring``
             is a bracket metric.
         greater_is_better: defaults to ``False`` (built-in metrics are losses).
     """

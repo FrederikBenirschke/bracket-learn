@@ -15,6 +15,7 @@ remain for downstream callers that pass a dist as first arg.
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Callable
 from typing import Any
 
@@ -402,7 +403,7 @@ def log_loss_bracket(
     """
     probs_rows, onehot_rows = _rows_and_onehot(contracts, edges, y)
     p_realized = np.array([
-        float(p[oh.argmax()]) for p, oh in zip(probs_rows, onehot_rows)
+        float(p[oh.argmax()]) for p, oh in zip(probs_rows, onehot_rows, strict=True)
     ])
     p_realized = np.clip(p_realized, 1e-12, 1.0)
     return float(-np.log(p_realized).mean())
@@ -421,7 +422,7 @@ def brier_bracket(
     probs_rows, onehot_rows = _rows_and_onehot(contracts, edges, y)
     return float(np.mean([
         float(((p - oh) ** 2).sum())
-        for p, oh in zip(probs_rows, onehot_rows)
+        for p, oh in zip(probs_rows, onehot_rows, strict=True)
     ]))
 
 
@@ -601,36 +602,47 @@ def value_report(q: np.ndarray, m: np.ndarray, r: np.ndarray) -> dict[str, float
 def _qmr_from_bracket(
     contracts: ContractForecast,
     reference: ContractForecast | np.ndarray,
-    edges: np.ndarray,
+    edges: Any,
     y: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Flatten a model ladder, a reference ladder, and realized y into (q, m, r)
-    over every (entity, bracket) binary contract."""
-    edges = np.asarray(edges, dtype=float)
+    over every (entity, bracket) binary contract.
+
+    ``edges`` takes the three shapes :func:`_rows_and_onehot` documents — a
+    shared ``(B+1,)`` vector, a dense ``(N, B+1)`` grid, or a ragged per-row
+    sequence — and, like the Brier/log-loss scorers, refuses a single vector
+    when the ladder was priced per-row. This function used to be 1-D only, and
+    on a rotating ladder that flipped EA's sign (measured -0.0205 against a
+    true +0.0013), which is worse here than in the accuracy scorers: EA's sign
+    is the whole verdict.
+    """
     y = np.asarray(y, dtype=float)
-    B = edges.shape[0] - 1
     q = np.asarray(contracts.fair_price, dtype=float)
-    m = reference.fair_price if isinstance(reference, ContractForecast) else np.asarray(reference, dtype=float)
+    m = reference.fair_price if isinstance(reference, ContractForecast) else reference
     m = np.asarray(m, dtype=float)
     if q.shape != m.shape:
         raise ValueError(
             f"model fair_price {q.shape} and reference {m.shape} must match"
         )
-    if q.size % B != 0:
-        raise ValueError(f"fair_price size {q.size} not divisible by B={B}")
-    N = q.size // B
-    if y.shape[0] != N:
-        raise ValueError(f"y has {y.shape[0]} entities; contracts have {N}")
-    onehot = np.zeros((N, B), dtype=float)
-    bin_idx = np.clip(np.searchsorted(edges, y, side="right") - 1, 0, B - 1)
-    onehot[np.arange(N), bin_idx] = 1.0
-    return q.reshape(N, B).ravel(), m.reshape(N, B).ravel(), onehot.ravel()
+    probs_rows, onehot_rows = _rows_and_onehot(contracts, edges, y)
+    # _rows_and_onehot already validated the ladder against q; m shares its
+    # shape, so the same row widths slice it.
+    widths = [p.size for p in probs_rows]
+    m_rows, off = [], 0
+    for b in widths:
+        m_rows.append(m[off:off + b])
+        off += b
+    return (
+        np.concatenate(probs_rows),
+        np.concatenate(m_rows),
+        np.concatenate(onehot_rows),
+    )
 
 
 def edge_alignment_bracket(
     contracts: ContractForecast,
     reference: ContractForecast | np.ndarray,
-    edges: np.ndarray,
+    edges: Any,
     y: np.ndarray,
 ) -> float:
     """Edge-Alignment of a bracket ladder vs a reference ladder (a scalar).
@@ -647,7 +659,7 @@ def edge_alignment_bracket(
 def value_report_bracket(
     contracts: ContractForecast,
     reference: ContractForecast | np.ndarray,
-    edges: np.ndarray,
+    edges: Any,
     y: np.ndarray,
 ) -> dict[str, float]:
     """Full value diagnostic (``EA``, ``A``, ``B``, ``align_corr``,
@@ -781,10 +793,17 @@ def bootstrap_ci(
     is smaller here than the "one shared outcome" framing suggests. Measured on
     this repo's weather sample (~6 brackets per station-day, ~1,000 station-day
     clusters): the clustered interval is **1.02x wider on HIGH and 1.07x on
-    LOW** than the i.i.d. one. A plausible reading is that EA's within-ladder
-    correlation stays weak even though the outcome is shared: the one-hot
-    constraint ties the r's, but the (q-m) edges vary freely across brackets.
-    That mechanism is not itself measured here — the width ratio is.
+    LOW** than the i.i.d. one. The mechanism is a cancellation, and it is
+    measured rather than assumed: ``q`` and ``m`` are both simplex vectors, so
+    ``q-m`` sums to exactly zero within a ladder, which forces its
+    intra-cluster correlation to ``-1/(L-1)`` (observed -0.2001 for L=6, and
+    ``max|sum(q-m)|`` = 2.8e-16). That negative dependence offsets the positive
+    dependence the shared outcome induces, leaving the EA *product* nearly
+    uncorrelated within a ladder (ICC +0.004 HIGH, +0.037 LOW). The factor is
+    bigger on LOW because 1.6% of its ladders have an unquoted winning bracket,
+    which partly breaks the sum-to-zero constraint; HIGH has one such row in
+    2,895. Expect a large inflation where that constraint does NOT hold — an
+    unnormalised reference, or a metric aggregating at the cluster level.
     Expect a large inflation only when the metric itself aggregates at the
     cluster level, or when clusters are few and heterogeneous.
 
@@ -844,6 +863,22 @@ def bootstrap_ci(
         groups = np.split(order, starts[1:])
 
     n_groups = len(groups)
+    if n_groups < 2:
+        raise ValueError(
+            f"bootstrap_ci: all {n} observations fall in ONE cluster, so every "
+            f"resample is the identical sample and the interval collapses to "
+            f"zero width — which reads as extraordinary precision rather than "
+            f"as a broken input. Pass a cluster label that varies, or "
+            f"cluster=None for the i.i.d. bootstrap."
+        )
+    if n_groups < 20:
+        warnings.warn(
+            f"bootstrap_ci: only {n_groups} clusters. The percentile interval "
+            f"under-covers materially below ~20 clusters (measured ~0.74 "
+            f"actual coverage at K=3 for a nominal 0.95), so coarsening "
+            f"clusters to be 'conservative' can do the opposite.",
+            UserWarning, stacklevel=2,
+        )
     stats: list[float] = []
     for _ in range(n_boot):
         pick = rng.integers(0, n_groups, size=n_groups)

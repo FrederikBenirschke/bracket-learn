@@ -42,13 +42,39 @@ def load():
         ref = np.asarray(r["ref_price"], float)
         if not np.all(np.isfinite(ref)):          # skip rows with an unquoted bracket
             continue
+        # Features must be finite too, not just the reference. `nws` is null
+        # wherever the NWS hourly forecast was missing for that station-day
+        # (772 of 5,429 rows). Polars hands those back as Python None, so
+        # np.array(X) would come back OBJECT dtype — LightGBM tolerates it and
+        # prints a table, then the torch trainer dies on the same data. Skip
+        # the row rather than impute: this is a demo, and a silently imputed
+        # feature is worse than a smaller N.
+        feats = [r["ens_mean"], r["ens_std"], r["nws"], r["climo"],
+                 r["clim_sigma"]]
+        if any(v is None or not np.isfinite(v) for v in feats):
+            continue
         rid = len(ids)
-        brackets_by_id[rid] = np.asarray(r["edges"], float)
+        # BracketExpander appends the raw (lo, hi) bounds as two FEATURE
+        # columns, so the ladder's open tails would put -inf/+inf straight
+        # into the design matrix: the net's per-feature standardisation then
+        # yields NaN, which .clamp() passes through and torch reports as the
+        # unhelpful "all elements of input should be between 0 and 1".
+        # Substitute a finite outer bound for the FEATURE only — the scoring
+        # path keeps the true ±inf edges, so no probability mass moves.
+        e = np.asarray(r["edges"], float)
+        span = e[-2] - e[1]
+        e_feat = e.copy()
+        e_feat[0], e_feat[-1] = e[1] - span, e[-2] + span
+        brackets_by_id[rid] = e_feat
         reference_by_id[rid] = ref
-        X.append([r["ens_mean"], r["ens_std"], r["nws"], r["climo"], r["clim_sigma"]])
+        X.append(feats)
         y.append(r["realized"])
         ids.append(rid)
-    return (np.array(X), np.array(y), np.array(ids), brackets_by_id, reference_by_id)
+    X_arr = np.asarray(X, dtype=float)
+    if X_arr.size and not np.all(np.isfinite(X_arr)):
+        raise ValueError("non-finite features survived the row filter")
+    return (X_arr, np.asarray(y, dtype=float), np.asarray(ids),
+            brackets_by_id, reference_by_id)
 
 
 def score(dist, reference_by_id, y_by_id):

@@ -26,7 +26,6 @@ from bracketlearn.lift import Isotonic
 from bracketlearn.pipeline import Pipeline
 from bracketlearn.trainers import EMOS
 
-
 # A shared bracket ladder, so Isotonic can integrate the Normal onto brackets.
 EDGES = np.array([-np.inf, 45.0, 55.0, 65.0, 75.0, np.inf])
 

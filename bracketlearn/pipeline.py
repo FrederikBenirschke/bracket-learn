@@ -35,6 +35,24 @@ from bracketlearn.forecast import (
 # ---------------------------------------------------------------------------
 
 
+def _slice_edges(edges: Any, idx: np.ndarray) -> Any:
+    """Take the rows ``idx`` out of a ladder, whatever shape it is.
+
+    A shared 1-D ``(B+1,)`` vector describes every row, so it passes through;
+    a dense ``(N, B+1)`` grid or a ragged per-row sequence is indexed.
+    """
+    if edges is None:
+        return None
+    if isinstance(edges, np.ndarray) and edges.ndim == 1:
+        return edges
+    if isinstance(edges, np.ndarray) and edges.ndim == 2:
+        return edges[idx]
+    seq = list(edges)
+    if seq and np.ndim(seq[0]) == 0:      # a 1-D ladder handed in as a list
+        return np.asarray(seq, dtype=float)
+    return [seq[i] for i in idx]
+
+
 def _compute_metric(
     metric: str, dist, y, *, edges, scoremod,
 ) -> dict[str, float]:
@@ -119,7 +137,7 @@ class PipelineResult:
         y: np.ndarray,
         *,
         metrics: Sequence[str] = ("crps", "log_score", "pit"),
-        edges: np.ndarray | None = None,
+        edges: Any | None = None,
     ) -> dict[str, dict[str, float]]:
         """Return {stage_name: {metric_name: value}}.
 
@@ -128,8 +146,8 @@ class PipelineResult:
           - "log_score"        — mean predictive negative log-likelihood
           - "pit_mean"         — mean PIT (≈ 0.5 if calibrated)
           - "pit_std"          — std of PIT
-          - "log_loss_bracket" — requires ``edges`` (shared (B+1,) ladder)
-          - "brier_bracket"    — requires ``edges`` (shared (B+1,) ladder)
+          - "log_loss_bracket" — requires ``edges`` (any ladder shape)
+          - "brier_bracket"    — requires ``edges`` (any ladder shape)
 
         ``edges`` is a single 1-D bracket ladder shared across rows; the
         per-row ragged ``BracketLadder`` is built internally per stage.
@@ -146,14 +164,24 @@ class PipelineResult:
         if needs_edges & set(metrics) and edges is None:
             raise ValueError(
                 f"metrics {needs_edges & set(metrics)} require edges=... "
-                f"(a shared (B+1,) bracket ladder)"
+                f"(a shared (B+1,) vector, a dense (N, B+1) grid, or a ragged "
+                f"per-row sequence)"
             )
 
         for name, dist in self.forecasts.items():
-            y_oof = y[dist.ids.astype(int)]
+            idx = dist.ids.astype(int)
+            y_oof = y[idx]
+            # `edges` must be sliced alongside `y`: a stage's OOF coverage can
+            # be a subset of the rows, and a per-row ladder is indexed by row.
+            # Passing the full-length ladder against a sliced y raised "edges
+            # describe N rows; the forecast has M" — which made the per-row
+            # shape unusable through exactly this API.
+            edges_oof = _slice_edges(edges, idx)
             row: dict[str, float] = {"n_oof": int(dist.ids.shape[0])}
             for m in metrics:
-                row.update(_compute_metric(m, dist, y_oof, edges=edges, scoremod=scoremod))
+                row.update(
+                    _compute_metric(m, dist, y_oof, edges=edges_oof,
+                                    scoremod=scoremod))
             out[name] = row
         return out
 
@@ -162,7 +190,7 @@ class PipelineResult:
         y: np.ndarray,
         *,
         metrics: Sequence[str] = ("crps", "log_score", "pit"),
-        edges: np.ndarray | None = None,
+        edges: Any | None = None,
     ) -> str:
         """Render score() output as an aligned text table."""
         scores = self.score(y, metrics=metrics, edges=edges)
