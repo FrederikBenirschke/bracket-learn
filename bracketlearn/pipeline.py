@@ -419,28 +419,10 @@ class Pipeline:
             Xz = t.transform(Xz, ids=ids_arr, center=center)
             yz = t.transform_target(yz)
 
-        if self._point is not None:
-            # Point→Lifter with an internal OOF half-split.
-            half = max(1, int(n * self.lifter_oof_fraction))
-            if half >= n:
-                half = max(1, n - 1)
-            sw_first = sample_weight[:half] if sample_weight is not None else None
-            _fit_with_optional_weight(self._point, Xz[:half], yz[:half], sw_first)
-            base_oof = self._point.predict(
-                Xz[half:], ids=ids_arr[half:], timestamps=ts[half:],
-            )
-            if self._lifter.requires_X:
-                self._lifter.fit(base_oof, yz[half:], X=Xz[half:])
-            else:
-                self._lifter.fit(base_oof, yz[half:])
-            _fit_with_optional_weight(self._point, Xz, yz, sample_weight)
-        else:
-            extras: dict[str, Any] = {"ids": ids_arr, "timestamps": ts}
-            if upstream is not None:
-                extras["upstream"] = upstream
-            extras.update(kwargs)
-            _fit_with_optional_weight(self._model, Xz, yz, sample_weight, **extras)
-
+        # How many trailing rows the calibrator will be fit on, decided BEFORE
+        # the core is fit so the core can be held out of them. `c == 0` means
+        # no calibrator, or too few rows to hold any out.
+        c = 0
         if self._calibrator is not None:
             if upstream is not None:
                 raise NotImplementedError(
@@ -449,13 +431,65 @@ class Pipeline:
                     "OOF onto the calibration tail)"
                 )
             c = max(2, int(n * self.calibration_fraction))
-            if n - c >= 2:
-                cal_dist = self._core_predict_dist(
-                    Xz[-c:], ids_arr[-c:], ts[-c:], **kwargs,
-                )
-                self._calibrator.fit(cal_dist, yz[-c:])
-            else:
+            if n - c < 2:
                 self._calibrator = None   # too few rows to calibrate
+                c = 0
+
+        # The rows the CORE may see while the calibrator's tail is being
+        # produced. Fitting the core on everything and then calibrating on a
+        # slice of that same everything is the leak this split exists to stop:
+        # the calibrator would be learning a correction to in-sample
+        # predictions, which are systematically better than the out-of-sample
+        # ones it will actually be applied to, so it under-corrects in
+        # production. The Point→Lifter branch below already had this shape;
+        # the calibrator did not.
+        head = slice(0, n - c) if c else slice(0, n)
+
+        def _fit_core(rows: slice) -> None:
+            """Fit the core forecaster on ``rows`` only."""
+            if self._point is not None:
+                # Point→Lifter with an internal OOF half-split, nested inside
+                # whatever slice it is handed.
+                sub_n = rows.stop - rows.start
+                half = max(1, int(sub_n * self.lifter_oof_fraction))
+                if half >= sub_n:
+                    half = max(1, sub_n - 1)
+                a, b = rows.start, rows.start + half
+                sw_first = sample_weight[a:b] if sample_weight is not None else None
+                _fit_with_optional_weight(self._point, Xz[a:b], yz[a:b], sw_first)
+                base_oof = self._point.predict(
+                    Xz[b:rows.stop], ids=ids_arr[b:rows.stop],
+                    timestamps=ts[b:rows.stop],
+                )
+                if self._lifter.requires_X:
+                    self._lifter.fit(base_oof, yz[b:rows.stop], X=Xz[b:rows.stop])
+                else:
+                    self._lifter.fit(base_oof, yz[b:rows.stop])
+                sw = sample_weight[rows] if sample_weight is not None else None
+                _fit_with_optional_weight(self._point, Xz[rows], yz[rows], sw)
+            else:
+                extras: dict[str, Any] = {
+                    "ids": ids_arr[rows], "timestamps": ts[rows],
+                }
+                if upstream is not None:
+                    extras["upstream"] = upstream
+                extras.update(kwargs)
+                sw = sample_weight[rows] if sample_weight is not None else None
+                _fit_with_optional_weight(self._model, Xz[rows], yz[rows], sw,
+                                          **extras)
+
+        if c:
+            # 1. core on the head only, so the tail is genuinely unseen
+            _fit_core(head)
+            # 2. calibrator on the core's OUT-OF-SAMPLE tail predictions
+            cal_dist = self._core_predict_dist(
+                Xz[-c:], ids_arr[-c:], ts[-c:], **kwargs,
+            )
+            self._calibrator.fit(cal_dist, yz[-c:])
+            # 3. refit the core on everything, for prediction
+            _fit_core(slice(0, n))
+        else:
+            _fit_core(slice(0, n))
         return self
 
     # ---- predict ----
