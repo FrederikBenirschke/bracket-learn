@@ -132,3 +132,86 @@ def test_predictions_are_finite_and_shaped():
     assert probs.shape == (50, len(EDGES) - 1)
     assert np.all(np.isfinite(probs))
     assert np.allclose(probs.sum(axis=1), 1.0), "rows must renormalise to 1"
+
+
+# ---------------------------------------------------------------------------
+# The transformers above the core are the same leak, one stage up.
+#
+# The first fix held the calibration tail out of the CORE but left the
+# transformer loop fitting on all n rows. GroupByZScore learns its scale from
+# std(y - center), so the tail set the scale that the calibrator's own inputs
+# were then divided by. Measured on a wide-tailed synthetic: 22.19 fit on all
+# rows vs 9.96 on the head.
+# ---------------------------------------------------------------------------
+
+
+def _wide_tail(n=200, tail=40, seed=0):
+    rng = np.random.default_rng(seed)
+    mu = rng.normal(60, 10, n)
+    sd = rng.uniform(1.0, 3.0, n)
+    y = mu + rng.normal(0, 1, n) * sd
+    y[-tail:] = mu[-tail:] + rng.normal(0, 40, tail)   # the calibration tail
+    return np.column_stack([mu, sd]), y, np.array(["A"] * n), np.arange(n, dtype=float)
+
+
+def test_transformers_do_not_see_the_calibration_tail():
+    from bracketlearn.transform import GroupByZScore
+
+    X, y, ids, ts = _wide_tail()
+    n, frac = len(y), 0.2
+    c = max(2, int(n * frac))
+
+    seen: dict[str, float] = {}
+    cal = _cal()
+    orig_fit = cal.fit
+
+    def spy(dist, target, *a, **kw):
+        seen["scale"] = pipe._transformers[0].scale_global_
+        return orig_fit(dist, target, *a, **kw)
+
+    cal.fit = spy  # type: ignore[method-assign]
+    pipe = Pipeline([GroupByZScore(), EMOS(fit_method="crps_nelder_mead"), cal],
+                    calibration_fraction=frac)
+    pipe.fit(X, y, ids=ids, timestamps=ts)
+
+    head = GroupByZScore()
+    head.fit(X[:n - c], y[:n - c], ids=ids[:n - c], center=None)
+    full = GroupByZScore()
+    full.fit(X, y, ids=ids, center=None)
+
+    assert seen["scale"] == pytest.approx(head.scale_global_, rel=1e-9), (
+        "the transformer's scale at calibration time must come from the head "
+        "only; the tail must not set the scale its own rows are divided by")
+    assert seen["scale"] != pytest.approx(full.scale_global_, rel=1e-6), (
+        "scale equals the full-data fit — the transformer saw the tail")
+
+
+def test_transformers_are_refit_on_everything_before_predicting():
+    """Same contract as the core: the holdout is for calibration only."""
+    from bracketlearn.transform import GroupByZScore
+
+    X, y, ids, ts = _wide_tail()
+    pipe = Pipeline([GroupByZScore(), EMOS(fit_method="crps_nelder_mead"), _cal()],
+                    calibration_fraction=0.2)
+    pipe.fit(X, y, ids=ids, timestamps=ts)
+    full = GroupByZScore()
+    full.fit(X, y, ids=ids, center=None)
+    assert pipe._transformers[0].scale_global_ == pytest.approx(
+        full.scale_global_, rel=1e-9)
+
+
+def test_point_lifter_with_calibrator_also_holds_the_tail_out():
+    """The combination nothing pinned before: both branches must behave."""
+    from sklearn.linear_model import Ridge
+
+    from bracketlearn.lift import GlobalResidual
+    from bracketlearn.trainers import SklearnPoint
+
+    X, y, ids, ts = _data()
+    pipe = Pipeline([SklearnPoint(Ridge()), GlobalResidual(), _cal()],
+                    calibration_fraction=0.2)
+    pipe.fit(X, y, ids=ids, timestamps=ts)
+    d = pipe.predict_dist(X[:20], ids=ids[:20], timestamps=ts[:20])
+    probs = np.asarray(d.probs, dtype=float)
+    assert np.all(np.isfinite(probs))
+    assert np.allclose(probs.sum(axis=1), 1.0)

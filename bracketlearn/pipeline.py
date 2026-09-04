@@ -459,14 +459,11 @@ class Pipeline:
         n = yz.shape[0]
         ids_arr = np.asarray(ids)
         ts = np.zeros(n) if timestamps is None else np.asarray(timestamps)
-        for t in self._transformers:
-            t.fit(Xz, yz, ids=ids_arr, center=center)
-            Xz = t.transform(Xz, ids=ids_arr, center=center)
-            yz = t.transform_target(yz)
 
         # How many trailing rows the calibrator will be fit on, decided BEFORE
-        # the core is fit so the core can be held out of them. `c == 0` means
-        # no calibrator, or too few rows to hold any out.
+        # anything is fit so both the transformers and the core can be held out
+        # of them. `c == 0` means no calibrator, or too few rows to hold any
+        # out.
         c = 0
         if self._calibrator is not None:
             if upstream is not None:
@@ -480,6 +477,14 @@ class Pipeline:
                 self._calibrator = None   # too few rows to calibrate
                 c = 0
 
+        # Transformers are fit on the same head the core is, for the same
+        # reason: GroupByZScore learns its scale from std(y - center), and
+        # including the calibration tail lets the tail set the scale that the
+        # calibrator's own inputs are then divided by. Measured on a synthetic
+        # tail with a wider spread: scale 25.30 fit on all rows vs 0.96 fit on
+        # the head. Smaller in effect than the core leak (one scalar per
+        # group), but the same leak, in the same function.
+        #
         # The rows the CORE may see while the calibrator's tail is being
         # produced. Fitting the core on everything and then calibrating on a
         # slice of that same everything is the leak this split exists to stop:
@@ -489,6 +494,19 @@ class Pipeline:
         # production. The Point→Lifter branch below already had this shape;
         # the calibrator did not.
         head = slice(0, n - c) if c else slice(0, n)
+
+        def _fit_transformers(rows: slice) -> tuple[np.ndarray, np.ndarray]:
+            """Fit every transformer on ``rows``, then apply to ALL n rows.
+
+            Fitting is what must not see the tail; transforming it is required
+            — the calibrator needs its tail rows in the model's working space.
+            """
+            Xw, yw = np.asarray(X, dtype=float), np.asarray(y, dtype=float)
+            for t in self._transformers:
+                t.fit(Xw[rows], yw[rows], ids=ids_arr[rows], center=center)
+                Xw = t.transform(Xw, ids=ids_arr, center=center)
+                yw = t.transform_target(yw)
+            return Xw, yw
 
         def _fit_core(rows: slice) -> None:
             """Fit the core forecaster on ``rows`` only."""
@@ -524,16 +542,19 @@ class Pipeline:
                                           **extras)
 
         if c:
-            # 1. core on the head only, so the tail is genuinely unseen
+            # 1. transformers + core on the head only, so the tail is unseen
+            Xz, yz = _fit_transformers(head)
             _fit_core(head)
             # 2. calibrator on the core's OUT-OF-SAMPLE tail predictions
             cal_dist = self._core_predict_dist(
                 Xz[-c:], ids_arr[-c:], ts[-c:], **kwargs,
             )
             self._calibrator.fit(cal_dist, yz[-c:])
-            # 3. refit the core on everything, for prediction
+            # 3. refit transformers + core on everything, for prediction
+            Xz, yz = _fit_transformers(slice(0, n))
             _fit_core(slice(0, n))
         else:
+            Xz, yz = _fit_transformers(slice(0, n))
             _fit_core(slice(0, n))
         return self
 

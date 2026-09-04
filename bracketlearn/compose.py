@@ -208,6 +208,14 @@ class WalkForward:
         sw_o = sw[order] if sw is not None else None
         g_o = g[order] if g is not None else None
 
+        # Which leaves are consumed by a meta: only those pay the inner-OOF
+        # refit, so a plain leaderboard run is unchanged in cost and result.
+        feeds_meta = {i: False for i in range(len(nodes))}
+        for node in nodes:
+            if node["is_meta"]:
+                for j in node["deps"]:
+                    feeds_meta[j] = True
+
         folds = self._make_folds(N)
         per_node: dict[int, list[tuple[np.ndarray, Any]]] = {i: [] for i in range(len(nodes))}
 
@@ -227,6 +235,7 @@ class WalkForward:
                     dist_tr, dist_te = self._fit_node(
                         obj, Xo, yo, ids_o, ts_o, train_idx, test_idx, sw_o, g_o,
                         None, None, row_meta,
+                        inner_oof=feeds_meta[i],
                     )
                 fold_train[i] = dist_tr
                 fold_test[i] = dist_te
@@ -310,34 +319,78 @@ class WalkForward:
     # ---- per-node fold fit ----
 
     @staticmethod
-    def _fit_node(f, X, y, ids, ts, tr, te, sw, g, up_tr, up_te, row_meta=None):
+    def _fit_node(f, X, y, ids, ts, tr, te, sw, g, up_tr, up_te, row_meta=None,
+                  inner_oof=False):
         """Fit node ``f`` on the fold's train slice; predict on train + test.
 
         ``up_tr``/``up_te`` are the upstream fold dists for a meta node (None
         for a plain node). ``groups`` is index-sliced per fold; ``row_meta``
-        (id-keyed side inputs) is forwarded **verbatim** — the node subsets it by
-        the ``ids`` it gets. The helpers drop any kwarg the node's signature
+        (id-keyed side inputs) is forwarded **verbatim** — the node subsets it
+        by the ``ids`` it gets. The helpers drop any kwarg the node's signature
         doesn't declare.
+
+        ``inner_oof`` changes what ``dist_tr`` MEANS. By default it is the
+        node's prediction on the very rows it was just fit on — in-sample, and
+        systematically better than anything the node will produce in
+        production. That is fine for a leaf whose ``dist_tr`` nothing consumes,
+        but a Stacker feeds it to the meta as ``upstream=``, so the meta learns
+        to trust whichever upstream overfits hardest. Measured on a
+        pure-linear DGP with a depth-8 tree beside a ridge: the stack scored
+        CRPS 0.809 against ridge's 0.555 — the combination was worse than
+        either input.
+
+        With ``inner_oof``, the train half is split once more: the node is fit
+        on the first half and predicts the second, and vice versa, so every
+        ``dist_tr`` row is out-of-sample. The node is then refit on the whole
+        train slice for the ``dist_te`` the fold actually scores.
         """
         row_meta = row_meta or {}
-        sw_tr = sw[tr] if sw is not None else None
-        fit_extras: dict[str, Any] = {"ids": ids[tr], "timestamps": ts[tr], **row_meta}
-        if up_tr is not None:
-            fit_extras["upstream"] = up_tr
-        if g is not None:
-            fit_extras["groups"] = g[tr]
-        _fit_with_optional_weight(f, X[tr], y[tr], sw_tr, **fit_extras)
 
-        tr_extras: dict[str, Any] = {**row_meta}
-        te_extras: dict[str, Any] = {**row_meta}
-        if up_tr is not None:
-            tr_extras["upstream"] = up_tr
-            te_extras["upstream"] = up_te
-        if g is not None:
-            tr_extras["groups"] = g[tr]
-            te_extras["groups"] = g[te]
-        dist_tr = _predict_with_extras(f, X[tr], ids[tr], ts[tr], **tr_extras)
-        dist_te = _predict_with_extras(f, X[te], ids[te], ts[te], **te_extras)
+        def _fit_on(rows):
+            sw_r = sw[rows] if sw is not None else None
+            extras: dict[str, Any] = {
+                "ids": ids[rows], "timestamps": ts[rows], **row_meta,
+            }
+            if up_tr is not None:
+                extras["upstream"] = up_tr
+            if g is not None:
+                extras["groups"] = g[rows]
+            _fit_with_optional_weight(f, X[rows], y[rows], sw_r, **extras)
+
+        def _predict_on(rows, up):
+            extras: dict[str, Any] = {**row_meta}
+            if up is not None:
+                extras["upstream"] = up
+            if g is not None:
+                extras["groups"] = g[rows]
+            return _predict_with_extras(f, X[rows], ids[rows], ts[rows], **extras)
+
+        if inner_oof and up_tr is None and tr.shape[0] >= 4:
+            # Leaf nodes only: a meta's own upstream= inputs are already the
+            # fold dists, and re-splitting them would misalign the rows.
+            half = tr.shape[0] // 2
+            a, b = tr[:half], tr[half:]
+            # Stitch by ABSOLUTE row index so the result's ids are the same
+            # ids, in the same order, that a single fit-on-tr would have
+            # produced — the meta checks exactly that and refuses a mismatch.
+            parts = []
+            for fit_rows, pred_rows in ((a, b), (b, a)):
+                _fit_on(fit_rows)
+                parts.append((pred_rows, _predict_on(pred_rows, None)))
+            _fit_on(tr)                      # refit on the whole train slice
+            full_ts = np.empty(int(tr.max()) + 1, dtype=ts.dtype)
+            full_ts[tr] = ts[tr]
+            dist_tr = _stitch_folds(
+                parts,
+                timestamps=full_ts,
+                provenance=ProvenanceMeta.placeholder(
+                    getattr(f, "name", type(f).__name__), sigma_source="native"),
+            )
+        else:
+            _fit_on(tr)
+            dist_tr = _predict_on(tr, up_tr)
+
+        dist_te = _predict_on(te, up_te)
         return dist_tr, dist_te
 
     # ---- folds ----
