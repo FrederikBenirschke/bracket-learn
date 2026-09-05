@@ -218,7 +218,7 @@ def test_emos_falls_back_to_constant_sigma_when_mom_gives_negative_coef():
     rng = np.random.default_rng(0)
     n, k = 200, 4
     X = rng.normal(0, 1, (n, k))
-    # Build y so residuals shrink as spread widens, this gives d_<0 on
+    # Build y so residuals shrink as spread widens; this gives d_<0 on
     # the linear-in-variance MoM regression.
     ens_var = X.var(axis=1, ddof=0)
     noise = rng.normal(0, 1.0 / np.maximum(ens_var, 0.1), n)

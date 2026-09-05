@@ -147,10 +147,14 @@ class PipelineResult:
           - "pit_mean"         - mean PIT (≈ 0.5 if calibrated)
           - "pit_std"          - std of PIT
           - "log_loss_bracket", requires ``edges`` (any ladder shape)
-          - "brier_bracket"   , requires ``edges`` (any ladder shape)
+          - "brier_bracket", requires ``edges`` (any ladder shape)
 
-        ``edges`` is a single 1-D bracket ladder shared across rows; the
-        per-row ragged ``BracketLadder`` is built internally per stage.
+        ``edges`` takes any of the three shapes the scorers accept: a shared
+        1-D ``(B+1,)`` vector, a dense ``(N, B+1)`` grid, or a ragged per-row
+        sequence. A rotating ladder needs one of the latter two, and passing
+        a single vector for one is refused rather than scored against row 0's
+        grid. It is sliced alongside ``y`` for stages whose out-of-fold
+        coverage is a subset of the rows.
 
         y is the full original target vector; PipelineResult slices it to
         match each stage's OOF coverage via dist.ids.

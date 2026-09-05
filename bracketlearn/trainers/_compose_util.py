@@ -4,7 +4,7 @@ ordered list.
 The composition contract (``Stacker([p1, p2], meta)``) feeds a meta-combiner
 its upstream ``DistributionForecast`` objects **positionally**, in declared
 order, via ``upstream=[...]`` when run under ``WalkForward``. Names are not the
-wiring, they live only on the leaderboard.
+wiring; they live only on the leaderboard.
 
 Per Rule #0.5: a missing/empty upstream raises loud, never a silent empty
 list or partial set.

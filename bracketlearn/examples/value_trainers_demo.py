@@ -1,7 +1,8 @@
 """Train *for value* and score it: the `bracketlearn.value` trainers + metrics.
 
-End to end on the bundled anonymized weather sample
-(`examples/data/weather_value_sample.parquet`):
+End to end on the bundled weather sample
+(`examples/data/weather_value_sample.parquet`), 5,429 station-days of Kalshi
+contracts over 2026-03-17..09-03 across 18 stations:
 
   1. Build per-row bracket grids and the reference (market) price per bracket.
   2. Fit `BlendedBracketGBM` at several tilts `λ` (objective `L = CE − λ·EA`).

@@ -82,7 +82,7 @@ def test_core_does_not_see_the_calibration_tail_while_it_is_being_produced():
             f"core param {k} at calibration time should equal the HEAD-only "
             "fit; the calibration tail must be out-of-sample")
         assert v != pytest.approx(getattr(full, k), rel=1e-12), (
-            f"core param {k} equals the FULL-data fit, the calibrator is "
+            f"core param {k} equals the FULL-data fit; the calibrator is "
             "being fit on in-sample predictions (the original bug)")
 
 

@@ -782,7 +782,7 @@ def value_report_dist(
     """One-call value report for a fitted bracket model's ``predict_dist`` output.
 
     Pass the distribution, the **same** ``reference_by_id`` you trained with, and
-    realized ``y`` (array in row order or dict by id), this does the per-row
+    realized ``y`` (array in row order or dict by id). This does the per-row
     ragged flatten + renormalization and returns :func:`value_report`. When
     ``fee`` is given, the costed metrics (:func:`edge_alignment_costed`) are
     merged in under ``costed_*`` keys, so ``λ`` selection by costed value is a

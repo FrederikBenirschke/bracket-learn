@@ -20,10 +20,11 @@ every figure as base64: these four totalled 2.5 MB, of which 2.4 MB was output,
 which makes diffs unreadable and exceeds the size GitHub will render. A test
 (`tests/test_notebooks_are_stripped.py`) keeps them stripped.
 
-Reading them on GitHub therefore shows the code and not the results. The
-figures worth seeing are committed separately under
-[`docs/_static/`](../docs/_static/) and referenced from the README and the
-guides; run the notebooks locally for the rest.
+Reading them on GitHub therefore shows the code and not the results. Two
+figures are committed separately under [`docs/_static/`](../docs/_static/):
+the model-zoo CRPS leaderboard, in the README, and the grid-search CRPS
+surface, in [search.md](../docs/guides/search.md). The remaining plots are
+produced by running the notebooks locally.
 
 ## Running the notebooks
 

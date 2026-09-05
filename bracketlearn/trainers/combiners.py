@@ -433,7 +433,7 @@ class StackedParametric(BaseEstimator):
           equals σ̂² regardless of ν.
 
     Upstream forecasts arrive **positionally** via ``upstream=[dist, ...]``
-    (the ``Stacker`` contract), this reads ``.params['mu']`` (and
+    (the ``Stacker`` contract). This reads ``.params['mu']`` (and
     ``['sigma']`` when ``sigma_method='geometric_mean_upstream'``) from each,
     in declared order.
     """

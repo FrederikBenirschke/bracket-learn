@@ -82,7 +82,7 @@ def test_bracket_ladder_lossless_when_edges_match(prov, ids_ts, B):
 
 
 # ---------------------------------------------------------------------------
-# Quantile (clip), this is where the bug lives.
+# Quantile (clip): this is where the bug lives.
 # ---------------------------------------------------------------------------
 
 

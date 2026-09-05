@@ -56,7 +56,7 @@ class Stacker:
     that receives the upstreams' out-of-fold distributions positionally, in
     declared order, via ``upstream=[...]`` when run under `WalkForward`.
 
-    ``Stacker`` is pure structure, it holds no fitted state and is not run
+    ``Stacker`` is pure structure: it holds no fitted state and is not run
     directly; pass it to `WalkForward.fit_predict`.
     """
 

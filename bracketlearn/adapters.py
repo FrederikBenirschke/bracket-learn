@@ -305,7 +305,7 @@ class ThresholdLadder:
     """One row per ``P(X > k_i)``. Shared group_id across the entity's row block.
 
     Maps to single-side Kalshi ladders ("high above 70°F", "high above 75°F",
-    "high above 80°F" ...). Prices are *not* required to sum to 1, they are
+    "high above 80°F" ...). Prices are *not* required to sum to 1; they are
     survival-function values at increasing strikes, so they decrease monotonically.
     """
 

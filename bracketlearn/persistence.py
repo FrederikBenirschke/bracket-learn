@@ -25,7 +25,7 @@ Usage::
     new_dists = loaded.predict(X_new, ids=..., timestamps=...)
 
 A fitted ``WalkForward`` (refit_on_full=True), a ``PipelineResult``, or any
-other picklable object are all accepted, the envelope is identical.
+other picklable object are all accepted; the envelope is identical.
 
 Security note: ``pickle`` executes arbitrary code on load. Only load
 artefacts you produced yourself or that came from a trusted source.

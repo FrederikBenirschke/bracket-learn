@@ -52,3 +52,27 @@ Built-in metrics, all losses where lower wins:
 The objective is `result.score(...)[refit_node][scoring]`. Pass
 `refit_node=None` to average across all nodes, which fits a single combined
 node scored on that average.
+
+## Reading a grid
+
+![Grid-search CRPS against learning rate, one line per n_estimators](../_static/grid_search_crps.png)
+
+A 3x3 grid over `qreg__learning_rate` and `qreg__n_estimators` for
+`QuantileReg` on California housing, from
+[`grid_search_demo.ipynb`](../../notebooks/grid_search_demo.ipynb). Every
+point is a full expanding-window run, and the dashed line is the empirical
+baseline at CRPS 0.611.
+
+The shape is the usual one for gradient boosting: more trees buy most of what
+a higher learning rate would, so the three curves converge from the left and
+the surface is nearly flat across the right half. Every grid point beats the
+baseline by a wide margin, while the points within that flat region differ
+from each other by far less than they differ from the baseline. A grid with
+this shape is a reason to take the cheaper configuration rather than the
+nominal winner, since the margin separating them is the size a different
+fold split can reverse.
+
+The committed figure was rendered before the repo-wide dash removal, so its
+title still carries an em-dash that the source at
+`notebooks/_src/grid_search_demo.py` no longer has. Re-running the notebook
+regenerates it.

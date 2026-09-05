@@ -6,7 +6,7 @@ forecasts (TailSpecialist, CDFBoostBracket, LinearPoolDist) now live in
 ``bracketlearn.trainers.combiners``.
 
 The old ``BracketClassifier`` / ``BracketRegressor`` classes were
-removed in v0.5.0, they conflated per-row -> per-(row, bracket)
+removed in v0.5.0: they conflated per-row -> per-(row, bracket)
 expansion with model fitting and hardcoded the target as a bracket-hit
 indicator. The two concerns now live separately: callers compose
 ``bracketlearn.transformers.BracketExpander`` with any sklearn-style

@@ -230,7 +230,7 @@ class BlendedBracketNet(BaseEstimator):
     hyperparameters only; grids/references are passed to ``fit`` /
     ``predict_dist``. Inputs are standardized with train-set statistics.
     ``ea_scale`` rescales the (small-magnitude) per-contract EA term so ``lam``
-    spans a range comparable to the GBM, left ``None``, it is derived from the
+    spans a range comparable to the GBM. When ``None``, it is derived from the
     fit-set references by :func:`ea_scale_for_reference` and recorded on
     ``ea_scale_``.
     """

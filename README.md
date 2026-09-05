@@ -397,7 +397,7 @@ README should carry:
 
 | Topic | Guide |
 |---|---|
-| Expanding / rolling window, embargo, purging | [cv.md](docs/guides/cv.md) |
+| Expanding / rolling window, embargo | [cv.md](docs/guides/cv.md) |
 | Sample weights and recency decay | [weights.md](docs/guides/weights.md) |
 | Cross-site partial pooling | [concepts.md](docs/guides/concepts.md) |
 | Multi-target (HIGH and LOW together) | [multitarget.md](docs/guides/multitarget.md) |
