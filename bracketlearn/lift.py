@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class GlobalResidual(BaseEstimator):
     """Fits one σ from OOF residuals. Produces parametric normal."""
 
@@ -90,7 +90,7 @@ class GlobalResidual(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class StudentTResidual(BaseEstimator):
     """Fits (σ, ν) from OOF residuals via MLE. Produces parametric student_t.
 
@@ -177,7 +177,7 @@ class StudentTResidual(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class GARCHResidual(BaseEstimator):
     """Fits GARCH(1,1) on OOF residuals; lifts to per-row σ.
 
@@ -325,7 +325,7 @@ class GARCHResidual(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class Isotonic(BaseEstimator):
     """Isotonic calibration on bracket probabilities.
 
@@ -431,7 +431,7 @@ class Isotonic(BaseEstimator):
         )
 
 
-@dataclass
+@dataclass(repr=False)
 class ConformalCalibrate(BaseEstimator):
     """Conformalised Quantile Regression (Romano et al. 2019).
 
@@ -510,7 +510,7 @@ class ConformalCalibrate(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class PITCalibrate(BaseEstimator):
     """Isotonic recalibration of a predictive CDF via PIT (Diebold 1998,
     Gneiting & Ranjan 2013).

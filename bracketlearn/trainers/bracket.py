@@ -28,7 +28,7 @@ from bracketlearn.forecast import (
 )
 
 # ---------------------------------------------------------------------------
-# CumulativeBinary, one classifier on (X ⊕ cutpoint) → 1[y ≤ cutpoint].
+# CumulativeBinary, one classifier on (X ⊕ cutpoint) → 1[y < cutpoint].
 # ---------------------------------------------------------------------------
 
 
@@ -72,12 +72,12 @@ def _validate_cumulative_grids(
             )
 
 
-@dataclass
+@dataclass(repr=False)
 class CumulativeBinary(BaseEstimator):
     """Single LightGBM binary classifier on augmented features.
 
-    Fits one classifier over (X, cutpoint) → 1[y ≤ cutpoint], then at
-    predict time queries P(y ≤ k) for each cutpoint k in the row's own
+    Fits one classifier over (X, cutpoint) → 1[y < cutpoint], then at
+    predict time queries P(y < k) for each cutpoint k in the row's own
     grid and emits a per-row bracket-backed dist.
 
     Data contract, construction is hyperparameters only

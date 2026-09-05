@@ -147,7 +147,7 @@ def _aligned_reference(
     return m_exp
 
 
-@dataclass
+@dataclass(repr=False)
 class BlendedBracketGBM(BaseEstimator):
     """LightGBM bracket model trained on ``L = CE − λ·EA`` via a custom objective.
 
@@ -222,7 +222,7 @@ class BlendedBracketGBM(BaseEstimator):
         return exp.assemble_dist(q, ids=ids, timestamps=timestamps, name=self.name)
 
 
-@dataclass
+@dataclass(repr=False)
 class BlendedBracketNet(BaseEstimator):
     """Torch MLP bracket model trained on ``L = CE − λ·EA``.
 

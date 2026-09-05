@@ -24,7 +24,7 @@ from bracketlearn.trainers._common import (
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class SklearnPoint(BaseEstimator):
     """Adapter: any object with sklearn's fit(X, y) + predict(X) is a
     PointForecaster.
@@ -89,7 +89,7 @@ class SklearnPoint(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class OnlineAggregator(BaseEstimator):
     """AdaHedge over forecast experts (columns of X).
 
@@ -377,7 +377,7 @@ class OnlineAggregator(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class RNNHourly(BaseEstimator):
     """Tiny GRU on a (24, C) hourly tensor → residual-corrected point forecast.
 

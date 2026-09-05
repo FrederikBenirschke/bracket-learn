@@ -56,7 +56,7 @@ _EULER_GAMMA = 0.5772156649015329
 _DIST_FEATURE_TAUS: tuple[float, ...] = (0.05, 0.25, 0.50, 0.75, 0.95)
 
 
-@dataclass
+@dataclass(repr=False)
 class DistAsFeatures(BaseEstimator):
     """Materialise K upstream distributions into a feature matrix and hand it
     to a downstream forecaster.
@@ -165,7 +165,7 @@ class DistAsFeatures(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class BracketStacking(BaseEstimator):
     """Meta-learner: ``estimator`` over concatenated bracket-prob vectors.
 
@@ -395,7 +395,7 @@ class BracketStacking(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class StackedParametric(BaseEstimator):
     """Meta-learner over upstream forecasters' parametric outputs.
 
@@ -703,7 +703,7 @@ class StackedParametric(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class BMAStacking(BaseEstimator):
     """Bayesian model averaging meta-learner. DistForecaster over upstreams.
 
@@ -925,7 +925,7 @@ class BMAStacking(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class TailSpecialist(BaseEstimator):
     """Gaussian body (from upstream EMOS μ̂/σ̂) + LightGBM tail classifiers,
     on per-row brackets.
@@ -1119,7 +1119,7 @@ class TailSpecialist(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class LinearPoolDist(BaseEstimator):
     """Linear (mixture) opinion pool over K upstream dists:
 
@@ -1274,7 +1274,7 @@ class LinearPoolDist(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class CDFBoostBracket(BaseEstimator):
     """B LightGBM binary classifiers over upstream-CDF features.
 

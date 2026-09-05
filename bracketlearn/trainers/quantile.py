@@ -56,7 +56,7 @@ _DEFAULT_QUANTILES: tuple[float, ...] = (
 )
 
 
-@dataclass
+@dataclass(repr=False)
 class QuantileReg(BaseEstimator):
     """Per-τ LightGBM quantile-regression heads.
 
@@ -137,7 +137,7 @@ class QuantileReg(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class QuantileForest(BaseEstimator):
     """Quantile Regression Forest (Meinshausen 2006).
 

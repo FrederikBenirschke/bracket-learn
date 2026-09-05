@@ -30,7 +30,7 @@ from bracketlearn.trainers._common import (
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class EMOS(BaseEstimator):
     """EMOS / NGR distributional regression for an ensemble forecast.
 
@@ -309,7 +309,7 @@ def _crps_nelder_mead_loss(
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class HeteroscedasticNormal(BaseEstimator):
     r"""Distributional linear regression for a Normal: ``N(μ(x), σ(x)²)``.
 
@@ -506,7 +506,7 @@ class HeteroscedasticNormal(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class BayesianRidge(BaseEstimator):
     """Conjugate Bayesian linear regression. Predictive distribution per row
     is Student-t (μ_n, σ_n, ν_n), σ_n grows with feature-space distance from
@@ -701,7 +701,7 @@ class BayesianRidge(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class HierarchicalNormal(BaseEstimator):
     """Hierarchical normal regression with site-level partial pooling.
 
@@ -1010,7 +1010,7 @@ class HierarchicalNormal(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class NGBoostNormal(BaseEstimator):
     """Native parametric-normal DistForecaster backed by NGBoost.
 
@@ -1110,7 +1110,7 @@ class NGBoostNormal(BaseEstimator):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class MixtureNormals(BaseEstimator):
     """Per-vendor Gaussian mixture.
 

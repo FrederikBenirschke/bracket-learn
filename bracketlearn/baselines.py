@@ -33,7 +33,7 @@ _DEFAULT_TAUS: tuple[float, ...] = (
 )
 
 
-@dataclass
+@dataclass(repr=False)
 class EmpiricalDistribution(BaseEstimator):
     """Marginal-y baseline: ignore X, emit the empirical CDF of training y.
 
@@ -98,7 +98,7 @@ class EmpiricalDistribution(BaseEstimator):
         )
 
 
-@dataclass
+@dataclass(repr=False)
 class Persistence(BaseEstimator):
     """``mu_t = y_{t - lag}``. PointForecaster, wrap with a Lifter for σ.
 
@@ -166,7 +166,7 @@ class Persistence(BaseEstimator):
         )
 
 
-@dataclass
+@dataclass(repr=False)
 class PersistenceDist(BaseEstimator):
     """Distributional persistence: ``y_t ~ N(y_{t-lag}, σ̂²)``.
 

@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from bracketlearn.forecast import DistributionForecast
 
 
-@dataclass
+@dataclass(repr=False)
 class BracketMask(BaseEstimator):
     """Per-row restriction of a bracket forecast to a tradable mask.
 
