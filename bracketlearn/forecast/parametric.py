@@ -35,6 +35,10 @@ from bracketlearn.forecast.base import DistributionForecast
 
 class _ParametricMixin:
     _rv: ClassVar[Any]
+    # Supplied by the concrete subclass (via DistributionForecast). Declared
+    # here so the row-count checks below type-check, the same reason ``_rv``
+    # is declared: the mixin requires it but does not define it.
+    ids: np.ndarray
 
     def _per_row_params(self) -> dict[str, np.ndarray]:
         """Per-row 1-D shape params for self._rv (e.g. {'loc': mu, 'scale': sigma})."""

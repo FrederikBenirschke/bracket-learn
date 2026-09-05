@@ -149,6 +149,13 @@ python_version = "3.11"
 strict_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
+# Without this, mypy skips the BODY of any function whose signature is
+# unannotated. Pipeline.fit, Pipeline.predict_dist and WalkForward._fit_node
+# were all unannotated, so the two most intricate modules in the package were
+# reported clean while never being read: "Success: no issues found in 34
+# source files" covered everything except the code most likely to be wrong.
+# Turning it on found 9 real narrowing gaps.
+check_untyped_defs = true
 # The type gate covers the library only. Examples / notebooks / tests carry
 # intentional type games (sklearn datasets, pandas, jupytext cells) that are
 # not part of the published, typed surface, so the package is enumerated by

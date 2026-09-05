@@ -394,19 +394,20 @@ class Pipeline:
     ``name`` is an optional leaderboard label (auto-derived otherwise).
     """
 
-    def __init__(self, stages, *, name=None,
-                 calibration_fraction=0.2, lifter_oof_fraction=0.5):
+    def __init__(self, stages: Sequence[Any], *, name: str | None = None,
+                 calibration_fraction: float = 0.2,
+                 lifter_oof_fraction: float = 0.5) -> None:
         stages = list(stages)
         if not stages:
             raise ValueError("Pipeline needs at least one stage")
         self.stages = stages
         self.calibration_fraction = calibration_fraction
         self.lifter_oof_fraction = lifter_oof_fraction
-        self._transformers: list = []
-        self._point = None        # PointForecaster
-        self._lifter = None       # Lifter (requires a preceding point)
-        self._model = None        # DistForecaster
-        self._calibrator = None   # Calibrator (requires a preceding core)
+        self._transformers: list[Any] = []
+        self._point: Any | None = None       # PointForecaster
+        self._lifter: Any | None = None      # Lifter (requires a preceding point)
+        self._model: Any | None = None       # DistForecaster
+        self._calibrator: Any | None = None  # Calibrator (requires a preceding core)
         seen_core = False
         for st in stages:
             kind = _stage_kind(st)
@@ -456,8 +457,9 @@ class Pipeline:
 
     # ---- fit ----
 
-    def fit(self, X, y, *, ids, timestamps=None, center=None,
-            sample_weight=None, upstream=None, **kwargs):
+    def fit(self, X: Any, y: Any, *, ids: Any, timestamps: Any = None,
+            center: Any = None, sample_weight: Any = None,
+            upstream: Any = None, **kwargs: Any) -> Pipeline:
         Xz = np.asarray(X, dtype=float)
         yz = np.asarray(y, dtype=float)
         n = yz.shape[0]
@@ -516,7 +518,11 @@ class Pipeline:
             """Fit the core forecaster on ``rows`` only."""
             if self._point is not None:
                 # Point→Lifter with an internal OOF half-split, nested inside
-                # whatever slice it is handed.
+                # whatever slice it is handed. __init__ refuses a
+                # PointForecaster without a following Lifter, so _lifter is
+                # bound whenever _point is.
+                assert self._lifter is not None
+
                 sub_n = rows.stop - rows.start
                 half = max(1, int(sub_n * self.lifter_oof_fraction))
                 if half >= sub_n:
@@ -553,6 +559,7 @@ class Pipeline:
             cal_dist = self._core_predict_dist(
                 Xz[-c:], ids_arr[-c:], ts[-c:], **kwargs,
             )
+            assert self._calibrator is not None   # c > 0 implies one is set
             self._calibrator.fit(cal_dist, yz[-c:])
             # 3. refit the CORE on everything, for prediction. The
             # transformers are deliberately NOT refit: they define the z
@@ -573,12 +580,15 @@ class Pipeline:
 
     # ---- predict ----
 
-    def _core_predict_dist(self, Xz, ids, ts, upstream=None, groups=None, **kwargs):
+    def _core_predict_dist(self, Xz: Any, ids: Any, ts: Any,
+                           upstream: Any = None, groups: Any = None,
+                           **kwargs: Any) -> Any:
         """The core forecaster's dist in the model's working (z) space,
         before calibration and before the transformers' inverse. ``kwargs`` are
         id-keyed side inputs (e.g. ``cutpoints_by_id`` / ``brackets_by_id``)
         forwarded verbatim; signature-filtered for the core forecaster."""
         if self._point is not None:
+            assert self._lifter is not None   # paired at construction
             pt = self._point.predict(Xz, ids=ids, timestamps=ts)
             return self._lifter.lift(pt)
         extras: dict[str, Any] = {**kwargs}
@@ -588,8 +598,9 @@ class Pipeline:
             extras["groups"] = groups
         return _predict_with_extras(self._model, Xz, ids, ts, **extras)
 
-    def predict_dist(self, X, *, ids, timestamps, center=None,
-                     upstream=None, groups=None, **kwargs):
+    def predict_dist(self, X: Any, *, ids: Any, timestamps: Any,
+                     center: Any = None, upstream: Any = None,
+                     groups: Any = None, **kwargs: Any) -> Any:
         Xz = np.asarray(X, dtype=float)
         ids_arr = np.asarray(ids)
         ts = np.asarray(timestamps)
