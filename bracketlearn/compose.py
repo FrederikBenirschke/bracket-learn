@@ -227,8 +227,18 @@ class WalkForward:
                 if node["is_meta"]:
                     up_tr = [fold_train[j] for j in node["deps"]]
                     up_te = [fold_test[j] for j in node["deps"]]
+                    # Under time-series CV a leaf's inner OOF is forward
+                    # only, so its dist_tr covers the LATER half of
+                    # train_idx, not all of it. Fit the meta on exactly the
+                    # rows its upstream actually spans; passing train_idx
+                    # would pair 50 targets with 25 upstream predictions.
+                    meta_tr = train_idx
+                    if up_tr:
+                        n_up = up_tr[0].ids.shape[0]
+                        if n_up != train_idx.shape[0]:
+                            meta_tr = train_idx[-n_up:]
                     dist_tr, dist_te = self._fit_node(
-                        obj, Xo, yo, ids_o, ts_o, train_idx, test_idx, sw_o, g_o,
+                        obj, Xo, yo, ids_o, ts_o, meta_tr, test_idx, sw_o, g_o,
                         up_tr, up_te, row_meta,
                     )
                 else:
@@ -236,6 +246,7 @@ class WalkForward:
                         obj, Xo, yo, ids_o, ts_o, train_idx, test_idx, sw_o, g_o,
                         None, None, row_meta,
                         inner_oof=feeds_meta[i],
+                        time_ordered=(self.cv != "kfold"),
                     )
                 fold_train[i] = dist_tr
                 fold_test[i] = dist_te
@@ -320,7 +331,7 @@ class WalkForward:
 
     @staticmethod
     def _fit_node(f, X, y, ids, ts, tr, te, sw, g, up_tr, up_te, row_meta=None,
-                  inner_oof=False):
+                  inner_oof=False, time_ordered=True):
         """Fit node ``f`` on the fold's train slice; predict on train + test.
 
         ``up_tr``/``up_te`` are the upstream fold dists for a meta node (None
@@ -339,10 +350,26 @@ class WalkForward:
         CRPS 0.809 against ridge's 0.555, the combination was worse than
         either input.
 
-        With ``inner_oof``, the train half is split once more: the node is fit
-        on the first half and predicts the second, and vice versa, so every
-        ``dist_tr`` row is out-of-sample. The node is then refit on the whole
-        train slice for the ``dist_te`` the fold actually scores.
+        With ``inner_oof``, the train slice is split once more so that
+        ``dist_tr`` is out-of-sample. How it splits depends on
+        ``time_ordered``:
+
+        - ``time_ordered=True`` (``expanding-window`` / ``rolling-window``,
+          where rows arrive sorted by timestamp): FORWARD ONLY. The node is
+          fit on the first half and predicts the second, and the first half
+          gets no ``dist_tr`` rows at all. Predicting the first half would
+          require fitting on strictly later data, which is lookahead: the
+          meta would learn to weight upstreams by how well they perform on
+          their own past. The meta therefore trains on the second half of
+          each fold's train slice, which is half the rows, and that is the
+          cost of causality rather than a limitation to work around.
+        - ``time_ordered=False`` (``kfold``, where the caller has already
+          declared row order carries no information): the symmetric swap,
+          fit on each half and predict the other, so every ``dist_tr`` row
+          is out-of-sample.
+
+        The node is then refit on the whole train slice for the ``dist_te``
+        the fold actually scores.
         """
         row_meta = row_meta or {}
 
@@ -370,11 +397,15 @@ class WalkForward:
             # fold dists, and re-splitting them would misalign the rows.
             half = tr.shape[0] // 2
             a, b = tr[:half], tr[half:]
+            # Under time-series CV, fit-on-b/predict-on-a is anti-causal: b
+            # is strictly later than a. Only the forward pass runs, so
+            # dist_tr covers b alone. Under kfold both directions are legal.
+            passes = ((a, b),) if time_ordered else ((a, b), (b, a))
             # Stitch by ABSOLUTE row index so the result's ids are the same
             # ids, in the same order, that a single fit-on-tr would have
             # produced, the meta checks exactly that and refuses a mismatch.
             parts = []
-            for fit_rows, pred_rows in ((a, b), (b, a)):
+            for fit_rows, pred_rows in passes:
                 _fit_on(fit_rows)
                 parts.append((pred_rows, _predict_on(pred_rows, None)))
             _fit_on(tr)                      # refit on the whole train slice

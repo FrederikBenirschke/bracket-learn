@@ -186,18 +186,43 @@ def test_transformers_do_not_see_the_calibration_tail():
         "scale equals the full-data fit, the transformer saw the tail")
 
 
-def test_transformers_are_refit_on_everything_before_predicting():
-    """Same contract as the core: the holdout is for calibration only."""
+def test_transformers_keep_the_space_the_calibrator_was_fit_in():
+    """The transformer is NOT refit after calibration, unlike the core.
+
+    The two are not symmetric, and an earlier version of this test asserted
+    that they were. The calibrator is applied AFTER the core, to its output
+    distribution, so refitting the core underneath it is harmless. The
+    transformer sits BELOW the core: refitting it moves the z space that the
+    calibrator's correction is indexed on, and the calibrator is never refit.
+    Isotonic maps absolute z values and is not scale invariant, so the
+    correction then lands at the wrong scale, measured on this fixture as a
+    calibrator fit at scale 9.96 and applied at 22.19.
+
+    Fitting the transformer on the head only is also what keeps the tail out
+    of it, so one choice serves both invariants.
+    """
     from bracketlearn.transform import GroupByZScore
 
     X, y, ids, ts = _wide_tail()
+    n = len(y)
+    c = max(2, int(n * 0.2))
     pipe = Pipeline([GroupByZScore(), EMOS(fit_method="crps_nelder_mead"), _cal()],
                     calibration_fraction=0.2)
     pipe.fit(X, y, ids=ids, timestamps=ts)
+
+    head = GroupByZScore()
+    head.fit(X[:n - c], y[:n - c], ids=ids[:n - c], center=None)
     full = GroupByZScore()
     full.fit(X, y, ids=ids, center=None)
+
     assert pipe._transformers[0].scale_global_ == pytest.approx(
-        full.scale_global_, rel=1e-9)
+        head.scale_global_, rel=1e-9), (
+        "the fitted transformer must still hold the head-fit scale, which is "
+        "the space the calibrator learned its correction in")
+    assert pipe._transformers[0].scale_global_ != pytest.approx(
+        full.scale_global_, rel=1e-6), (
+        "the transformer was refit on all rows, so the calibrator's "
+        "correction is now applied at a scale it never saw")
 
 
 def test_point_lifter_with_calibrator_also_holds_the_tail_out():

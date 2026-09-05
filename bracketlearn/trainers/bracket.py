@@ -177,7 +177,15 @@ class CumulativeBinary(BaseEstimator):
         y_aug = np.empty(X_aug.shape[0], dtype=int)
         for i in range(N):
             sl = slice(offsets[i], offsets[i + 1])
-            y_aug[sl] = (y[i] <= per_row_cuts[i]).astype(int)
+            # Strict `<`, so the target is P(y < cut) and a realized value
+            # sitting exactly on a cutpoint is labelled into the bracket
+            # ABOVE it. That matches the half-open [lo, hi) membership every
+            # other site uses (realized_bin, score._onehot, Isotonic), which
+            # is searchsorted(side="right") - 1. Training `<=` here priced
+            # every on-edge outcome one bracket low, and on an integer-valued
+            # settlement against an integer ladder that is roughly half of
+            # all rows.
+            y_aug[sl] = (y[i] < per_row_cuts[i]).astype(int)
         n_feat = X_aug.shape[1]
         monotone = [0] * (n_feat - 1) + [1] if self.monotone else None
         self.model_ = lgb.LGBMClassifier(

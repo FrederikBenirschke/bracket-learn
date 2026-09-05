@@ -237,6 +237,27 @@ def crps_bracket(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
     edges = dist.edges
     probs_clean = np.nan_to_num(dist.probs, nan=0.0)
     N, B_max = probs_clean.shape
+    # An unbounded bin holding mass makes the integral diverge: the uniform
+    # density there is p/inf = 0, and the tail contributes a**2 * inf. That
+    # is a real divergence rather than a numerical artifact, and it used to
+    # surface as a bare nan (0 * inf) with no indication which row caused
+    # it. The +-inf ladder is this library's canonical encoding, so refuse
+    # explicitly instead. log_score and pit are finite here and need no
+    # midpoint; they are the metrics to use on an open ladder.
+    _widths = edges[:, 1:] - edges[:, :-1]
+    _bad = ~np.isfinite(_widths) & (probs_clean > 0.0)
+    if _bad.any():
+        _rows = np.flatnonzero(_bad.any(axis=1))
+        _i = int(_rows[0])
+        _k = int(np.flatnonzero(_bad[_i])[0])
+        raise ValueError(
+            f"crps_bracket: row {_i} bin {_k} spans "
+            f"[{edges[_i, _k]}, {edges[_i, _k + 1]}] and carries "
+            f"{probs_clean[_i, _k]:.6g} of the mass, so the CRPS integral "
+            f"diverges. {len(_rows)} of {N} row(s) affected. Score an open "
+            f"ladder with log_score_bracket or pit, or re-price onto finite "
+            f"outer edges."
+        )
     cum = np.concatenate(
         [np.zeros((N, 1)), np.cumsum(probs_clean, axis=1)], axis=1
     )
@@ -244,6 +265,13 @@ def crps_bracket(dist: DistributionForecast, y: np.ndarray) -> np.ndarray:
     out = np.zeros(N)
     for k in range(B_max):
         active = B_per_row > k
+        # A zero-mass unbounded bin contributes exactly zero: it can only be
+        # an outer tail, where F is 0 (left) or 1 (right) throughout, so the
+        # integrand vanishes identically. Evaluating it anyway forms
+        # 0**2 * inf = nan and poisons the whole row. Bins that are unbounded
+        # AND carry mass were already refused above.
+        active = active & ~(~np.isfinite(edges[:, k + 1] - edges[:, k])
+                            & (probs_clean[:, k] == 0.0))
         if not active.any():
             continue
         lo = edges[:, k]

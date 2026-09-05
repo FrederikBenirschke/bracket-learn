@@ -550,8 +550,17 @@ class Pipeline:
                 Xz[-c:], ids_arr[-c:], ts[-c:], **kwargs,
             )
             self._calibrator.fit(cal_dist, yz[-c:])
-            # 3. refit transformers + core on everything, for prediction
-            Xz, yz = _fit_transformers(slice(0, n))
+            # 3. refit the CORE on everything, for prediction. The
+            # transformers are deliberately NOT refit: they define the z
+            # space the calibrator just learned its correction in, and
+            # Isotonic maps absolute z values, so it is not scale
+            # invariant. Refitting them here moved the space underneath a
+            # calibrator that is never refit, and the correction was then
+            # applied at the wrong scale (measured: fit at std(mu)=8.90,
+            # applied at std(mu)=0.99). Keeping the head-fit transformers
+            # costs nothing, since _fit_transformers already transforms
+            # all n rows and only its FIT is restricted to the head, which
+            # is also what keeps the tail out of them.
             _fit_core(slice(0, n))
         else:
             Xz, yz = _fit_transformers(slice(0, n))

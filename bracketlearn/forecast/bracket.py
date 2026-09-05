@@ -278,13 +278,46 @@ class BracketForecast(DistributionForecast):
         out = np.where(inside, density, 0.0)
         return out[:, 0] if scalar else out
 
+    def _finite_mids(self, *, caller: str) -> np.ndarray:
+        """Per-row bin midpoints, (N, B_max). Raises when a bin carrying
+        mass is unbounded.
+
+        Under this backing's uniform-within-bin density an open tail bin has
+        no finite mean, so ``0.5 * (-inf + 60.0)`` is not a midpoint to be
+        salvaged. Computing it anyway produced ``0 * inf = nan``, which
+        ``nansum`` cannot recover: the resulting NaN propagated silently
+        through ``DistAsFeatures`` into a design matrix and past
+        ``BMAStacking``'s ``var <= 0`` guard. The ``±inf`` ladder is this
+        library's canonical encoding, so this path is reached by ordinary
+        use and has to fail loudly rather than return a number.
+
+        A bin whose edge is infinite but which carries no mass is fine, and
+        its midpoint is zeroed so it contributes nothing to the sum.
+        """
+        mids = 0.5 * (self.edges[:, 1:] + self.edges[:, :-1])
+        p = np.nan_to_num(self.probs, nan=0.0)
+        bad = ~np.isfinite(mids) & (p > 0.0)
+        if bad.any():
+            rows = np.flatnonzero(bad.any(axis=1))
+            i = int(rows[0])
+            k = int(np.flatnonzero(bad[i])[0])
+            raise ValueError(
+                f"{caller}: row {i} bin {k} spans "
+                f"[{self.edges[i, k]}, {self.edges[i, k + 1]}] and carries "
+                f"{p[i, k]:.6g} of the mass, so it has no finite midpoint. "
+                f"{len(rows)} of {mids.shape[0]} row(s) affected. An open "
+                f"tail has no mean under a uniform-within-bin density. Use "
+                f"cdf_at / log_score / pit, which need no midpoint, or "
+                f"re-price the ladder onto finite outer edges."
+            )
+        return np.where(np.isfinite(mids), mids, 0.0)
+
     def mean(self):
-        # Per-row midpoints weighted by probs; NaN-tolerant via nansum.
-        mids = 0.5 * (self.edges[:, 1:] + self.edges[:, :-1])      # (N, B_max)
+        mids = self._finite_mids(caller="mean")
         return np.nansum(self.probs * mids, axis=1)
 
     def variance(self):
-        mids = 0.5 * (self.edges[:, 1:] + self.edges[:, :-1])
+        mids = self._finite_mids(caller="variance")
         m = np.nansum(self.probs * mids, axis=1)
         ex2 = np.nansum(self.probs * (mids ** 2), axis=1)
         return ex2 - m ** 2
@@ -319,10 +352,14 @@ class BracketForecast(DistributionForecast):
     def to_point(self, *, how: str = "mean"):
         if how not in ("mean", "median", "mode"):
             raise ValueError(f"how={how!r} not in 'mean'/'median'/'mode'")
-        mids = 0.5 * (self.edges[:, :-1] + self.edges[:, 1:])
         if how == "mean":
-            return np.nansum(self.probs * mids, axis=1)
+            # Guarded: an open tail carrying mass has no finite mean.
+            return np.nansum(self.probs * self._finite_mids(caller="to_point"), axis=1)
         if how == "mode":
+            # Unguarded on purpose: the mode is a bin choice, so it is
+            # well defined even when that bin is unbounded. It returns
+            # ±inf for an argmax tail bin, which is the honest answer.
+            mids = 0.5 * (self.edges[:, :-1] + self.edges[:, 1:])
             p_clean = np.nan_to_num(self.probs, nan=-np.inf)
             top = np.argmax(p_clean, axis=1)
             rows = np.arange(self.probs.shape[0])
