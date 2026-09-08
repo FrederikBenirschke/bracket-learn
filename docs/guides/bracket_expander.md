@@ -3,22 +3,22 @@
 `BracketExpander` is the "use any sklearn classifier or regressor" entry point
 for bracket-aware learning. It owns the per-row → per-(row, bracket) reshape and
 nothing more. Model choice, loss function, and the per-(row, bracket) target
-stay in your code.
+stay in the caller's code.
 
 ## Why this exists
 
 The pre-v0.5.0 classes `BracketClassifier` and `BracketRegressor` packed two
-concerns into `fit`:
+concerns into `fit`.
 
 1. **Reshape** a per-row design `(N, F)` into a per-(row, bracket) design
    `(M, F+2)` with `[..., lo, hi]` appended.
 2. **Fit** an sklearn estimator on that design with a hardcoded bracket-hit
    target `1[y ∈ [lo, hi))`.
 
-A caller who wanted a different per-(row, bracket) target (a mispricing residual
-`hit − market_p`, an importance-weighted hit, a quantile loss) had to fork the
-class. v0.5.0 splits the two: the reshape lives in `BracketExpander`, and the
-fit is plain sklearn.
+A caller who wanted a different per-(row, bracket) target had to fork the
+class. Examples are a mispricing residual `hit − market_p`, an
+importance-weighted hit, or a quantile loss. v0.5.0 splits the two concerns.
+The reshape lives in `BracketExpander`, and the fit is plain sklearn.
 
 ## Default flow: bracket-hit target
 
@@ -50,12 +50,12 @@ dist = exp.assemble_dist(scores, ids=pred_ids, timestamps=pred_ts)
 ```
 
 `assemble_dist` row-renormalises so each predicted row sums to 1. The raw
-per-bracket scores from `clf.predict_proba` won't sum to 1 on their own, since
+per-bracket scores from `clf.predict_proba` do not sum to 1 on their own, since
 the model scores each augmented row independently.
 
 ## Custom per-(row, bracket) target
 
-Skip the default `y_exp` and build the target on top of `X_exp`:
+Skip the default `y_exp` and build the target on top of `X_exp`.
 
 ```python
 X_exp, y_hit = exp.fit_transform(X_train, y_train, ids=train_ids)
@@ -71,7 +71,7 @@ reg = LGBMRegressor().fit(X_exp, y_target)
 ```
 
 The expander holds no opinion about which estimator class fits the augmented
-design or what the target should be. That's the point.
+design or about what the target should be.
 
 ## Comparison with the distribution-first trainers
 
@@ -86,6 +86,6 @@ design or what the target should be. That's the point.
 | sklearn estimator         | caller-built target  | flexibility (MLP, ElasticNet, custom GAM) outside the built-in families.       |
 
 For straightforward bracket-hit problems on smooth data, prefer
-`CumulativeBinary`; its monotone-LGBM cumulative head gives calibration the
-unconstrained expander can't match. Reach for the expander when the target
-isn't a plain hit, or when the estimator you want isn't already wrapped.
+`CumulativeBinary`. Its monotone-LGBM cumulative head gives calibration the
+unconstrained expander cannot match. Reach for the expander when the target is
+not a plain hit, or when the desired estimator is not already wrapped.

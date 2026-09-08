@@ -4,20 +4,20 @@ Inherits from ``sklearn.base.BaseEstimator`` so bracketlearn estimators
 are isinstance-compatible with sklearn helpers (``check_is_fitted``,
 ``__sklearn_tags__``, anything that does
 ``isinstance(est, sklearn.base.BaseEstimator)``). Note that
-``sklearn.utils.estimator_checks.check_estimator`` will NOT pass on a
-bracketlearn forecaster, our ``predict`` returns a ``PointForecast``,
-``predict_dist`` returns a ``DistributionForecast``, neither of which is
-the ndarray sklearn expects. The isinstance interop is the actual win
-of subclassing; ``check_estimator`` compliance is a separate workstream.
+``sklearn.utils.estimator_checks.check_estimator`` does not pass on a
+bracketlearn forecaster. ``predict`` returns a ``PointForecast`` and
+``predict_dist`` returns a ``DistributionForecast``, neither of which is the
+ndarray sklearn expects. The isinstance interop is what subclassing buys.
+``check_estimator`` compliance is a separate workstream.
 
-Contract:
+The contract is as follows.
 
 - ``__init__`` parameters are stored on ``self`` under the same name.
 - ``get_params()`` returns a dict of constructor params; fitted state
   (attributes ending in ``_``) is excluded.
-- ``clone(estimator)`` returns a fresh, *unfitted* copy of the estimator
-  with the same constructor params. Used by the pipeline to give each
-  CV fold its own forecaster instance.
+- ``clone(estimator)`` returns a fresh, unfitted copy of the estimator with
+  the same constructor params. It is used by the pipeline to give each CV fold
+  its own forecaster instance.
 
 The pipeline calls ``clone(forecaster)`` before each fold's fit so the
 user-supplied forecaster instance is never mutated and folds cannot
@@ -44,9 +44,9 @@ def _auto_fill_ids_ts(method):
     positional argument (X), ``ids = np.arange(N)``,
     ``timestamps = np.arange(N, dtype=float)``.
 
-    Idempotent: if the caller explicitly passes ids/timestamps we
-    leave them alone. Does nothing for methods whose signature
-    doesn't actually take these kwargs.
+    The wrapper is idempotent. Explicitly passed ids and timestamps are left
+    alone, and nothing is done for methods whose signature does not take these
+    kwargs.
     """
     try:
         sig = inspect.signature(method)
@@ -99,27 +99,28 @@ class BaseEstimator(_SklearnBaseEstimator):
     attributes whose name ends with ``_`` (sklearn convention) so
     ``get_params`` can distinguish them.
 
-    Subclasses get the following sklearn-compat behaviour for free:
+    Subclasses get the following sklearn-compatible behaviour automatically.
 
-    - ``fit`` / ``predict`` / ``predict_dist`` wrapped so callers may omit
-      ``ids=`` / ``timestamps=`` (auto-filled to ``arange(N)``).
-    - ``__sklearn_is_fitted__`` returns True iff any attribute ending in
-      ``_`` (sklearn convention for fitted state) is set to a non-None
-      value.
-    - ``n_features_in_`` / ``feature_names_in_`` set on ``fit`` via the
-      ``_record_input_signature`` helper (subclasses may opt in by
-      calling it from their ``fit``).
+    - ``fit``, ``predict`` and ``predict_dist`` are wrapped so callers may omit
+      ``ids=`` and ``timestamps=``, which are auto-filled to ``arange(N)``.
+    - ``__sklearn_is_fitted__`` returns True if and only if any attribute
+      ending in ``_``, the sklearn convention for fitted state, is set to a
+      non-None value.
+    - ``n_features_in_`` and ``feature_names_in_`` are set on ``fit`` via the
+      ``_record_input_signature`` helper. Subclasses opt in by calling it from
+      their ``fit``.
 
     Subclasses whose ``fit`` / ``predict`` key per-row state by ``ids`` (the
     bracket-native trainers that hold a ``brackets_by_id`` dict) should set the
     class attribute ``_requires_explicit_ids = True``. The auto-fill then
-    *refuses* to fabricate ``ids = arange(N)`` for them and raises instead, a
-    fabricated id would silently misalign each row with the wrong grid.
+    refuses to fabricate ``ids = arange(N)`` for them and raises instead. A
+    fabricated id would misalign each row with the wrong grid.
     """
 
     #: When True, a missing ``ids=`` raises instead of being auto-filled with
-    #: ``arange(N)`` (which would misalign id-keyed per-row grids). Opt in on
-    #: trainers that look state up by id (see BlendedBracket*, CumulativeBinary).
+    #: ``arange(N)``, which would misalign id-keyed per-row grids. Opt in on
+    #: trainers that look state up by id, such as BlendedBracket* and
+    #: CumulativeBinary.
     _requires_explicit_ids: bool = False
 
     def __init_subclass__(cls, **kwargs):
@@ -133,11 +134,13 @@ class BaseEstimator(_SklearnBaseEstimator):
             setattr(cls, name, _auto_fill_ids_ts(method))
 
     def __sklearn_is_fitted__(self) -> bool:
-        """sklearn convention: ``hasattr(est, attr_ending_in_underscore)``.
+        """Follows the sklearn convention
+        ``hasattr(est, attr_ending_in_underscore)``.
 
-        Returns True iff any attribute ending in ``_`` (but not ``__``)
-        is set to a non-None value. Lets ``sklearn.utils.validation.
-        check_is_fitted(est)`` work on bracketlearn estimators.
+        Returns True if and only if any attribute ending in ``_``, but not
+        ``__``, is set to a non-None value. This lets
+        ``sklearn.utils.validation.check_is_fitted(est)`` work on bracketlearn
+        estimators.
         """
         for name in vars(self):
             if (
@@ -255,14 +258,14 @@ def _equal(a: Any, b: Any) -> bool:
 def clone(estimator: Any, *, safe: bool = True) -> Any:
     """Return a fresh, unfitted copy of ``estimator``.
 
-    For ``BaseEstimator`` subclasses: reconstruct via ``__init__(**get_params())``
-    after deep-copying any param whose value is mutable (this preserves
-    sklearn-equivalent semantics where ``clone`` does not deep-copy
-    *primitives* but does deep-copy *nested estimators*).
+    For ``BaseEstimator`` subclasses, the estimator is reconstructed via
+    ``__init__(**get_params())`` after deep-copying any param whose value is
+    mutable. This preserves sklearn-equivalent semantics, where ``clone`` does
+    not deep-copy primitives but does deep-copy nested estimators.
 
-    For non-BaseEstimator objects: fall back to ``copy.deepcopy``. This
-    catches LightGBM/NGBoost/sklearn estimators that get wrapped without
-    inheriting from our base.
+    For non-BaseEstimator objects the fallback is ``copy.deepcopy``. This
+    catches LightGBM, NGBoost and sklearn estimators that are wrapped without
+    inheriting from this base.
 
     Used by the pipeline before each fold's fit so the user-supplied
     forecaster instance is never mutated.
@@ -278,5 +281,6 @@ def clone(estimator: Any, *, safe: bool = True) -> Any:
         return type(estimator)(**new_params)
     if not safe:
         return copy.deepcopy(estimator)
-    # Best-effort deep-copy: handles SklearnPoint(LinearRegression()), etc.
+    # Best-effort deep-copy, which handles SklearnPoint(LinearRegression())
+    # and similar.
     return copy.deepcopy(estimator)

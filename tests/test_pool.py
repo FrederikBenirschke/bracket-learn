@@ -1,8 +1,8 @@
-"""Tests for bracketlearn.pool: the combination formulas.
+"""Tests for bracketlearn.pool, the combination formulas.
 
 The substantive tests here assert the *theorems* of Gneiting & Ranjan
-(2013), not just the plumbing. If the arithmetic drifts, Theorem 3.1 stops
-holding on synthetic data and these fail.
+(2013) rather than only the plumbing. If the arithmetic drifts, Theorem 3.1
+stops holding on synthetic data and these fail.
 """
 
 from __future__ import annotations
@@ -43,10 +43,10 @@ def _realized_bracket(y, edges):
 def synthetic():
     """Two distinct, individually well-calibrated forecasters.
 
-    Y = X + eps with X, eps independent standard normals. Forecaster i sees
-    a noisy X and predicts N(x_i, 1). Each is close to ideal; they disagree
-    row by row, which is the condition Theorem 3.1 needs (Fi != Fj with
-    positive probability).
+    Y = X + eps with X and eps independent standard normals. Forecaster i
+    sees a noisy X and predicts N(x_i, 1). Each is close to ideal, and they
+    disagree row by row. That disagreement is the condition Theorem 3.1
+    needs, namely Fi != Fj with positive probability.
     """
     rng = np.random.default_rng(11)
     n = 4000
@@ -78,11 +78,12 @@ def _pit(edge_cdfs, r_idx):
 
 
 def test_theorem_3_1_linear_pool_increases_dispersion(synthetic):
-    """Thm 3.1(a)/(b): the linear pool is MORE dispersed than its least-
-    dispersed component: i.e. its var(PIT) is strictly LOWER.
+    """Thm 3.1(a) and (b), that the linear pool is more dispersed than its
+    least-dispersed component, so its var(PIT) is strictly lower.
 
-    Lower var(PIT) means more dispersed (Definition 2.7(d)); neutral is 1/12.
-    This is the defect that motivates the whole module, so assert it directly.
+    A lower var(PIT) means more dispersed (Definition 2.7(d)), and neutral is
+    1/12. This is the defect that motivates the whole module, so it is
+    asserted directly.
     """
     F, r_idx, _ = synthetic
     w = np.array([0.5, 0.5])
@@ -98,8 +99,8 @@ def test_theorem_3_1_linear_pool_increases_dispersion(synthetic):
 
 
 def test_theorem_3_1_pool_of_neutral_components_is_overdispersed(synthetic):
-    """Thm 3.1(c): neutrally dispersed components pool to an OVERdispersed
-    forecast: var(PIT) below the neutral 1/12."""
+    """Thm 3.1(c), that neutrally dispersed components pool to an
+    overdispersed forecast, with var(PIT) below the neutral 1/12."""
     F, r_idx, _ = synthetic
     for i in range(F.shape[0]):
         v = pit_variance(_pit(F[i], r_idx))
@@ -112,10 +113,11 @@ def test_theorem_3_1_pool_of_neutral_components_is_overdispersed(synthetic):
 
 
 def test_theorem_3_9_blp_reaches_neutral_dispersion(synthetic):
-    """Thm 3.9: BLP is flexibly dispersive: some (α, β) restores neutrality.
+    """Thm 3.9, that BLP is flexibly dispersive, so some (α, β) restores
+    neutrality.
 
-    The linear pool of these components cannot (Thm 3.3). Sharpening with
-    α = β > 1 should pull var(PIT) back up toward 1/12.
+    The linear pool of these components cannot do so (Thm 3.3). Sharpening
+    with α = β > 1 should pull var(PIT) back up toward 1/12.
     """
     F, r_idx, _ = synthetic
     w = np.array([0.5, 0.5])
@@ -154,7 +156,7 @@ def test_beta_warp_is_monotone_and_bounded():
 
 
 def test_glp_probit_allows_extremization(synthetic):
-    """Example 3.5: weights above 1 under the probit link. This is the only
+    """Example 3.5, weights above 1 under the probit link. This is the only
     coherent formula in the paper, and it sharpens rather than flattens."""
     F, r_idx, _ = synthetic
     convex = pool_cdf(
@@ -193,7 +195,8 @@ def test_fit_pool_moves_dispersion_toward_neutral(synthetic):
 
 
 def test_k1_calibration_mode(synthetic):
-    """§3.4: BLP with k=1 is a pure calibration/dispersion correction."""
+    """§3.4, where BLP with k=1 is a pure calibration and dispersion
+    correction."""
     F, r_idx, _ = synthetic
     single = F[:1]
     fit = fit_pool(
@@ -204,18 +207,19 @@ def test_k1_calibration_mode(synthetic):
 
 
 def test_leak_check_fires_on_in_sample_components():
-    """The directional in-sample failure: components that saw the outcome
-    have too-small residuals, so fit-row var(PIT) reads far below holdout."""
+    """The directional in-sample failure. Components that saw the outcome
+    have too-small residuals, so fit-row var(PIT) reads far below
+    holdout."""
     rng = np.random.default_rng(5)
     n = 800
     edges = np.linspace(-8.0, 8.0, 33)
     y = rng.standard_normal(n) * 2.0
 
-    # "In-sample" component: centred on the realized value itself.
+    # "In-sample" component, centred on the realized value itself.
     leaky = _normal_edge_cdfs(y, np.full(n, 1.0), edges)[None, :, :]
     r_idx = _realized_bracket(y, edges)
 
-    # Honest holdout: the same model form on rows it never saw.
+    # Honest holdout, the same model form on rows it never saw.
     y_h = rng.standard_normal(400) * 2.0
     honest = _normal_edge_cdfs(
         np.zeros(400), np.full(400, 2.0), edges
@@ -247,9 +251,9 @@ def test_pool_cdf_rejects_component_axis_mismatch(synthetic):
 def test_pool_cdf_accepts_every_formula_fit_pool_accepts(parametric):
     """Any formula fit_pool takes, pool_cdf must also take.
 
-    The regression: fit_pool accepted 'bma' but pool_cdf raised
-    unknown-formula on it, so a model fitted with BMA blew up on the PREDICT
-    path only: after a full training run, on every fold.
+    In the original regression fit_pool accepted 'bma' while pool_cdf raised
+    unknown-formula on it. A model fitted with BMA then failed on the predict
+    path alone, after a full training run and on every fold.
     """
     mu, sigma, y, edges, r_idx = parametric
     F = spread_adjusted_cdfs(mu, sigma, edges, spread_c=1.0)
@@ -267,7 +271,7 @@ def test_pool_cdf_rejects_unknown_formula(synthetic):
 
 
 # ---------------------------------------------------------------------------
-# SLP and BMA: the two routes to the same spread adjustment.
+# SLP and BMA, the two routes to the same spread adjustment.
 # ---------------------------------------------------------------------------
 
 
@@ -275,9 +279,10 @@ def test_pool_cdf_rejects_unknown_formula(synthetic):
 def parametric():
     """Same generating process as `synthetic`, but keeping (mu, sigma).
 
-    Components are deliberately OVERDISPERSED (sigma inflated 1.35x), which
-    is the regime where SLP's c < 1 and BMA's shrink both have something to
-    do, and is what a linear pool of neutral components produces (Thm 3.1c).
+    The components are deliberately overdispersed, with sigma inflated 1.35x.
+    That is the regime where SLP's c < 1 and BMA's shrink both have something
+    to do, and it is what a linear pool of neutral components produces
+    (Thm 3.1c).
     """
     rng = np.random.default_rng(23)
     n = 3000
@@ -292,7 +297,10 @@ def parametric():
 
 def test_slp_recovers_c_below_one_for_overdispersed_components(parametric):
     """Neutrally dispersed or overdispersed components call for c < 1 (§3.3).
-    The paper's Seattle-Tacoma fit is 0.768; Berrocal et al. report 0.65-1.03."""
+
+    The paper's Seattle-Tacoma fit is 0.768, and Berrocal et al. report
+    0.65-1.03.
+    """
     mu, sigma, y, edges, r_idx = parametric
     F = spread_adjusted_cdfs(mu, sigma, edges, spread_c=1.0)
     fit = fit_pool(
@@ -327,8 +335,9 @@ def test_slp_c_equals_one_recovers_tlp(parametric):
 
 
 def test_bma_implied_spread_ratio_tracks_slp_c(parametric):
-    """The paper's §4.2 finding: BMA's sigma_hat/sigma_i and SLP's c are the
-    same shrink by different estimators (0.707-0.800 vs 0.768 on their data).
+    """The paper's §4.2 finding, that BMA's sigma_hat/sigma_i and SLP's c are
+    the same shrink reached by different estimators, at 0.707-0.800 against
+    0.768 on their data.
 
     This is the test that justifies putting both behind one interface.
     """
@@ -359,7 +368,7 @@ def test_bma_reports_sigma_common_and_weights(parametric):
 
 
 def test_slp_refuses_bracket_only_input(synthetic):
-    """SLP is not local; without moments it would need within-bracket
+    """SLP is not local. Without moments it would need within-bracket
     interpolation, which imposes a shape the data never specified."""
     F, r_idx, _ = synthetic
     with pytest.raises(ValueError, match="requires moments"):
@@ -380,7 +389,8 @@ def test_spread_adjusted_cdfs_rejects_bad_c(parametric):
 
 
 def test_pooled_cdf_stays_monotone_across_edges(synthetic):
-    """A pooled CDF must remain a CDF: non-decreasing along the edge axis."""
+    """A pooled CDF must remain a CDF, non-decreasing along the edge
+    axis."""
     F, _, _ = synthetic
     w = np.array([0.4, 0.6])
     for kwargs in [
@@ -398,19 +408,20 @@ def test_pooled_cdf_stays_monotone_across_edges(synthetic):
 # ---------------------------------------------------------------------------
 # Student-t components through the pooling path
 #
-# AffineNormal(dist="student_t") produces components whose sigma is a SCALE,
-# not an SD, and whose tails are heavier than a Gaussian's. Pooling them
-# through the Gaussian path is SILENT: it yields plausible bracket
-# probabilities with the wrong tails, so these tests pin that the family
-# travels with the moments and that omitting it is an error, not a default.
+# AffineNormal(dist="student_t") produces components whose sigma is a scale
+# rather than a standard deviation, and whose tails are heavier than a
+# Gaussian's. Pooling them through the Gaussian path raises no error and
+# yields plausible bracket probabilities with the wrong tails. These tests
+# therefore pin that the family travels with the moments, and that omitting
+# it is an error rather than a default.
 # ---------------------------------------------------------------------------
 
 
 def test_student_t_components_differ_from_gaussian_in_the_tails():
-    """The whole point: the family must actually change the CDF.
+    """The family must actually change the CDF.
 
-    If this passes trivially (values equal), the dist argument is being
-    ignored and every t component is being pooled as a Gaussian.
+    If this passes trivially, with the values equal, then the dist argument
+    is being ignored and every t component is being pooled as a Gaussian.
     """
     mu = np.zeros((2, 3))
     sigma = np.ones((2, 3))
@@ -421,14 +432,14 @@ def test_student_t_components_differ_from_gaussian_in_the_tails():
                              dist="student_t", nu=3.0)
 
     assert not np.allclose(g, t), "dist='student_t' was ignored"
-    # Heavier tails: more mass below -2 and above +2 for the t.
+    # Heavier tails, so more mass below -2 and above +2 for the t.
     assert np.all(t[:, :, 1] > g[:, :, 1])
     interior = slice(1, -1)
     assert np.all(t[:, :, 3][interior] <= g[:, :, 3][interior] + 1e-12)
 
 
 def test_student_t_without_nu_raises_rather_than_defaulting():
-    """Rule #0.5. A missing nu must not silently fall back to a Gaussian."""
+    """Rule #0.5. A missing nu must not fall back to a Gaussian."""
     mu = np.zeros((2, 3))
     sigma = np.ones((2, 3))
     edges = np.array([-8.0, 0.0, 8.0])
@@ -447,8 +458,8 @@ def test_unknown_dist_raises():
 def test_student_t_components_still_carry_full_mass_over_the_ladder():
     """Outer edges pinned to 0/1, as for the Gaussian path.
 
-    A t's heavier tails leak MORE mass beyond a finite ladder, so if the
-    pinning were family-specific this is where it would show.
+    A t's heavier tails leak more mass beyond a finite ladder. If the pinning
+    were family-specific, this is where it would show.
     """
     rng = np.random.default_rng(3)
     mu = rng.normal(70, 5, (4, 20))
@@ -458,15 +469,15 @@ def test_student_t_components_still_carry_full_mass_over_the_ladder():
                              dist="student_t", nu=2.5)
     assert np.allclose(t[:, :, 0], 0.0)
     assert np.allclose(t[:, :, -1], 1.0)
-    # Monotone in the threshold: a CDF, per component and row.
+    # Monotone in the threshold, a CDF per component and row.
     assert np.all(np.diff(t, axis=2) >= -1e-12)
 
 
 def test_large_nu_converges_to_the_gaussian_path():
-    """t_nu -> normal as nu grows. Guards the parameterisation.
+    """t_nu tends to a normal as nu grows. This guards the parameterisation.
 
-    A scale/SD mix-up inside the t branch would leave a persistent gap here
-    that no nu closes.
+    Confusing the scale with the standard deviation inside the t branch would
+    leave a persistent gap here that no nu closes.
     """
     rng = np.random.default_rng(4)
     mu = rng.normal(70, 5, (3, 15))
@@ -486,7 +497,8 @@ def test_large_nu_converges_to_the_gaussian_path():
 
 
 def test_pooled_t_components_give_a_valid_probability_vector():
-    """End to end: t components -> pool_cdf -> bracket probabilities."""
+    """End to end, from t components through pool_cdf to bracket
+    probabilities."""
     rng = np.random.default_rng(5)
     k, n = 4, 12
     mu = rng.normal(70, 4, (k, n))

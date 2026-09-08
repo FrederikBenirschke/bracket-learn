@@ -22,8 +22,8 @@ policy = TailPolicy(left=TailRule.clip(), right=TailRule.clip())
 ## `TailRule.clip()`
 
 `clip` is the tail rule bracketlearn ships. Mass beyond the outermost stored
-quantile is zero: the CDF returns 0 below the leftmost quantile and 1 above the
-rightmost.
+quantile is zero, so the CDF returns 0 below the leftmost quantile and 1 above
+the rightmost.
 
 This suits ladder-priced contracts, where the ladder's outer bins absorb the
 would-be tail mass, and quantile-backed dists scored against bracket-shaped
@@ -37,7 +37,7 @@ the quantile span.
 `dist` uses `clip` and the ladder fails to span
 `[qvals[:, 0].min(), qvals[:, -1].max()]`, mass leaks. The ladder's `strict`
 and `coverage_tol` machinery catches it (see [adapters.md](adapters.md)). Widen
-the ladder to fix it; leave the tail rule alone.
+the ladder to fix it, and leave the tail rule alone.
 
 ## Adapters declare which tails they need
 

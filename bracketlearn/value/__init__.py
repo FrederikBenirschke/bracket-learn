@@ -1,17 +1,20 @@
-"""Reference-relative **value** layer: scoring, training, and theory for "is my
-price more valuable to trade than the one already quoted?", a step past pure
-forecasting (these tools take a reference price ``m``).
+"""Reference-relative value layer, covering scoring, training, and theory.
 
-- Trainers, :class:`BlendedBracketGBM`, :class:`BlendedBracketNet`: bracket
-  models trained on ``L = CE − λ·EA`` (calibration tilted toward capturing the
-  reference's mispricing), plus the shared objective helpers.
-- Metrics (re-exported from :mod:`bracketlearn.score` for one namespace):
-  :func:`edge_alignment`, :func:`edge_alignment_costed`, :func:`value_report`,
-  and the bracket-ladder wrappers.
+The question is whether a price is more valuable to trade than the one already
+quoted. This is a step past pure forecasting, and these tools take a reference
+price ``m``.
 
-Guides: ``docs/guides/value_vs_accuracy.md`` (the principle) and
-``docs/guides/value_with_fees.md`` (why fees make you select the tilt by costed
-value, not EA).
+- Trainers, :class:`BlendedBracketGBM` and :class:`BlendedBracketNet`, are
+  bracket models trained on ``L = CE − λ·EA``, calibration tilted toward
+  capturing the reference's mispricing, together with the shared objective
+  helpers.
+- Metrics are re-exported from :mod:`bracketlearn.score` into one namespace,
+  namely :func:`edge_alignment`, :func:`edge_alignment_costed`,
+  :func:`value_report`, and the bracket-ladder wrappers.
+
+The guide ``docs/guides/value_vs_accuracy.md`` gives the principle.
+``docs/guides/value_with_fees.md`` explains why fees make the tilt a selection
+by costed value rather than by EA.
 """
 
 from __future__ import annotations

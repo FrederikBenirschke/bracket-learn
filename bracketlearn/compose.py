@@ -1,7 +1,8 @@
-"""The clean composition surface: ``Stacker`` (parallel combiner) +
-``WalkForward`` (CV/OOF driver).
+"""The composition surface, comprising ``Stacker``, a parallel combiner, and
+``WalkForward``, a CV and OOF driver.
 
-Three orthogonal concepts, object-nested, names only label the leaderboard::
+Three orthogonal concepts are nested as objects. Names only label the
+leaderboard::
 
     ridge = Pipeline([SklearnPoint(Ridge()), GlobalResidual()], name="ridge")
     emos  = Pipeline([EMOS()], name="emos")
@@ -9,21 +10,22 @@ Three orthogonal concepts, object-nested, names only label the leaderboard::
     result = WalkForward(n_folds=5).fit_predict(model, X, y, ids=ids, timestamps=ts)
     result["ridge"]            # upstream leaderboard rows, addressable
 
-- ``Pipeline`` is the sequential chain (a self-contained `DistForecaster`).
-- ``Stacker`` holds upstream *objects* and a meta-combiner; the dependency IS
-  the nesting (no name-string ``deps``). Shared upstreams (same object) are
-  computed once per fold; nested stackers recurse.
-- ``WalkForward`` owns ONLY the outer expanding/rolling/kfold CV. Each node is
-  cloned per fold, fit on the fold's train slice, and predicted on train+test;
-  a meta receives its upstreams' fold dists **positionally** via ``upstream=``.
+- ``Pipeline`` is the sequential chain, a self-contained `DistForecaster`.
+- ``Stacker`` holds upstream objects and a meta-combiner. The dependency is the
+  nesting itself, so there is no name-string ``deps``. Shared upstreams, meaning
+  the same object, are computed once per fold. Nested stackers recurse.
+- ``WalkForward`` owns the outer expanding, rolling or kfold CV and nothing
+  else. Each node is cloned per fold, fit on the fold's train slice, and
+  predicted on train and test. A meta receives its upstreams' fold dists
+  positionally via ``upstream=``.
 
-This is the homogeneous composition surface, `Pipeline` (chain), `Stacker`
-(parallel combiner), `WalkForward` (CV). It replaces the retired
-retired ``ForecastPipeline`` / ``LiftedForecaster`` / ``CalibratedForecaster``
+This is the homogeneous composition surface of `Pipeline` for chaining,
+`Stacker` for parallel combination, and `WalkForward` for CV. It replaces the
+retired ``ForecastPipeline``, ``LiftedForecaster`` and ``CalibratedForecaster``
 wrappers and the name-keyed ``deps_oof`` contract.
 
-Per Rule #0.5: a meta whose upstream is missing, or a fold that emits nothing,
-raises loud rather than returning a partial result.
+Under Rule #0.5, a meta whose upstream is missing, or a fold that emits
+nothing, raises rather than returning a partial result.
 """
 
 from __future__ import annotations
@@ -56,8 +58,8 @@ class Stacker:
     that receives the upstreams' out-of-fold distributions positionally, in
     declared order, via ``upstream=[...]`` when run under `WalkForward`.
 
-    ``Stacker`` is pure structure: it holds no fitted state and is not run
-    directly; pass it to `WalkForward.fit_predict`.
+    ``Stacker`` is pure structure. It holds no fitted state and is not run
+    directly. Pass it to `WalkForward.fit_predict`.
     """
 
     def __init__(self, upstreams, meta, *, name=None):
@@ -74,10 +76,10 @@ class Stacker:
 def _flatten(model) -> list[dict]:
     """Topo-flatten an object graph into ordered nodes (deps before dependents).
 
-    ``model`` is a single `Pipeline`/`Stacker`/forecaster or a list of them
-    (multiple independent leaderboard outputs). Each node:
-    ``{obj, name, deps: list[int], is_meta: bool}``. Shared objects (same
-    identity) collapse to one node, so a reused upstream is computed once.
+    ``model`` is a single `Pipeline`, `Stacker` or forecaster, or a list of
+    them giving multiple independent leaderboard outputs. Each node has the
+    form ``{obj, name, deps: list[int], is_meta: bool}``. Objects sharing an
+    identity collapse to one node, so a reused upstream is computed once.
     """
     nodes: list[dict] = []
     idx_by_id: dict[int, int] = {}
@@ -125,14 +127,14 @@ _VALID_CV = ("expanding-window", "rolling-window", "kfold")
 
 
 class WalkForward:
-    """Cross-validation driver: produces out-of-fold distributions for every
-    node in a `Pipeline` / `Stacker` graph (and bare forecasters).
+    """Cross-validation driver producing out-of-fold distributions for every
+    node in a `Pipeline` or `Stacker` graph, and for bare forecasters.
 
     ``WalkForward(cv=..., n_folds=...).fit_predict(model, X, y, ids=, timestamps=)``
-    returns a `PipelineResult` mapping each node's name → its stitched OOF
-    `DistributionForecast`. The model owns its own internal structure (a
-    `Pipeline` does its lifter/calibrator inner splits itself); WalkForward
-    owns only the outer fold loop.
+    returns a `PipelineResult` mapping each node's name to its stitched OOF
+    `DistributionForecast`. The model owns its own internal structure, so a
+    `Pipeline` performs its lifter and calibrator inner splits itself.
+    WalkForward owns only the outer fold loop.
     """
 
     def __init__(
@@ -208,8 +210,8 @@ class WalkForward:
         sw_o = sw[order] if sw is not None else None
         g_o = g[order] if g is not None else None
 
-        # Which leaves are consumed by a meta: only those pay the inner-OOF
-        # refit, so a plain leaderboard run is unchanged in cost and result.
+        # Only leaves consumed by a meta pay the inner-OOF refit, so a plain
+        # leaderboard run is unchanged in cost and result.
         feeds_meta = {i: False for i in range(len(nodes))}
         for node in nodes:
             if node["is_meta"]:
@@ -228,10 +230,10 @@ class WalkForward:
                     up_tr = [fold_train[j] for j in node["deps"]]
                     up_te = [fold_test[j] for j in node["deps"]]
                     # Under time-series CV a leaf's inner OOF is forward
-                    # only, so its dist_tr covers the LATER half of
-                    # train_idx, not all of it. Fit the meta on exactly the
-                    # rows its upstream actually spans; passing train_idx
-                    # would pair 50 targets with 25 upstream predictions.
+                    # only, so its dist_tr covers the later half of train_idx
+                    # rather than all of it. Fit the meta on exactly the rows
+                    # its upstream spans. Passing train_idx would pair 50
+                    # targets with 25 upstream predictions.
                     meta_tr = train_idx
                     if up_tr:
                         n_up = up_tr[0].ids.shape[0]
@@ -332,41 +334,43 @@ class WalkForward:
     @staticmethod
     def _fit_node(f, X, y, ids, ts, tr, te, sw, g, up_tr, up_te, row_meta=None,
                   inner_oof=False, time_ordered=True):
-        """Fit node ``f`` on the fold's train slice; predict on train + test.
+        """Fit node ``f`` on the fold's train slice and predict on train and
+        test.
 
-        ``up_tr``/``up_te`` are the upstream fold dists for a meta node (None
-        for a plain node). ``groups`` is index-sliced per fold; ``row_meta``
-        (id-keyed side inputs) is forwarded **verbatim**, the node subsets it
-        by the ``ids`` it gets. The helpers drop any kwarg the node's signature
-        doesn't declare.
+        ``up_tr`` and ``up_te`` are the upstream fold dists for a meta node,
+        and are None for a plain node. ``groups`` is index-sliced per fold.
+        ``row_meta``, the id-keyed side inputs, is forwarded verbatim, and the
+        node subsets it by the ``ids`` it receives. The helpers drop any kwarg
+        the node's signature does not declare.
 
-        ``inner_oof`` changes what ``dist_tr`` MEANS. By default it is the
-        node's prediction on the very rows it was just fit on, in-sample, and
-        systematically better than anything the node will produce in
-        production. This is immaterial for a leaf whose ``dist_tr`` is unused, but a Stacker
-        passes it to the meta as ``upstream=``, so the meta is trained to
-        weight whichever upstream overfits most. Measured on a
-        pure-linear DGP with a depth-8 tree beside a ridge: the stack scored
-        CRPS 0.809 against ridge's 0.555, the combination was worse than
-        either input.
+        ``inner_oof`` changes the meaning of ``dist_tr``. By default it is the
+        node's prediction on the very rows it was just fit on. That is
+        in-sample and systematically better than anything the node will produce
+        in production. This is immaterial for a leaf whose ``dist_tr`` is
+        unused. A Stacker, however, passes it to the meta as ``upstream=``, so
+        the meta is trained to weight whichever upstream overfits most.
+        Measured on a pure-linear DGP with a depth-8 tree beside a ridge, the
+        stack scored CRPS 0.809 against ridge's 0.555. The combination was
+        worse than either input.
 
         With ``inner_oof``, the train slice is split once more so that
         ``dist_tr`` is out-of-sample. How it splits depends on
-        ``time_ordered``:
+        ``time_ordered``.
 
-        - ``time_ordered=True`` (``expanding-window`` / ``rolling-window``,
-          where rows arrive sorted by timestamp): FORWARD ONLY. The node is
-          fit on the first half and predicts the second, and the first half
-          gets no ``dist_tr`` rows at all. Predicting the first half would
-          require fitting on strictly later data, which is lookahead: the
-          meta would learn to weight upstreams by how well they perform on
-          their own past. The meta therefore trains on the second half of
-          each fold's train slice, which is half the rows, and that is the
-          cost of causality rather than a limitation to work around.
-        - ``time_ordered=False`` (``kfold``, where the caller has already
-          declared row order carries no information): the symmetric swap,
-          fit on each half and predict the other, so every ``dist_tr`` row
-          is out-of-sample.
+        - ``time_ordered=True`` covers ``expanding-window`` and
+          ``rolling-window``, where rows arrive sorted by timestamp. The split
+          is forward only. The node is fit on the first half and predicts the
+          second, and the first half gets no ``dist_tr`` rows at all.
+          Predicting the first half would require fitting on strictly later
+          data. Under that lookahead the meta would learn to weight upstreams
+          by how well they perform on their own past. The meta therefore trains
+          on the second half of each fold's train slice, which is half the
+          rows. That is the cost of causality rather than a limitation to work
+          around.
+        - ``time_ordered=False`` covers ``kfold``, where the caller has already
+          declared that row order carries no information. The split is the
+          symmetric swap, fitting on each half and predicting the other, so
+          every ``dist_tr`` row is out-of-sample.
 
         The node is then refit on the whole train slice for the ``dist_te``
         the fold actually scores.
@@ -393,17 +397,19 @@ class WalkForward:
             return _predict_with_extras(f, X[rows], ids[rows], ts[rows], **extras)
 
         if inner_oof and up_tr is None and tr.shape[0] >= 4:
-            # Leaf nodes only: a meta's own upstream= inputs are already the
-            # fold dists, and re-splitting them would misalign the rows.
+            # This applies to leaf nodes only. A meta's own upstream= inputs
+            # are already the fold dists, and re-splitting them would misalign
+            # the rows.
             half = tr.shape[0] // 2
             a, b = tr[:half], tr[half:]
-            # Under time-series CV, fit-on-b/predict-on-a is anti-causal: b
-            # is strictly later than a. Only the forward pass runs, so
-            # dist_tr covers b alone. Under kfold both directions are legal.
+            # Under time-series CV, fitting on b and predicting on a is
+            # anti-causal, since b is strictly later than a. Only the forward
+            # pass runs, so dist_tr covers b alone. Under kfold both directions
+            # are legal.
             passes = ((a, b),) if time_ordered else ((a, b), (b, a))
-            # Stitch by ABSOLUTE row index so the result's ids are the same
-            # ids, in the same order, that a single fit-on-tr would have
-            # produced, the meta checks exactly that and refuses a mismatch.
+            # Stitch by absolute row index so the result carries the same ids,
+            # in the same order, that a single fit-on-tr would have produced.
+            # The meta checks this and refuses a mismatch.
             parts = []
             for fit_rows, pred_rows in passes:
                 _fit_on(fit_rows)

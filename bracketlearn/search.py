@@ -1,26 +1,28 @@
 """GridSearch over a model graph + WalkForward hyperparameters.
 
-We do *not* reuse ``sklearn.model_selection.GridSearchCV`` because our CV is
-time-aware (``expanding-window`` / ``rolling-window`` / ``kfold``, owned by
-`WalkForward`). Sklearn's GridSearchCV would re-split with its own KFold,
-destroying time ordering and silently inflating OOF metrics on sequential
-data.
+``sklearn.model_selection.GridSearchCV`` is not reused here because this CV is
+time-aware. The ``expanding-window``, ``rolling-window`` and ``kfold`` schemes
+are owned by `WalkForward`. Sklearn's GridSearchCV would re-split with its own
+KFold, destroying time ordering and inflating OOF metrics on sequential data.
 
-The search takes a **model graph** (a `Pipeline` / `Stacker` / list of them)
-and a **WalkForward** template, kept separate the way the native surface keeps
-model and CV separate. For each combination from ``param_grid`` it:
+The search takes a model graph, a `Pipeline`, a `Stacker`, or a list of them,
+together with a `WalkForward` template. They are kept separate in the way the
+native surface keeps model and CV separate. For each combination from
+``param_grid`` it does three things.
 
-1. deep-copies the model graph and applies any ``node__field`` params to the
-   graph node named ``node`` (sklearn ``__``-nested syntax, e.g.
-   ``qreg__n_estimators=400`` routes into the stage owning ``n_estimators``);
-2. clones the WalkForward template, overriding any CV-level params
-   (``n_folds``, ``cv``, ``embargo``, ``rolling_window``, ``refit_on_full``,
-   ``shuffle``, ``random_state``);
-3. runs ``WalkForward.fit_predict`` and scores the chosen node with the chosen
-   metric.
+1. It deep-copies the model graph and applies any ``node__field`` parameters to
+   the graph node named ``node``, using sklearn's ``__``-nested syntax. For
+   instance ``qreg__n_estimators=400`` routes into the stage owning
+   ``n_estimators``.
+2. It clones the WalkForward template, overriding any CV-level parameters among
+   ``n_folds``, ``cv``, ``embargo``, ``rolling_window``, ``refit_on_full``,
+   ``shuffle`` and ``random_state``.
+3. It runs ``WalkForward.fit_predict`` and scores the chosen node with the
+   chosen metric.
 
-It returns the best params, the fitted winning ``WalkForward`` (ready for
-``.predict`` when ``refit_on_full=True``), and a full results table.
+It returns the best parameters, the fitted winning ``WalkForward``, which is
+ready for ``.predict`` when ``refit_on_full=True``, and a full results
+table.
 
 Usage::
 
@@ -61,7 +63,7 @@ class GridSearch:
     Args:
         model: prototype model graph (`Pipeline` / `Stacker` / list). Deep-copied
             per grid point; never mutated.
-        wf: prototype `WalkForward`. Cloned per grid point; never mutated.
+        wf: prototype `WalkForward`. Cloned per grid point and never mutated.
         param_grid: dict mapping param name to a list of candidate values. Keys
             are either a CV-level WalkForward arg (``n_folds`` etc.) or a
             ``node__field`` nested key routed into the graph node named ``node``.

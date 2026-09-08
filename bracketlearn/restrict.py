@@ -1,30 +1,28 @@
 """BracketMask, restrict a bracket forecast to a tradable subset.
 
-Use case: a base forecaster (climatology, EMOS, mixture-normals,
-stacking) emits probabilities over the full bracket grid, but at any
-given timestamp some brackets may have no live quote (no bid, no ask,
-no recent last) and cannot be touched. The original mass over those
-brackets has nowhere to go, distributing it pro-rata across the
-tradable subset is the maximum-entropy choice consistent with the
-full forecast.
+A base forecaster, such as climatology, EMOS, mixture-normals or stacking,
+emits probabilities over the full bracket grid. At any given timestamp some
+brackets may have no live quote, meaning no bid, no ask and no recent last, and
+cannot be touched. The original mass over those brackets has nowhere to go.
+Distributing it pro-rata across the tradable subset is the maximum-entropy
+choice consistent with the full forecast.
 
-This is a stateless transformer: ``fit`` returns self, ``transform``
-takes ``(dist, mask)`` and returns a new bracket-backed
-``DistributionForecast`` whose probabilities are zero at masked-out
-brackets and renormalised to sum to one over the surviving subset.
+This is a stateless transformer. ``fit`` returns self. ``transform`` takes
+``(dist, mask)`` and returns a new bracket-backed ``DistributionForecast``
+whose probabilities are zero at masked-out brackets and renormalised to sum to
+one over the surviving subset.
 
-Per-row semantics: the mask varies row by row. At one timestamp every
-bracket may be quoted; at another, only the body. Each row is
+The semantics are per-row, since the mask varies row by row. At one timestamp
+every bracket may be quoted, and at another only the body. Each row is
 renormalised independently.
 
-Per Rule #0.5: any row with an all-False mask, a zero-mass intersection,
-or a shape/dtype mismatch raises loudly with the offending row indices.
-There is no silent fill, no uniform fallback.
+Under Rule #0.5, any row with an all-False mask, a zero-mass intersection, or a
+shape or dtype mismatch raises with the offending row indices. There is no fill
+and no uniform fallback.
 
-Input backing: bracket only. Other backings must be discretised first
-(via the dist's ``cdf(edges)`` and
-``bracket_probs_from_cdf_at_edges``). Keeping the entry point narrow
-avoids ambiguity about which bracket grid the mask refers to.
+The input backing is bracket only. Other backings must be discretised first,
+via the dist's ``cdf(edges)`` and ``bracket_probs_from_cdf_at_edges``. A narrow
+entry point avoids ambiguity about which bracket grid the mask refers to.
 """
 
 from __future__ import annotations

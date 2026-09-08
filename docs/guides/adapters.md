@@ -1,12 +1,12 @@
 # Contract adapters
 
-A `ContractAdapter` turns a `DistributionForecast` into a `ContractForecast`:
+A `ContractAdapter` turns a `DistributionForecast` into a `ContractForecast`,
 a long-form table of contract IDs with one `fair_price` per row. This is the
 last step before the framework hands off to a downstream sizing or execution
 layer.
 
-bracketlearn ships five adapters covering the contract shapes you meet on real
-prediction-market venues:
+bracketlearn ships five adapters covering the contract shapes found on real
+prediction-market venues.
 
 | Adapter                | Pricing                            | Maps to (examples)                                          |
 |------------------------|------------------------------------|-------------------------------------------------------------|
@@ -33,12 +33,12 @@ p_above = BinaryAbove(strike=75.0).price(dist).fair_price   # (N,)
 p_below = BinaryBelow(strike=32.0).price(dist).fair_price   # (N,)
 ```
 
-`fair_price` clips to `[0, 1]`. A single CDF read needs no coverage check; it
+`fair_price` clips to `[0, 1]`. A single CDF read needs no coverage check and
 stays unambiguous whatever the tail does.
 
 ## `Twin`
 
-Paired YES / NO at one strike. Two rows per entity sharing `group_id`, so
+Paired YES / NO at one strike. Two rows per entity share a `group_id`, so
 calibrators can enforce `p_yes + p_no = 1`.
 
 ```python
@@ -50,7 +50,7 @@ no  = contracts.fair_price[contracts.contract_ids == 1]   # P(X ≤ 70)
 np.testing.assert_allclose(yes + no, 1.0)
 ```
 
-Convention: `contract_id=0` is YES = `P(X > k)`; `contract_id=1` is NO =
+By convention `contract_id=0` is YES = `P(X > k)` and `contract_id=1` is NO =
 `P(X ≤ k)`. The two prices sum to exactly 1.0 within each entity by
 construction.
 
@@ -77,8 +77,8 @@ contract row per bracket per entity. For each interval
 `[edges_i[k], edges_i[k+1])`, the fair price is
 `cdf(edges_i[k+1]) - cdf(edges_i[k])`.
 
-Storage stays ragged: different rows may carry different `B_i` (Kalshi
-occasionally adds an extra bracket for extreme-weather days). For the i.i.d.
+Storage stays ragged, so different rows may carry different `B_i`. Kalshi
+occasionally adds an extra bracket for extreme-weather days. For the i.i.d.
 case where every row shares the same edges, pass `edges_per_row=[edges] * N`.
 The inner list holds N references to the same array, so it costs no extra
 memory.
@@ -109,8 +109,8 @@ ladder = BracketLadder(edges_per_row=[edges] * N)
 `BracketLadder.price` reads the CDF at the ladder edges and diffs. When the
 ladder fails to span the distribution's effective support, mass falls off the
 ends and row sums dip below 1.0. That missed mass biases contract prices
-downward and usually signals a bug, so the adapter checks every row and
-surfaces the failure.
+downward and usually indicates a bug, so the adapter checks every row and
+reports the failure.
 
 - `strict=False` (default) emits a `UserWarning` whenever any row's missed mass
   exceeds `coverage_tol` (default `1e-4`). The warning reports the worst-row
@@ -120,13 +120,14 @@ surfaces the failure.
   and above-max tail mass) so per-entity prices sum to 1.0 by construction. The
   coverage check then becomes a no-op.
 
-Use `strict=True` when downstream code requires coherent simplex probabilities
-(log-loss scoring, isotonic calibration, sizing under a "probabilities sum to
-1" budget).
+Use `strict=True` when downstream code requires coherent simplex probabilities,
+as log-loss scoring, isotonic calibration, and sizing under a "probabilities sum
+to 1" budget all do.
 
-To clear a coverage warning, widen the outer edges (use ±large numbers to catch
-tail mass into the outer bins) or set `include_tail_buckets=True`. Loosening
-`coverage_tol` hides the problem rather than fixing it.
+To clear a coverage warning, widen the outer edges, using large magnitudes of
+either sign to catch tail mass into the outer bins, or set
+`include_tail_buckets=True`. Loosening `coverage_tol` hides the problem rather
+than fixing it.
 
 ### Edge semantics
 
@@ -136,8 +137,8 @@ zero measure, so the adapter exposes no knob.
 
 ### Output shape
 
-`BracketLadder.price` returns a `ContractForecast` in **long form**. For the
-shared-edge case where every row has the same `B`:
+`BracketLadder.price` returns a `ContractForecast` in **long form**. The table
+below covers the shared-edge case where every row has the same `B`.
 
 | field             | shape  | content |
 |-------------------|--------|---------|
@@ -146,7 +147,7 @@ shared-edge case where every row has the same `B`:
 | `fair_price`      | (N·B,) | `probs.flatten()` |
 | `group_id`        | (N·B,) | `dist.ids` repeated B times (one ladder per entity) |
 
-To recover the (N, B) probability matrix:
+To recover the (N, B) probability matrix, reshape.
 
 ```python
 probs = contracts.fair_price.reshape(N, B)
@@ -156,13 +157,13 @@ np.testing.assert_allclose(probs.sum(axis=1), 1.0)  # iff ladder covered
 With ragged `edges_per_row` or `include_tail_buckets=True`, the per-row
 contract count varies, so index by `entity_ids` instead of reshaping.
 
-Implementation note: per-row edges use `DistributionForecast.cdf_at_grid` under
-the hood (a vectorised CDF on a per-row evaluation grid), so parametric
-backings stay vectorised even with ragged edges.
+Per-row edges use `DistributionForecast.cdf_at_grid` internally, a vectorised
+CDF on a per-row evaluation grid, so parametric backings stay vectorised even
+with ragged edges.
 
 ## Adding a new adapter
 
-Implement the `ContractAdapter` protocol from `bracketlearn.protocols`:
+Implement the `ContractAdapter` protocol from `bracketlearn.protocols`.
 
 ```python
 from bracketlearn.forecast import ContractForecast, DistributionForecast
@@ -175,7 +176,7 @@ class MyAdapter:
         ...
 ```
 
-No base class required; duck typing on `.price(dist)` is enough. Follow the
-`BracketLadder` example for provenance plumbing (carry forward
-`dist.provenance.fit_window`, `fold_idx`, and the rest) so the resulting
+No base class is required, since duck typing on `.price(dist)` is enough.
+Follow the `BracketLadder` example for provenance plumbing, carrying forward
+`dist.provenance.fit_window`, `fold_idx`, and the rest, so the resulting
 `ContractForecast` stays auditable.

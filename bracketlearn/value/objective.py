@@ -7,28 +7,31 @@ hit ``r ∈ {0,1}`` and reference price ``m``::
     EA =  (q − m)(r − m)                          (value vs the reference)
     L  =  CE − λ·EA
 
-``λ ≥ 0`` is the tilt: ``λ = 0`` is a pure calibration objective; larger ``λ``
-tilts toward value (capturing the reference's mispricing). **Parameterized as
-``CE − λ·EA``, not ``α·CE + (1−α)·EA``**, so the CE term always supplies full,
-correctly-scaled curvature, otherwise a gradient-boosted model just underfits
-as the tilt grows (the EA term alone is linear and curvature-free).
+``λ ≥ 0`` is the tilt. At ``λ = 0`` the objective is pure calibration. Larger
+``λ`` tilts toward value, capturing the reference's mispricing. The
+parameterization is ``CE − λ·EA`` rather than ``α·CE + (1−α)·EA``, so the CE
+term always supplies full, correctly-scaled curvature. Under the convex
+combination a gradient-boosted model underfits as the tilt grows, since the EA
+term alone is linear and curvature-free.
 
-Select ``λ`` by *costed* value (``score.edge_alignment_costed``), not by EA: EA
-is fee-free and rises monotonically with the tilt, so it always over-tilts. See
-``docs/guides/value_with_fees.md``.
+Select ``λ`` by costed value using ``score.edge_alignment_costed`` rather than
+by EA. EA is fee-free and rises monotonically with the tilt, so it always
+over-tilts. See ``docs/guides/value_with_fees.md``.
 
-Gradient / Hessian w.r.t. the raw score ``z`` (for a LightGBM custom objective)::
+Gradient and Hessian with respect to the raw score ``z``, for a LightGBM
+custom objective::
 
     ∂L/∂z   = (q − r) − λ·(r − m)·q(1−q)
     ∂²L/∂z² = q(1−q) − λ·(r − m)·q(1−q)(1−2q)      (exact)
             ≈ q(1−q)                               (Newton metric we use)
 
-We keep **only** the CE curvature ``q(1−q)`` for the Newton step. The EA term's
-true curvature ``−λ·(r − m)·q(1−q)(1−2q)`` is *indefinite* - its sign flips with
-``(r − m)`` and ``(1 − 2q)``, so including it would not give a positive-definite
-metric. Dropping it (not "it's ~zero", it is not) leaves the stable PD CE
-curvature; the value tilt enters only through the gradient. ``hess_floor`` keeps
-the metric strictly positive as ``q → 0/1``.
+Only the CE curvature ``q(1−q)`` is kept for the Newton step. The EA term's
+true curvature ``−λ·(r − m)·q(1−q)(1−2q)`` is indefinite, since its sign flips
+with ``(r − m)`` and ``(1 − 2q)``. Including it would not give a
+positive-definite metric. The dropped term is not small. Dropping it leaves the
+stable positive-definite CE curvature, and the value tilt then enters only
+through the gradient. ``hess_floor`` keeps the metric strictly positive as
+``q → 0/1``.
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ from __future__ import annotations
 import numpy as np
 
 #: Floor added to the Newton Hessian ``q(1−q)`` so the metric stays strictly
-#: positive (and the leaf step finite) as ``q → 0/1``.
+#: positive, and the leaf step finite, as ``q → 0/1``.
 _HESS_FLOOR = 1e-6
 
 
@@ -52,8 +55,9 @@ def blended_grad_hess(
     *,
     hess_floor: float = _HESS_FLOOR,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Per-contract gradient and Hessian of ``L = CE − λ·EA`` w.r.t. the raw
-    score. Arrays are aligned over the same (row, bracket) contracts."""
+    """Per-contract gradient and Hessian of ``L = CE − λ·EA`` with respect to
+    the raw score. Arrays are aligned over the same (row, bracket)
+    contracts."""
     q = _sigmoid(np.asarray(raw_score, dtype=float))
     r = np.asarray(r, dtype=float)
     m = np.asarray(m, dtype=float)
@@ -66,23 +70,24 @@ def ea_scale_for_reference(reference: np.ndarray, *, eps: float = 1e-8) -> float
     """Data-derived rescaling that makes ``lam`` mean the same thing across the
     GBM and torch engines.
 
-    The two engines treat the EA gradient ``λ·(r − m)·q(1−q)`` differently:
+    The two engines treat the EA gradient ``λ·(r − m)·q(1−q)`` differently.
 
-    - **LightGBM** takes a Newton step, dividing the gradient by the Hessian
-      ``q(1−q)``. The ``q(1−q)`` factor *cancels*, so the GBM's effective EA
+    - LightGBM takes a Newton step, dividing the gradient by the Hessian
+      ``q(1−q)``. The ``q(1−q)`` factor cancels, so the GBM's effective EA
       update is ``≈ λ·(r − m)``.
-    - **The torch net** does plain (Adam) gradient descent, no Hessian
-      division, so its EA gradient keeps the ``q(1−q)`` factor and is therefore
-      suppressed by a factor ``≈ E[q(1−q)]`` relative to the GBM.
+    - The torch net does plain Adam gradient descent with no Hessian division.
+      Its EA gradient keeps the ``q(1−q)`` factor and is therefore suppressed
+      by a factor ``≈ E[q(1−q)]`` relative to the GBM.
 
-    Multiplying the torch EA term by ``1 / E[q(1−q)]`` restores parity. Evaluated
-    at initialization the model predicts the reference, ``q ≈ m``, so the scale
-    is ``1 / mean(m·(1−m))`` over the expanded (row, bracket) contracts, a
-    quantity read directly off the reference prices, not a hand-tuned constant.
+    Multiplying the torch EA term by ``1 / E[q(1−q)]`` restores parity.
+    Evaluated at initialization the model predicts the reference, ``q ≈ m``, so
+    the scale is ``1 / mean(m·(1−m))`` over the expanded (row, bracket)
+    contracts. That quantity is read directly off the reference prices rather
+    than hand-tuned.
 
-    Caveat: this matches the gradient scale at *initialization*; as ``q`` moves
-    away from ``m`` during training the ``q(1−q)`` factor drifts, so the
-    cross-engine equivalence of ``lam`` is approximate, not exact.
+    This matches the gradient scale at initialization. As ``q`` moves away from
+    ``m`` during training the ``q(1−q)`` factor drifts, so the cross-engine
+    equivalence of ``lam`` is approximate rather than exact.
     """
     m = np.asarray(reference, dtype=float)
     if m.size == 0:
@@ -102,8 +107,8 @@ def make_lgb_objective(reference: np.ndarray, lam: float, *, hess_floor: float =
     """Build a LightGBM custom-objective closure for ``L = CE − λ·EA``.
 
     ``reference`` is the per-contract price ``m`` aligned to the training
-    Dataset's row order (the expanded (row, bracket) order). Pass the result as
-    ``params["objective"]`` to ``lightgbm.train``.
+    Dataset's row order, which is the expanded (row, bracket) order. Pass the
+    result as ``params["objective"]`` to ``lightgbm.train``.
     """
     ref = np.asarray(reference, dtype=float)
     if lam < 0:
@@ -126,8 +131,10 @@ def make_lgb_objective(reference: np.ndarray, lam: float, *, hess_floor: float =
 def blended_loss(
     q: np.ndarray, r: np.ndarray, m: np.ndarray, lam: float, *, eps: float = 1e-12,
 ) -> float:
-    """The scalar objective ``mean(CE) − λ·mean(EA)`` (lower = better). For the
-    torch trainer and for tests; operates on probabilities ``q`` directly."""
+    """The scalar objective ``mean(CE) − λ·mean(EA)``, where lower is better.
+
+    Used by the torch trainer and by the tests. It operates on probabilities
+    ``q`` directly."""
     q = np.clip(np.asarray(q, dtype=float), eps, 1.0 - eps)
     r = np.asarray(r, dtype=float)
     m = np.asarray(m, dtype=float)

@@ -1,13 +1,17 @@
-"""Point → Distribution lifters (§6) + Dist → Dist calibrators.
+"""Point-to-distribution lifters (§6) and distribution-to-distribution
+calibrators.
 
-v0.1 ships:
-- GlobalResidual      - Lifter: iid Gaussian residuals, one σ.
-- StudentTResidual    - Lifter: iid Student-t residuals, MLE (σ, ν).
-- GARCHResidual       - Lifter: time-varying σ from GARCH(1,1), one-step.
-- Isotonic            - Calibrator: per-bracket isotonic calibration.
-- ConformalCalibrate  - Calibrator: per-τ conformal coverage on quantile dists.
+v0.1 ships the following.
 
-Planned for v0.2 (see README "Not yet" section):
+- GlobalResidual, a lifter using iid Gaussian residuals with one σ.
+- StudentTResidual, a lifter using iid Student-t residuals, MLE (σ, ν).
+- GARCHResidual, a lifter with time-varying σ from GARCH(1,1), one-step.
+- Isotonic, a calibrator applying per-bracket isotonic calibration.
+- ConformalCalibrate, a calibrator applying per-τ conformal coverage on
+  quantile dists.
+
+Planned for v0.2, see the README "Not yet" section.
+
 - SisterModel, ConditionalVariance, Conformal lifters
 - Bootstrap, IsotonicCDF
 """
@@ -181,18 +185,18 @@ class StudentTResidual(BaseEstimator):
 class GARCHResidual(BaseEstimator):
     """Fits GARCH(1,1) on OOF residuals; lifts to per-row σ.
 
-    Volatility recursion: σ²_t = ω + α·r²_{t-1} + β·σ²_{t-1}, with the
-    residual mean assumed zero (point forecast unbiased).
+    The volatility recursion is σ²_t = ω + α·r²_{t-1} + β·σ²_{t-1}. The
+    residual mean is assumed zero, so the point forecast is unbiased.
 
-    One-step semantics (per user choice): every lift() row receives the
+    The semantics are one-step, by user choice. Every lift() row receives the
     forecasted σ for the next observation given the fitted residual history,
-    i.e. σ̂² = ω + α·r²_T + β·σ²_T where T is the last fit-residual index.
-    Multi-horizon mean-reversion is not implemented, pass timestamps that
-    match the one-step convention.
+    that is σ̂² = ω + α·r²_T + β·σ²_T where T is the last fit-residual index.
+    Multi-horizon mean-reversion is not implemented. Pass timestamps that match
+    the one-step convention.
 
-    family="normal" (default) produces a parametric normal output; "student_t"
-    additionally fits a Student-t df on the standardised residuals
-    (r_t / σ_t) and produces a parametric student_t output.
+    The default family="normal" produces a parametric normal output. The
+    "student_t" family additionally fits a Student-t df on the standardised
+    residuals (r_t / σ_t) and produces a parametric student_t output.
     """
 
     family: Literal["normal", "student_t"] = "normal"
@@ -240,7 +244,8 @@ class GARCHResidual(BaseEstimator):
             ll = -0.5 * np.sum(np.log(2 * np.pi * sigma2) + r2 / sigma2)
             return -ll
 
-        # Initial guess: targeting unconditional variance with α=0.05, β=0.9.
+        # Initial guess targeting the unconditional variance, with α=0.05
+        # and β=0.9.
         alpha0, beta0 = 0.05, 0.90
         omega0 = var_uncond * (1.0 - alpha0 - beta0)
         result = minimize(
@@ -342,10 +347,10 @@ class Isotonic(BaseEstimator):
     curve maps (predicted-prob → calibrated-prob) without referencing
     the underlying bracket edges.
 
-    Convenience: pass ``pre_integrate_edges`` (1-D shared, 2-D dense,
-    or ragged sequence) to have Isotonic auto-integrate non-bracket
-    inputs internally, useful in factories that wrap a parametric
-    forecaster with bracket-prob calibration on a known ladder.
+    Passing ``pre_integrate_edges``, either 1-D shared, 2-D dense, or a ragged
+    sequence, makes Isotonic integrate non-bracket inputs internally. This is
+    useful in factories that wrap a parametric forecaster with bracket-prob
+    calibration on a known ladder.
     """
 
     pre_integrate_edges: Any = None
@@ -522,26 +527,24 @@ class PITCalibrate(BaseEstimator):
 
     Fit
         On a held-out calibration set, compute PIT values ``u_i``. Fit
-        an isotonic map ``g: [0, 1] → [0, 1]`` from the empirical CDF
-        of ``u``: ``g(u) = (rank(u) − 0.5) / N``. ``g`` is monotone by
-        construction; anchored at ``g(0) = 0`` and ``g(1) = 1``.
+        an isotonic map ``g`` from [0, 1] to [0, 1], built from the empirical
+        CDF of ``u`` as ``g(u) = (rank(u) − 0.5) / N``. ``g`` is monotone by
+        construction and anchored at ``g(0) = 0`` and ``g(1) = 1``.
 
     Transform
-        For an output τ grid (``taus_out``), invert the predictive CDF
-        at the *pre-image* level ``g⁻¹(τ)``: ``q̂_cal(τ) = F̂⁻¹(g⁻¹(τ))``.
-        Equivalently, the warped predictive CDF is ``g ∘ F̂``. If the
-        upstream is calibrated, ``g`` is the identity and quantiles are
-        unchanged.
+        For an output τ grid ``taus_out``, the predictive CDF is inverted at
+        the pre-image level ``g⁻¹(τ)``, giving ``q̂_cal(τ) = F̂⁻¹(g⁻¹(τ))``.
+        Equivalently, the warped predictive CDF is ``g ∘ F̂``. If the upstream
+        is calibrated, ``g`` is the identity and quantiles are unchanged.
 
-    Operates on any DistributionForecast subclass that exposes ``cdf_at``
-    and ``ppf`` (currently all of them). Output is quantile-backed at the
-    requested ``taus_out`` grid.
+    Operates on any DistributionForecast subclass that exposes ``cdf_at`` and
+    ``ppf``, which at present is all of them. The output is quantile-backed at
+    the requested ``taus_out`` grid.
 
-    Compared with :class:`Isotonic` (per-bracket-cell calibration) and
-    :class:`ConformalCalibrate` (per-τ coverage offsets): PITCalibrate is
-    grid-agnostic, preserves monotonicity of the predictive CDF
-    end-to-end, and corrects shape (e.g. fat-tail / over-dispersion) not
-    just location.
+    :class:`Isotonic` calibrates per bracket cell and :class:`ConformalCalibrate`
+    applies per-τ coverage offsets. PITCalibrate is grid-agnostic, preserves
+    monotonicity of the predictive CDF end to end, and corrects shape such as
+    fat tails or over-dispersion rather than location alone.
 
     Requires a calibration set large enough to estimate the empirical
     PIT, raises if ``N < 30``.
@@ -577,8 +580,8 @@ class PITCalibrate(BaseEstimator):
                 f"{n_bad}/{N} rows. Check upstream distribution support vs y."
             )
         u = np.clip(u, 0.0, 1.0)
-        # Anchored isotonic fit: empirical CDF of u, with explicit (0, 0)
-        # and (1, 1) anchors so the map covers the full unit square.
+        # Anchored isotonic fit on the empirical CDF of u, with explicit
+        # (0, 0) and (1, 1) anchors so the map covers the full unit square.
         ranks = np.argsort(np.argsort(u))
         ecdf = (ranks + 0.5) / N
         x_fit = np.concatenate([[0.0], u, [1.0]])
@@ -606,8 +609,8 @@ class PITCalibrate(BaseEstimator):
             raise RuntimeError("PITCalibrate.transform called before fit")
         taus_out = np.asarray(self.taus_out, dtype=float)
         # Invert g on a dense grid, then evaluate upstream ppf at g⁻¹(τ_k).
-        # Dense τ grid for g⁻¹: 1001 points so the linear interpolation is
-        # tight at the tails.
+        # Dense τ grid for g⁻¹, using 1001 points so the linear interpolation
+        # is tight at the tails.
         grid = np.linspace(0.0, 1.0, 1001)
         g_grid = self.iso_.predict(grid)
         # g may be flat on intervals; np.interp uses leftmost x for ties,

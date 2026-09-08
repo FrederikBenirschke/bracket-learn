@@ -211,7 +211,7 @@ class QuantileForecast(DistributionForecast):
             lower = qvals[:, 0] * taus[0]
             upper = qvals[:, -1] * (1.0 - taus[-1])
             return lower + inner + upper
-        # mode: highest-density bin → midpoint of (q_i, q_{i+1})
+        # mode, the highest-density bin, giving the midpoint of (q_i, q_{i+1})
         dq = np.diff(qvals, axis=1)
         dt = np.diff(taus)
         density = dt[None, :] / np.where(dq > 1e-12, dq, 1e-12)

@@ -1,33 +1,33 @@
-"""Accuracy vs value: EMOS against a real market reference.
+"""Accuracy against value, comparing EMOS with a real market reference.
 
-End-to-end demonstration of the reference-relative value metrics
-(``score.edge_alignment`` / ``score.value_report``):
+This is an end-to-end demonstration of the reference-relative value metrics
+``score.edge_alignment`` and ``score.value_report``.
 
-  1. Fit EMOS on multi-model ensemble mean/spread.
+  1. Fit EMOS on the multi-model ensemble mean and spread.
   2. Price it onto each row's own bracket grid via ``dist.integrate``.
-  3. Score it against the market's normalized mid ``m`` two ways: Brier
-     (accuracy) and Edge-Alignment (value).
+  3. Score it against the market's normalized mid ``m`` in two ways, by Brier
+     for accuracy and by Edge-Alignment for value.
 
-What this sample shows: EMOS is less accurate than the market (worse Brier)
-AND negative-EA, with a 95% interval that crosses zero. The synthetic case in
-the value guide's §5, worse Brier, still positive value, does not reproduce
-here. What does hold is that the two axes move independently: of the two
-calibration "fixes" below, one improves Brier while raising EA and the other
-barely moves Brier while lowering it. That is the mechanism the metric exists
-to expose, and it does not depend on the sign.
+EMOS is less accurate than the market, with a worse Brier, and its EA is
+negative with a 95% interval that crosses zero. The synthetic case of the value
+guide's §5, worse Brier with still positive value, does not reproduce here.
+What does hold is that the two axes move independently. Of the two calibration
+fixes below, one improves Brier while raising EA and the other barely moves
+Brier while lowering it. That is the mechanism the metric exists to expose, and
+it does not depend on the sign.
 
-An earlier version of this file claimed positive EA that was "robust across
-random splits". That rested on a fixture whose bracket edges were corrupted,
-and on a random split of an autocorrelated series. Both are fixed; the claim is
+An earlier version of this file claimed positive EA that was robust across
+random splits. That rested on a fixture whose bracket edges were corrupted, and
+on a random split of an autocorrelated series. Both are fixed and the claim is
 withdrawn. See ``docs/guides/value_vs_accuracy.md`` §5b for the decomposition.
 
-Data: ``examples/data/weather_value_sample.parquet``, 5,429 station-days of
-Kalshi weather contracts over 2026-03-17..09-03 across 18 stations, carrying
-forecast inputs, realized values, per-row bracket edges (open tails as ±inf),
-and normalized reference prices with NaN where a bracket had no quote. Built by
-a committed exporter; see the ``.provenance.json`` sidecar for the source
-commit. The reference price is a bid-ask midpoint, frictionless, necessary for
-value, not sufficient for profit.
+The data is ``examples/data/weather_value_sample.parquet``, 5,429 station-days
+of Kalshi weather contracts over 2026-03-17..09-03 across 18 stations. It
+carries forecast inputs, realized values, per-row bracket edges with open tails
+as ±inf, and normalized reference prices with NaN where a bracket had no quote.
+It was built by a committed exporter, and the ``.provenance.json`` sidecar
+names the source commit. The reference price is a bid-ask midpoint. It is
+frictionless, and is necessary for value but not sufficient for profit.
 
 Run::
 
@@ -50,9 +50,10 @@ DATA = os.path.join(os.path.dirname(__file__), "data", "weather_value_sample.par
 
 
 def _clusters(rows):
-    """One label per CONTRACT, naming its (station, day) ladder, the unit the
-    outcome is shared over. Mirrors _price's flattening exactly, including the
-    finite-quote mask, or the labels would not line up with the contracts."""
+    """One label per contract, naming its (station, day) ladder, which is the
+    unit the outcome is shared over. This mirrors _price's flattening exactly,
+    including the finite-quote mask. Otherwise the labels would not line up
+    with the contracts."""
     out = []
     for row in rows:
         m = np.asarray(row["ref_price"], float)
@@ -116,12 +117,14 @@ def run_side(df: pl.DataFrame, side: str) -> None:
     dist_te = predict(te)
     q0, m, r = _price(dist_te, te)
 
-    # naive "fix" 1: de-bias EMOS's mean by its train residual (calibrate to truth)
+    # naive fix 1, de-biasing EMOS's mean by its train residual, which
+    # calibrates to truth
     dmu = float(ytr.mean() - predict(tr).mu.mean())
     qd, _, _ = _price(dist_te, te, dmu=dmu)
 
-    # naive "fix" 2: edge-recalibrate toward the market's realized error (isotonic,
-    # fit causally on train), maximizes calibration of the edge, overfits on small N
+    # naive fix 2, edge-recalibrating toward the market's realized error by
+    # isotonic regression fit causally on train. This maximizes calibration of
+    # the edge and overfits on small N.
     qt, mt, rt = _price(predict(tr), tr)
     iso = IsotonicRegression(out_of_bounds="clip").fit(qt - mt, rt - mt)
     q2 = np.clip(m + iso.predict(q0 - m), 1e-4, 1 - 1e-4)

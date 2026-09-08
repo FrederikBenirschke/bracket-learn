@@ -51,18 +51,20 @@ print(new_dists["qreg"].params)
 ## What just happened
 
 1. `Pipeline([SklearnPoint(RidgeCV()), GlobalResidual()])` chains a point
-   regressor and a lifter into one parametric-normal forecaster: ridge
-   predicts μ̂, the global-residual lifter estimates one σ from OOF residuals.
+   regressor and a lifter into one parametric-normal forecaster. Ridge
+   predicts μ̂, and the global-residual lifter estimates one σ from OOF
+   residuals.
 2. `Pipeline([EMOS(), Isotonic(pre_integrate_edges=edges)])` fits EMOS on the
-   ensemble columns, then per-fold runs isotonic calibration on the bracket
-   probabilities (`pre_integrate_edges` tells `Isotonic` to project the
-   Normal onto the ladder before calibrating).
-3. `QuantileReg` fits one LightGBM per τ; a single-stage `Pipeline` stores the
-   result as a quantile-backed distribution.
-4. `WalkForward` runs **expanding-window CV** under the hood: each model is
-   cloned per fold, fit on the train slice, predicted on the test slice, and
-   OOF predictions are stitched into one `DistributionForecast` per model.
+   ensemble columns, then runs isotonic calibration per fold on the bracket
+   probabilities. `pre_integrate_edges` tells `Isotonic` to project the
+   Normal onto the ladder before calibrating.
+3. `QuantileReg` fits one LightGBM per τ, and a single-stage `Pipeline` stores
+   the result as a quantile-backed distribution.
+4. `WalkForward` runs **expanding-window CV** internally. Each model is
+   cloned per fold, fit on the train slice, and predicted on the test slice,
+   and the OOF predictions are stitched into one `DistributionForecast` per
+   model.
 5. `result.score()` and `result.to_table()` align y to each model's OOF
-   coverage via `dist.ids`, so you never touch row indices by hand.
+   coverage via `dist.ids`, so row indices never have to be handled by hand.
 6. `wf.predict(X_new)` uses canonical full-train refits stored at the end of
    `fit_predict` (enabled by `refit_on_full=True`).

@@ -1,18 +1,19 @@
-"""Multi-target wrapper: a single (N, M) y becomes M independent models.
+"""Multi-target wrapper turning a single (N, M) y into M independent models.
 
-Mirrors sklearn's ``MultiOutputRegressor``: each target column is fit by a
-separate deep-copy of the model graph, run under its own `WalkForward`. No
-cross-target sharing, if joint modelling is desired, build a single trainer
-that natively consumes (N, M) y.
+This mirrors sklearn's ``MultiOutputRegressor``. Each target column is fit by a
+separate deep-copy of the model graph, run under its own `WalkForward`. There
+is no cross-target sharing. For joint modelling, build a single trainer that
+natively consumes an (N, M) y.
 
-Why a wrapper rather than threading M through every trainer:
+Two reasons favour a wrapper over threading M through every trainer.
 
-- The (N, M) → (N, M) contract would multiply every backing's shape (e.g.
-  ``DistributionForecast.params['mu']`` becomes (N, M)) and break every
-  scoring rule. The blast radius is huge for a feature most users won't touch.
-- ``MultiOutput`` keeps the single-target machinery unchanged and composes M
-  times, readable, debuggable, and matches the expectation that "M targets =
-  M models" unless a joint trainer is explicitly built.
+- The (N, M) to (N, M) contract would multiply every backing's shape, so
+  ``DistributionForecast.params['mu']`` would become (N, M), and it would break
+  every scoring rule. That is a large change for a feature most users will not
+  touch.
+- ``MultiOutput`` keeps the single-target machinery unchanged and composes it M
+  times. This is readable and debuggable, and it matches the expectation that M
+  targets means M models unless a joint trainer is explicitly built.
 
 Example::
 
@@ -95,7 +96,7 @@ class MultiOutput:
             per target.
         wf: prototype `WalkForward`, cloned per target. Use ``refit_on_full=True``
             to enable ``predict`` on unseen rows.
-        target_names: optional list of M names; defaults to
+        target_names: optional list of M names, defaulting to
             ``["target_0", "target_1", ...]``.
     """
 

@@ -136,11 +136,11 @@ class PipelineResult:
     """Holds the OOF DistributionForecast per stage plus the row mapping
     back into the original data (so scoring can align y itself).
 
-    Indexing:
+    Indexing
         result["ridge"]  # → DistributionForecast for stage 'ridge'
         result.stages    # → list[str] of stage names
 
-    Scoring (the user never touches dist.ids):
+    Scoring, where the user never touches dist.ids
         result.score(y, metrics=["crps", "log_score"])
         result.score(y, metrics=["log_loss_bracket", "brier_bracket"], edges=edges)
     """
@@ -170,23 +170,24 @@ class PipelineResult:
     ) -> dict[str, dict[str, float]]:
         """Return {stage_name: {metric_name: value}}.
 
-        Available metrics:
-          - "crps"             - mean CRPS for Gaussian backing
-          - "log_score"        - mean predictive negative log-likelihood
-          - "pit_mean"         - mean PIT (≈ 0.5 if calibrated)
-          - "pit"              - mean, variance, and the neutral reference
-          - "log_loss_bracket", requires ``edges`` (any ladder shape)
-          - "brier_bracket", requires ``edges`` (any ladder shape)
+        The available metrics are the following.
 
-        ``edges`` takes any of the three shapes the scorers accept: a shared
+          - "crps", mean CRPS for a Gaussian backing
+          - "log_score", mean predictive negative log-likelihood
+          - "pit_mean", mean PIT, which is close to 0.5 when calibrated
+          - "pit", mean, variance, and the neutral reference
+          - "log_loss_bracket", which requires ``edges`` in any ladder shape
+          - "brier_bracket", which requires ``edges`` in any ladder shape
+
+        ``edges`` takes any of the three shapes the scorers accept, a shared
         1-D ``(B+1,)`` vector, a dense ``(N, B+1)`` grid, or a ragged per-row
-        sequence. A rotating ladder needs one of the latter two, and passing
-        a single vector for one is refused rather than scored against row 0's
-        grid. It is sliced alongside ``y`` for stages whose out-of-fold
+        sequence. A rotating ladder needs one of the latter two. Passing a
+        single vector for one is refused rather than scored against row 0's
+        grid. ``edges`` is sliced alongside ``y`` for stages whose out-of-fold
         coverage is a subset of the rows.
 
-        y is the full original target vector; PipelineResult slices it to
-        match each stage's OOF coverage via dist.ids.
+        y is the full original target vector. PipelineResult slices it to match
+        each stage's OOF coverage via dist.ids.
         """
         from bracketlearn import score as scoremod
 
@@ -204,11 +205,11 @@ class PipelineResult:
         for name, dist in self.forecasts.items():
             idx = dist.ids.astype(int)
             y_oof = y[idx]
-            # `edges` must be sliced alongside `y`: a stage's OOF coverage can
+            # `edges` must be sliced alongside `y`. A stage's OOF coverage can
             # be a subset of the rows, and a per-row ladder is indexed by row.
             # Passing the full-length ladder against a sliced y raised "edges
             # describe N rows; the forecast has M", which made the per-row
-            # shape unusable through exactly this API.
+            # shape unusable through this API.
             edges_oof = _slice_edges(edges, idx)
             row: dict[str, float] = {"n_oof": int(dist.ids.shape[0])}
             for m in metrics:
@@ -362,21 +363,21 @@ def _stitch_folds(
 # ---------------------------------------------------------------------------
 # Pipeline, flat, sequential chain of stages (= sklearn `Pipeline`).
 #
-# A *stage* is one of: Transformer, PointForecaster, Lifter, Calibrator,
-# DistForecaster. The chain is wired left→right by stage kind into a single
-# DistForecaster; a leading Transformer standardizes X (+ target at fit) and
-# its `inverse_dist` maps the forecaster's distribution back to the original
-# scale at the tail, so downstream bracket integration is unchanged.
+# A stage is a Transformer, PointForecaster, Lifter, Calibrator or
+# DistForecaster. The chain is wired left to right by stage kind into a single
+# DistForecaster. A leading Transformer standardizes X, and the target at fit,
+# and its `inverse_dist` maps the forecaster's distribution back to the
+# original scale at the tail, so downstream bracket integration is unchanged.
 #
-# Track 1 supports the shape the weather fleet needs: [Transformer*,
-# DistForecaster]. Point→Lifter and Calibrator stages need out-of-fold
+# Track 1 supports the shape the weather fleet needs, [Transformer*,
+# DistForecaster]. Point-to-Lifter and Calibrator stages need out-of-fold
 # predictions threaded by the `WalkForward` driver and are deferred to
-# Track 2 (raised loud here, not silently ignored).
+# Track 2. They raise here rather than being ignored.
 # ---------------------------------------------------------------------------
 
 
 def _stage_kind(stage) -> str:
-    # Duck-typed (robust to data-attribute protocols): a Transformer carries
+    # Duck-typed, which is robust to data-attribute protocols. A Transformer carries
     # transform_target + inverse_dist; a DistForecaster carries predict_dist;
     # a PointForecaster carries predict (and no predict_dist); a Lifter lift;
     # a Calibrator transforms a dist (transform, no predict[_dist]).
@@ -400,9 +401,9 @@ def _stage_kind(stage) -> str:
 class Pipeline:
     """Sequential chain of stages, exposed as a `DistForecaster`.
 
-    A *stage* is one of: `Transformer`, `PointForecaster`, `Lifter`,
-    `Calibrator`, `DistForecaster`. The chain is wired left→right into a single
-    distribution forecaster; the valid shapes are::
+    A stage is a `Transformer`, `PointForecaster`, `Lifter`, `Calibrator` or
+    `DistForecaster`. The chain is wired left to right into a single
+    distribution forecaster. The valid shapes are::
 
         [Transformer*, DistForecaster, Calibrator?]
         [Transformer*, PointForecaster, Lifter, Calibrator?]
@@ -414,15 +415,15 @@ class Pipeline:
         Pipeline([SklearnPoint(Ridge()), GlobalResidual()])    # point → lift → dist
         Pipeline([EMOS(), Isotonic()])                         # dist → calibrate
 
-    A Point→Lifter pair is fit with an internal out-of-fold
-    half-split (the point fits on the first part, predicts the rest, the lifter
-    fits on those OOF predictions, the point refits on full); a trailing
-    Calibrator fits on a held-out tail of the (transformed) training data. The
-    chain is self-contained, given ``(X, y, ids, timestamps)`` it fits itself,
-    including the inner splits its stages need, so `WalkForward` only owns the
-    *outer* CV.
+    A Point-to-Lifter pair is fit with an internal out-of-fold half-split. The
+    point stage fits on the first part and predicts the rest, the lifter fits
+    on those OOF predictions, and the point stage refits on the full data. A
+    trailing Calibrator fits on a held-out tail of the transformed training
+    data. The chain is self-contained. Given ``(X, y, ids, timestamps)`` it
+    fits itself, including the inner splits its stages need, so `WalkForward`
+    owns only the outer CV.
 
-    ``name`` is an optional leaderboard label (auto-derived otherwise).
+    ``name`` is an optional leaderboard label, auto-derived otherwise.
     """
 
     def __init__(self, stages: Sequence[Any], *, name: str | None = None,
@@ -497,10 +498,10 @@ class Pipeline:
         ids_arr = np.asarray(ids)
         ts = np.zeros(n) if timestamps is None else np.asarray(timestamps)
 
-        # How many trailing rows the calibrator will be fit on, decided BEFORE
-        # anything is fit so both the transformers and the core can be held out
-        # of them. `c == 0` means no calibrator, or too few rows to hold any
-        # out.
+        # How many trailing rows the calibrator will be fit on. This is
+        # decided before anything is fit, so that both the transformers and the
+        # core can be held out of them. `c == 0` means there is no calibrator,
+        # or too few rows to hold any out.
         c = 0
         if self._calibrator is not None:
             if upstream is not None:
@@ -514,29 +515,29 @@ class Pipeline:
                 self._calibrator = None   # too few rows to calibrate
                 c = 0
 
-        # Transformers are fit on the same head the core is, for the same
-        # reason: GroupByZScore learns its scale from std(y - center), and
+        # Transformers are fit on the same head as the core, for the same
+        # reason. GroupByZScore learns its scale from std(y - center), and
         # including the calibration tail lets the tail set the scale that the
         # calibrator's own inputs are then divided by. Measured on a synthetic
-        # tail with a wider spread: scale 25.30 fit on all rows vs 0.96 fit on
-        # the head. Smaller in effect than the core leak (one scalar per
-        # group), but the same leak, in the same function.
+        # tail with a wider spread, the scale is 25.30 fit on all rows against
+        # 0.96 fit on the head. The effect is smaller than the core leak, one
+        # scalar per group, but it is the same leak in the same function.
         #
-        # The rows the CORE may see while the calibrator's tail is being
-        # produced. Fitting the core on everything and then calibrating on a
-        # slice of that same everything is the leak this split exists to stop:
-        # the calibrator would be learning a correction to in-sample
+        # These are the rows the core may see while the calibrator's tail is
+        # being produced. Fitting the core on everything and then calibrating
+        # on a slice of that same everything is the leak this split prevents.
+        # The calibrator would be learning a correction to in-sample
         # predictions, which are systematically better than the out-of-sample
-        # ones it will actually be applied to, so it under-corrects in
-        # production. The Point→Lifter branch below already had this shape;
-        # the calibrator did not.
+        # ones it will be applied to, so it under-corrects in production. The
+        # Point-to-Lifter branch below already had this shape. The calibrator
+        # did not.
         head = slice(0, n - c) if c else slice(0, n)
 
         def _fit_transformers(rows: slice) -> tuple[np.ndarray, np.ndarray]:
-            """Fit every transformer on ``rows``, then apply to ALL n rows.
+            """Fit every transformer on ``rows``, then apply to all n rows.
 
-            Fitting must not see the tail; transforming it is required, since the
-            calibrator needs those rows in the model's working space.
+            Fitting must not see the tail. Transforming it is required, since
+            the calibrator needs those rows in the model's working space.
             """
             Xw, yw = np.asarray(X, dtype=float), np.asarray(y, dtype=float)
             for t in self._transformers:
@@ -586,23 +587,23 @@ class Pipeline:
             # 1. transformers + core on the head only, so the tail is unseen
             Xz, yz = _fit_transformers(head)
             _fit_core(head)
-            # 2. calibrator on the core's OUT-OF-SAMPLE tail predictions
+            # 2. calibrator on the core's out-of-sample tail predictions
             cal_dist = self._core_predict_dist(
                 Xz[-c:], ids_arr[-c:], ts[-c:], **kwargs,
             )
             assert self._calibrator is not None   # c > 0 implies one is set
             self._calibrator.fit(cal_dist, yz[-c:])
-            # 3. refit the CORE on everything, for prediction. The
-            # transformers are deliberately NOT refit: they define the z
-            # space the calibrator just learned its correction in, and
-            # Isotonic maps absolute z values, so it is not scale
-            # invariant. Refitting them here moved the space underneath a
-            # calibrator that is never refit, and the correction was then
-            # applied at the wrong scale (measured: fit at std(mu)=8.90,
-            # applied at std(mu)=0.99). Keeping the head-fit transformers
-            # costs nothing, since _fit_transformers already transforms
-            # all n rows and only its FIT is restricted to the head, which
-            # is also what keeps the tail out of them.
+            # 3. refit the core on everything, for prediction. The
+            # transformers are deliberately not refit. They define the z space
+            # the calibrator just learned its correction in, and Isotonic maps
+            # absolute z values, so it is not scale invariant. Refitting them
+            # here moved the space underneath a calibrator that is never refit,
+            # and the correction was then applied at the wrong scale. Measured,
+            # it was fit at std(mu)=8.90 and applied at std(mu)=0.99. Keeping
+            # the head-fit transformers costs nothing, since
+            # _fit_transformers already transforms all n rows and restricts
+            # only its fit to the head. That restriction is also what keeps the
+            # tail out of them.
             _fit_core(slice(0, n))
         else:
             Xz, yz = _fit_transformers(slice(0, n))

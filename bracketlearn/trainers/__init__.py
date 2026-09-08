@@ -1,4 +1,4 @@
-"""Trainers grouped by output shape / mechanism.
+"""Trainers grouped by output shape and mechanism.
 
 Public API is re-exported here so callers keep using
 ``from bracketlearn.trainers import EMOS`` etc.
@@ -10,12 +10,13 @@ Layout (by what a trainer models)
 - ``bracketlearn.trainers.parametric``, EMOS, HeteroscedasticNormal,
   NGBoostNormal, MixtureNormals, BayesianRidge, HierarchicalNormal.
 - ``bracketlearn.trainers.quantile``. QuantileReg, QuantileForest.
-- ``bracketlearn.trainers.bracket``. CumulativeBinary (bracket-native).
-- ``bracketlearn.trainers.combiners``, trainers that combine *upstream*
-  forecasts: StackedParametric, BMAStacking, DistAsFeatures, BracketStacking,
-  LinearPoolDist, TailSpecialist, CDFBoostBracket.
+- ``bracketlearn.trainers.bracket``. CumulativeBinary, which is
+  bracket-native.
+- ``bracketlearn.trainers.combiners``, trainers that combine upstream
+  forecasts, namely StackedParametric, BMAStacking, DistAsFeatures,
+  BracketStacking, LinearPoolDist, TailSpecialist and CDFBoostBracket.
 
-Convenience builders (``ridge``, ``emos_calibrated``) live in
+The convenience builders ``ridge`` and ``emos_calibrated`` live in
 ``bracketlearn.trainers._factories`` and are re-exported below.
 """
 

@@ -1,11 +1,11 @@
 """Contract adapters (§8).
 
-Each adapter owns its price() method per backing. No central
-expected_payoff dispatch (dropped in v0.2 per Tier A #5).
+Each adapter owns its price() method per backing. There is no central
+expected_payoff dispatch, which was dropped in v0.2 per Tier A #5.
 
-Adapters declare needs_left_tail / needs_right_tail so the framework can
-warn when an unbounded payoff is paired with TailRule.clip() on the
-relevant side.
+Adapters declare needs_left_tail and needs_right_tail so the framework can
+warn when an unbounded payoff is paired with TailRule.clip() on the relevant
+side.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from bracketlearn.forecast import (
 # ---------------------------------------------------------------------------
 # ContractAdapter protocol.
 #
-# Bracket math throughout uses closed-open semantics (lo ≤ X < hi), which
+# Bracket math throughout uses closed-open semantics, lo ≤ X < hi. This
 # matches CDF differences exactly for continuous distributions.
 # ---------------------------------------------------------------------------
 
@@ -69,8 +69,9 @@ def _provenance_for(dist: DistributionForecast, adapter_name: str) -> Provenance
 class BinaryAbove:
     """``P(X > k)`` priced as ``1 - dist.cdf(k)``.
 
-    Maps to Kalshi / Polymarket single-threshold contracts: "high above 80°F",
-    "S&P above 5000 by Friday", "candidate wins > 270 EV".
+    This maps to Kalshi and Polymarket single-threshold contracts such as
+    "high above 80°F", "S&P above 5000 by Friday", and "candidate wins > 270
+    EV".
     """
 
     strike: float
@@ -98,8 +99,8 @@ class BinaryAbove:
 class BinaryBelow:
     """``P(X ≤ k)`` priced as ``dist.cdf(k)``.
 
-    Maps to Kalshi / Polymarket "below" contracts: "GDP below 2.5%",
-    "low temperature below 32°F".
+    This maps to Kalshi and Polymarket "below" contracts such as "GDP below
+    2.5%" and "low temperature below 32°F".
     """
 
     strike: float
@@ -126,43 +127,46 @@ class BinaryBelow:
 class BracketLadder:
     """Bracket ladder with a per-row edge vector.
 
-    Motivating venue: Kalshi temperature contracts list a different bracket
-    grid each day (e.g. NYC max-temp brackets rotate daily). Each row gets
-    its own ``edges_i``.
+    The motivating venue is Kalshi, whose temperature contracts list a
+    different bracket grid each day. NYC max-temp brackets, for instance,
+    rotate daily. Each row gets its own ``edges_i``.
 
-    Storage is ragged: ``edges_per_row`` is a Python list of length N, with
-    ``edges_per_row[i]`` shape ``(B_i + 1,)``. Different rows may have
-    different ``B_i`` (e.g. Kalshi sometimes adds an extra bracket for
-    extreme-weather days).
+    Storage is ragged. ``edges_per_row`` is a Python list of length N, with
+    ``edges_per_row[i]`` of shape ``(B_i + 1,)``. Different rows may have
+    different ``B_i``, since Kalshi sometimes adds an extra bracket for
+    extreme-weather days.
 
     For the i.i.d. case where every row shares the same edges, pass
-    ``edges_per_row=[edges] * N`` (cheap, the inner list holds N
-    references to the same array). The old shared-edges shortcut was
-    removed in v0.3.0 because every real-world venue this library targets
-    has per-row edges, and keeping two adapters was API surface for a use
-    case that never arose.
+    ``edges_per_row=[edges] * N``. This is cheap, as the inner list holds N
+    references to the same array. The old shared-edges shortcut was removed in
+    v0.3.0 because every real-world venue this library targets has per-row
+    edges, and keeping two adapters was API surface for a use case that never
+    arose.
 
-    Pricing uses :meth:`DistributionForecast.cdf_at_grid` on a NaN-padded
-    dense matrix, so the inner CDF math runs vectorised for parametric
-    backings rather than looping per row.
+    Pricing uses :meth:`DistributionForecast.cdf_at_grid` on a NaN-padded dense
+    matrix, so the inner CDF math runs vectorised for parametric backings
+    rather than looping per row.
 
-    Output is long-form: row ``(i, j)`` is the bracket-``j`` contract for
-    entity ``i``. The flattened ``contract_ids`` index within each entity
-    (0-based, 0..B_i-1 for interior buckets; with ``include_tail_buckets``,
-    bucket -1 is "below edges[0]" and bucket B_i is "above edges[-1]",
-    those land at contract_id = -1 and B_i in the per-entity numbering).
+    The output is long-form. Row ``(i, j)`` is the bracket-``j`` contract for
+    entity ``i``. The flattened ``contract_ids`` index within each entity, and
+    are 0-based, running 0..B_i-1 for interior buckets. Under
+    ``include_tail_buckets``, bucket -1 is below ``edges[0]`` and bucket B_i is
+    above ``edges[-1]``. Those land at contract_id = -1 and B_i in the
+    per-entity numbering.
 
     Args:
-        edges_per_row: ragged ladder, len N.
-        include_tail_buckets: when True, emit two extra rows per entity:
-            ``cdf(edges[0])`` ("below") and ``1 - cdf(edges[-1])`` ("above").
-            Mirrors Kalshi ladders that ship explicit "≤ X" and "> Y" rows.
-            When False (default), only the B_i interior buckets are emitted
-            and a coverage check warns/raises if the dist puts mass outside.
+        edges_per_row: ragged ladder of length N.
+        include_tail_buckets: when True, emit two extra rows per entity,
+            ``cdf(edges[0])`` for "below" and ``1 - cdf(edges[-1])`` for
+            "above". This mirrors Kalshi ladders that ship explicit "≤ X" and
+            "> Y" rows. When False, the default, only the B_i interior buckets
+            are emitted and a coverage check warns or raises if the dist puts
+            mass outside.
         strict: with ``include_tail_buckets=False``, raise on missed mass
             instead of warning.
         coverage_tol: missed-mass threshold for the coverage check. Ignored
-            when ``include_tail_buckets=True`` (rows always sum to 1).
+            when ``include_tail_buckets=True``, since rows then always sum
+            to 1.
     """
 
     edges_per_row: list[np.ndarray]
@@ -205,9 +209,10 @@ class BracketLadder:
         for i, e_arr in enumerate(edges_clean):
             edges_dense[i, : e_arr.shape[0]] = e_arr
 
-        # Per-row CDF at each edge: (N, B_max+1). NaN positions stay NaN.
+        # Per-row CDF at each edge, of shape (N, B_max+1). NaN positions
+        # stay NaN.
         cdf_at_edges = dist.cdf_at_grid(edges_dense)
-        # Bracket probs: diff along edges → (N, B_max). The last valid diff
+        # Bracket probs are the diff along edges, of shape (N, B_max). The last valid diff
         # for row i is at column B_per_row[i] - 1; columns ≥ B_per_row[i]
         # are NaN (one operand is NaN).
         probs = np.diff(cdf_at_edges, axis=1)
@@ -239,9 +244,9 @@ class BracketLadder:
                     raise ValueError(msg)
                 warnings.warn(msg, UserWarning, stacklevel=2)
 
-        # Flatten to long form. Order: for entity i, emit (optional below),
+        # Flatten to long form. For entity i the order is optional below,
         # then B_i interior buckets, then (optional above). contract_id is
-        # within-entity: -1 = below, 0..B_i-1 = interior, B_i = above.
+        # Within an entity, -1 is below, 0..B_i-1 is interior, and B_i is above.
         contract_ids_list: list[int] = []
         entity_ids_list: list = []
         timestamps_list: list = []
@@ -344,15 +349,17 @@ class ThresholdLadder:
 
 @dataclass
 class Twin:
-    """Paired YES / NO at a single strike. Two rows per entity sharing
-    ``group_id`` (so calibrators can enforce ``p_yes + p_no = 1``).
+    """Paired YES and NO at a single strike.
 
-    Maps to prediction-market spread / total contracts: "Eagles -3.5"
-    (YES = covers), "Over 47.5 total points" (YES = goes over). Within
-    each entity the two prices sum to exactly 1.0 by construction.
+    Two rows per entity share a ``group_id``, so calibrators can enforce
+    ``p_yes + p_no = 1``.
 
-    Convention: ``contract_id=0`` is YES = ``P(X > k)``; ``contract_id=1``
-    is NO = ``P(X ≤ k)``.
+    This maps to prediction-market spread and total contracts such as "Eagles
+    -3.5", where YES covers, and "Over 47.5 total points", where YES goes over.
+    Within each entity the two prices sum to exactly 1.0 by construction.
+
+    By convention ``contract_id=0`` is YES, given by ``P(X > k)``, and
+    ``contract_id=1`` is NO, given by ``P(X ≤ k)``.
     """
 
     strike: float
@@ -365,7 +372,7 @@ class Twin:
         p_no = np.clip(cdf_k, 0.0, 1.0)
         p_yes = 1.0 - p_no
         N = dist.ids.shape[0]
-        # Interleave (yes, no) per entity so contract_ids are 0,1,0,1,...
+        # Interleave yes and no per entity so contract_ids are 0,1,0,1,...
         contract_ids = np.tile(np.arange(2), N)
         entity_ids = np.repeat(dist.ids, 2)
         timestamps = np.repeat(dist.timestamps, 2)

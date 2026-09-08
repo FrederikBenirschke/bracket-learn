@@ -31,9 +31,9 @@ if TYPE_CHECKING:
 class Forecaster(Protocol):
     """Anything that can be used as a stage in a `Pipeline` / `Stacker`.
 
-    Under the object-graph surface the dependency IS the `Stacker` nesting, so
-    upstream forecasts arrive positionally via ``upstream=[...]`` rather than
-    by name. `name` is a leaderboard label, never wiring.
+    Under the object-graph surface the dependency is the `Stacker` nesting
+    itself, so upstream forecasts arrive positionally via ``upstream=[...]``
+    rather than by name. `name` is a leaderboard label and never wiring.
     """
 
     name: str
@@ -102,12 +102,12 @@ class DistForecaster(Forecaster, Protocol):
 class Lifter(Protocol):
     """Point → Distribution lift.
 
-    requires_X: if True, fit needs raw X (e.g. ConditionalVariance fits
-    σ̂ = f(X) on log r²). Pipeline raises loudly if requires_X and X is
-    not supplied.
+    When ``requires_X`` is True, fit needs the raw X. ConditionalVariance, for
+    instance, fits σ̂ = f(X) on log r². Pipeline raises if ``requires_X`` holds
+    and X is not supplied.
 
-    Pipeline supplies point_oof from its fold structure; standalone
-    callers compute it themselves (sklearn.cross_val_predict).
+    Pipeline supplies point_oof from its fold structure. Standalone callers
+    compute it themselves, with sklearn.cross_val_predict.
     """
 
     requires_X: bool
@@ -155,12 +155,13 @@ class Calibrator(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Transformer (§4.8), feature/target standardizer that a Pipeline runs as
-# its first stage(s). Distinct from Lifter/Calibrator (which transform a
-# *forecast*): a Transformer transforms the model's *inputs* (X), the
-# *target* (y) at fit, and inverts the resulting *distribution* back to the
-# original scale at predict. sklearn-`TransformerMixin`-compatible: a plain
-# X-only transformer is the degenerate case (identity target + inverse_dist).
+# Transformer (§4.8), the feature and target standardizer that a Pipeline runs
+# as its first stages. It is distinct from a Lifter or Calibrator, which
+# transform a forecast. A Transformer transforms the model's inputs X, the
+# target y at fit, and inverts the resulting distribution back to the original
+# scale at predict. It is compatible with sklearn's `TransformerMixin`, where a
+# plain X-only transformer is the degenerate case with an identity target and
+# inverse_dist.
 # ---------------------------------------------------------------------------
 
 
@@ -170,15 +171,16 @@ class Transformer(Protocol):
 
     The per-row map may be data-driven and keyed on ``ids`` (group) and an
     optional per-row ``center`` array (e.g. seasonal climatology), which the
-    Pipeline threads through. Contract:
+    Pipeline threads through. The contract is as follows.
 
-    - ``fit(X, y, *, ids, center=None, **kw)`` learns the per-group scale (and
-      any state) from the training rows; returns self.
+    - ``fit(X, y, *, ids, center=None, **kw)`` learns the per-group scale, and
+      any other state, from the training rows, and returns self.
     - ``transform(X, *, ids, center=None)`` maps features to standardized
-      space and **stamps** the per-row ``(center, scale)`` it used, so that
-      ``transform_target`` / ``inverse_dist`` need no re-derivation. Called
-      once per fit batch and once per predict batch (the stamp reflects the
-      most recent call, mirror the Lifter/Calibrator stateful pattern).
+      space and stamps the per-row ``(center, scale)`` it used, so that
+      ``transform_target`` and ``inverse_dist`` need no re-derivation. It is
+      called once per fit batch and once per predict batch. The stamp reflects
+      the most recent call, mirroring the Lifter and Calibrator stateful
+      pattern.
     - ``transform_target(y)`` maps the target by the stamped ``(center, scale)``.
     - ``inverse_dist(dist)`` maps a forecast back to the original scale via
       ``DistributionForecast.affine(shift=center, scale=scale)`` using the

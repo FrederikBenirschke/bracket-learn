@@ -1,15 +1,15 @@
 """Combiner / meta trainers, forecasts built from upstream forecasts.
 
 Every trainer here consumes the out-of-fold distributions of one or more
-upstream models (received positionally via ``upstream=[...]`` under a
-``Stacker``) and emits a combined forecast. They are gathered in one module
-because "combine upstreams" is a single concept; the split by output backing
-(parametric vs bracket) is incidental.
+upstream models, received positionally via ``upstream=[...]`` under a
+``Stacker``, and emits a combined forecast. They are gathered in one module
+because combining upstreams is a single concept. The split by output backing,
+parametric against bracket, is incidental.
 
-- ``StackedParametric`` / ``BMAStacking``, parametric meta-learners over
-  upstream (μ, σ): OLS-of-μ and Bayesian model averaging.
-- ``DistAsFeatures``, generic bridge: upstream dists become a feature matrix
-  for any downstream trainer.
+- ``StackedParametric`` and ``BMAStacking``, parametric meta-learners over
+  upstream (μ, σ), namely OLS-of-μ and Bayesian model averaging.
+- ``DistAsFeatures``, a generic bridge turning upstream dists into a feature
+  matrix for any downstream trainer.
 - ``BracketStacking``, learned per-bracket combination of upstream bracket
   probabilities.
 - ``LinearPoolDist``, convex (linear) opinion pool of upstream dists.
@@ -43,13 +43,14 @@ from bracketlearn.trainers._compose_util import resolve_upstream, upstream_label
 _PARAMETRIC_BACKINGS = (NormalForecast, StudentTForecast, MixtureNormalForecast)
 
 # Euler-Mascheroni constant. Used by StackedParametric(sigma_method=
-# 'geometric_mean_upstream') to debias E[log Z²] under Gaussian residuals:
-# for Z ~ N(0, 1), E[log Z²] = −γ_E − log 2.
+# 'geometric_mean_upstream') to debias E[log Z²] under Gaussian residuals.
+# For Z ~ N(0, 1), E[log Z²] = −γ_E − log 2.
 _EULER_GAMMA = 0.5772156649015329
 
 
 # ---------------------------------------------------------------------------
-# DistAsFeatures, generic bridge: upstream dists → feature matrix → any trainer.
+# DistAsFeatures, a generic bridge taking upstream dists to a feature matrix
+# and then to any trainer.
 # ---------------------------------------------------------------------------
 
 
@@ -61,25 +62,25 @@ class DistAsFeatures(BaseEstimator):
     """Materialise K upstream distributions into a feature matrix and hand it
     to a downstream forecaster.
 
-    Per-row features extracted from each upstream dist:
+    The following per-row features are extracted from each upstream dist.
 
-        - quantiles at ``feature_taus`` (default 5 quantiles)
-        - mean (if ``include_mean=True``)
-        - variance (if ``include_variance=True``)
-        - CDF at ``tail_cutpoints`` (tail-mass features)
+        - quantiles at ``feature_taus``, 5 quantiles by default
+        - mean, when ``include_mean=True``
+        - variance, when ``include_variance=True``
+        - CDF at ``tail_cutpoints``, giving tail-mass features
 
-    Total per row: ``K * (len(feature_taus) + include_mean + include_variance + len(tail_cutpoints))``.
+    The per-row total is
+    ``K * (len(feature_taus) + include_mean + include_variance + len(tail_cutpoints))``.
 
-    The downstream forecaster sees ONLY dist-derived features, not raw X.
-    If you also want raw X, build a separate node, keeping this class
-    single-purpose is intentional.
+    The downstream forecaster sees only dist-derived features, not raw X. Raw X
+    requires a separate node. Keeping this class single-purpose is intentional.
 
-    Upstream forecasts arrive **positionally** via ``upstream=[dist, ...]``
-    (the `Stacker` contract); ``DistAsFeatures`` featurizes them in that order.
+    Upstream forecasts arrive positionally via ``upstream=[dist, ...]``, the
+    ``Stacker`` contract. ``DistAsFeatures`` featurizes them in that order.
 
-    Requires each upstream backing to support ``ppf`` for the requested
-    ``feature_taus``. v0.1 ppf coverage: parametric-normal, mixture-normal,
-    quantile, bracket.
+    Each upstream backing must support ``ppf`` for the requested
+    ``feature_taus``. In v0.1 the backings with ``ppf`` are parametric-normal,
+    mixture-normal, quantile, and bracket.
     """
 
     downstream: Any = None
@@ -167,44 +168,43 @@ class DistAsFeatures(BaseEstimator):
 
 @dataclass(repr=False)
 class BracketStacking(BaseEstimator):
-    """Meta-learner: ``estimator`` over concatenated bracket-prob vectors.
+    """Meta-learner running ``estimator`` over concatenated bracket-prob
+    vectors.
 
-    Counterpart to ``BMAStacking`` for BRACKET-form upstreams. Each
-    upstream's per-row probability vector ``(N, K)`` is concatenated
-    along columns; the resulting ``(N, K * len(deps))`` feature matrix
-    is fed to a multiclass classifier whose label is the row's realized
-    bracket index (0..K-1). At predict time the classifier's
-    ``predict_proba`` becomes the row's bracket distribution.
+    This is the counterpart to ``BMAStacking`` for bracket-form upstreams. Each
+    upstream's per-row probability vector ``(N, K)`` is concatenated along
+    columns. The resulting ``(N, K * len(deps))`` feature matrix is fed to a
+    multiclass classifier whose label is the row's realized bracket index in
+    ``0..K-1``. At predict time the classifier's ``predict_proba`` becomes the
+    row's bracket distribution.
 
-    Why this and not ``BMAStacking``: BMA produces convex weight
-    combinations on the simplex, which can only interpolate between
-    upstreams. A LightGBM (or any non-linear) multiclass head learns
-    *regime-conditional* interactions, "trust EMOS when forecasts
-    disagree, market when they cluster", that a convex pool cannot
-    express. Empirically this matters: stacking a LightGBM head over
-    bracket probs typically beats convex pooling by 20-40% on logloss.
+    ``BMAStacking`` produces convex weight combinations on the simplex, which
+    can only interpolate between upstreams. A LightGBM head, or any non-linear
+    multiclass head, learns regime-conditional interactions that a convex pool
+    cannot express, such as trusting EMOS when forecasts disagree and the
+    market when they cluster. Stacking a LightGBM head over bracket probs
+    typically beats convex pooling by 20-40% on logloss.
 
-    Why not ``DistAsFeatures``: that primitive extracts a fixed feature
-    set (quantiles, mean, var) from each upstream, then runs a downstream
-    *point* or *dist* forecaster on those features. It loses the
-    bracket-prob shape information, the raw per-bin probabilities
-    are not in its feature set. BracketStacking preserves the full
-    bracket-prob shape across all upstreams and lets the classifier
-    learn directly on those vectors.
+    ``DistAsFeatures`` extracts a fixed feature set of quantiles, mean and
+    variance from each upstream, then runs a downstream point or dist
+    forecaster on those features. The bracket-prob shape information is lost,
+    since the raw per-bin probabilities are not in its feature set.
+    ``BracketStacking`` preserves the full bracket-prob shape across all
+    upstreams and lets the classifier learn directly on those vectors.
 
-    Contract:
+    The contract has two parts.
 
-    * All upstreams must be ``BracketForecast`` with matching per-row edges
-      (same K, same boundaries). Rows where upstreams disagree on edges are
-      caller-resolved, typically by filtering to the modal K and dropping
-      non-conforming rows.
+    * All upstreams must be ``BracketForecast`` with matching per-row edges,
+      meaning the same K and the same boundaries. Rows where upstreams disagree
+      on edges are caller-resolved, typically by filtering to the modal K and
+      dropping non-conforming rows.
     * ``estimator`` must be sklearn-compatible with ``predict_proba``.
-      ``num_class`` is auto-set from observed K when the estimator
-      accepts that parameter (LightGBM, sklearn classifiers); otherwise
-      caller pre-configures it.
+      ``num_class`` is set from the observed K when the estimator accepts that
+      parameter, as LightGBM and sklearn classifiers do. Otherwise the caller
+      pre-configures it.
 
-    Predict-time edges are taken from the first upstream, since the contract
-    requires all upstreams share edges, any one is canonical.
+    Predict-time edges are taken from the first upstream. The contract requires
+    all upstreams to share edges, so any one of them is canonical.
     """
 
     estimator: Any = None
@@ -221,9 +221,9 @@ class BracketStacking(BaseEstimator):
     ) -> tuple[np.ndarray, int, np.ndarray]:
         """Concatenate per-row prob vectors across all upstreams.
 
-        Returns ``(Z, K, edges_ref)``: ``Z`` is ``(N, K * len(ups))``
-        feature matrix; ``edges_ref`` is the (N, K+1) edge array from
-        the first upstream (all must agree on edges).
+        Returns ``(Z, K, edges_ref)``. ``Z`` is the ``(N, K * len(ups))``
+        feature matrix. ``edges_ref`` is the (N, K+1) edge array from the first
+        upstream, and all upstreams must agree on edges.
         """
         cols: list[np.ndarray] = []
         K: int | None = None
@@ -399,43 +399,42 @@ class BracketStacking(BaseEstimator):
 class StackedParametric(BaseEstimator):
     """Meta-learner over upstream forecasters' parametric outputs.
 
-    Defaults reproduce v0.1 ``StackedParametric`` behaviour exactly: OLS over
-    upstream μ with intercept (unconstrained), constant σ̂ from residual
-    std, Gaussian output. The optional knobs below widen the surface.
+    The defaults reproduce v0.1 ``StackedParametric`` behaviour exactly,
+    namely unconstrained OLS over upstream μ with intercept, constant σ̂ from
+    the residual standard deviation, and Gaussian output. The optional
+    parameters below widen the surface.
 
     ``weight_constraint``:
-        * ``"unconstrained"`` (default), OLS with intercept; μ-weights
-          take any sign and any magnitude.
-        * ``"convex"``, Σ wₖ = 1, wₖ ≥ 0 via SLSQP (classic Breiman
-          1996 stacking). Intercept stays free so it can absorb any
+        * ``"unconstrained"``, the default. OLS with intercept, where
+          μ-weights take any sign and any magnitude.
+        * ``"convex"``, imposing Σ wₖ = 1 and wₖ ≥ 0 via SLSQP, the classic
+          Breiman 1996 stacking. The intercept stays free so it can absorb any
           common bias in the upstream μ scale.
 
     ``sigma_method``:
-        * ``"constant"`` (default), σ̂ = std(in-sample residuals);
-          single scalar applied to every row.
+        * ``"constant"``, the default. σ̂ = std(in-sample residuals), a single
+          scalar applied to every row.
         * ``"geometric_mean_upstream"``, per-row dispersion modelled as
           σ̂(x) = exp(α + Σ wⱼ · log σⱼ(x)). Fit by OLS regressing the
           bias-corrected target ``0.5·(log(resid² + ε) + γ_E + log 2)``
           on per-upstream log σⱼ(x), where the additive constant
           ``γ_E + log 2`` debiases E[log Z²] for Gaussian residuals.
-          Requires every upstream to expose a positive σ in
-          ``params['sigma']`` (i.e. parametric Normal / Student-t).
-          ε is a small floor on resid² so resid=0 rows do not produce
-          −∞ targets.
+          Every upstream must expose a positive σ in ``params['sigma']``,
+          which holds for parametric Normal and Student-t. ε is a small floor
+          on resid² so that rows with resid=0 do not produce −∞ targets.
 
     ``dist_family``:
-        * ``"normal"`` (default), N(μ̂, σ̂²).
-        * ``"student_t"``, t_ν(μ̂, scale) with ν = ``student_t_df``.
-          The fitted σ̂ is interpreted as the standard deviation of
-          residuals (matches the residual-fit semantics); it is
-          converted to the t-distribution *scale* parameter via
-          ``scale = σ̂ · sqrt((ν − 2) / ν)`` so the forecast variance
-          equals σ̂² regardless of ν.
+        * ``"normal"``, the default. N(μ̂, σ̂²).
+        * ``"student_t"``, t_ν(μ̂, scale) with ν = ``student_t_df``. The fitted
+          σ̂ is interpreted as the standard deviation of residuals, matching
+          the residual-fit semantics. It is converted to the t-distribution
+          scale parameter via ``scale = σ̂ · sqrt((ν − 2) / ν)``, so the
+          forecast variance equals σ̂² regardless of ν.
 
-    Upstream forecasts arrive **positionally** via ``upstream=[dist, ...]``
-    (the ``Stacker`` contract). This reads ``.params['mu']`` (and
-    ``['sigma']`` when ``sigma_method='geometric_mean_upstream'``) from each,
-    in declared order.
+    Upstream forecasts arrive positionally via ``upstream=[dist, ...]``, the
+    ``Stacker`` contract. This reads ``.params['mu']`` from each in declared
+    order, and ``['sigma']`` as well when
+    ``sigma_method='geometric_mean_upstream'``.
     """
 
     name: str = "StackedParametric"
@@ -482,12 +481,11 @@ class StackedParametric(BaseEstimator):
     ) -> Self:
         ups = resolve_upstream(upstream, where="StackedParametric.fit")
         y = np.asarray(y, dtype=float)
-        # Stack upstream μ predictions row-aligned. We REQUIRE that each
-        # upstream dist's .ids matches our (X, y) row order (no silent
-        # misalignment). If the caller passes ids, we check
-        # them; if not, we still require all upstream dists to agree on
-        # their own ids vectors (else the meta-learner builds rows from
-        # mis-zipped predictions).
+        # Stack upstream μ predictions row-aligned. Each upstream dist's .ids
+        # must match the (X, y) row order, so that misalignment raises. When
+        # the caller passes ids, those are checked. Otherwise all upstream
+        # dists must still agree on their own ids vectors, since the
+        # meta-learner would otherwise build rows from mis-zipped predictions.
         upstream_ids = None
         for i, d in enumerate(ups):
             label = upstream_label(i)
@@ -660,11 +658,11 @@ class StackedParametric(BaseEstimator):
         timestamps: np.ndarray,
         upstream: list[Any] | None = None,
     ) -> DistributionForecast:
-        # At predict time, the driver must have re-run the upstream stages
-        # on the current X; it passes their dist positionally.
+        # At predict time the driver must have re-run the upstream stages on
+        # the current X. It passes their dist positionally.
         ups = resolve_upstream(upstream, where="StackedParametric.predict_dist")
-        # Row-alignment check: each upstream's ids must match the caller's ids
-        # exactly (no silent misalignment).
+        # Row-alignment check. Each upstream's ids must match the caller's ids
+        # exactly, so that misalignment raises.
         ids_arr = np.asarray(ids)
         for i, d in enumerate(ups):
             if not np.array_equal(d.ids, ids_arr):
@@ -689,7 +687,8 @@ class StackedParametric(BaseEstimator):
             return DistributionForecast.from_normal(
                 mu, sigma_std, ids=ids_arr, timestamps=ts_arr, provenance=prov,
             )
-        # student_t: σ̂ is residual std; convert to t-scale so variance == σ̂².
+        # For student_t, σ̂ is the residual standard deviation. Convert it to
+        # the t-scale so that the variance equals σ̂².
         nu = self.student_t_df
         scale = sigma_std * math.sqrt((nu - 2.0) / nu)
         df_arr = np.full_like(mu, nu)
@@ -717,11 +716,11 @@ class BMAStacking(BaseEstimator):
         y_i | w ~ Σ_k w_k · N(y_i; μ_{k,i}, σ_{k,i})
         w        ~ Dir(α_0, …, α_0)                  (symmetric concentration)
 
-    where each upstream forecaster k contributes (μ_{k,i}, σ_{k,i}) per
-    row i from its OOF ``DistributionForecast``. For non-Normal
-    parametric upstreams (Student-t, MixtureNormal) we use the marginal
-    moments, μ = ``dist.mean()``, σ = √``dist.variance()``, i.e. the
-    standard moment-matching BMA approximation.
+    where each upstream forecaster k contributes (μ_{k,i}, σ_{k,i}) per row i
+    from its OOF ``DistributionForecast``. For non-Normal parametric upstreams,
+    namely Student-t and MixtureNormal, the marginal moments are used, with
+    μ = ``dist.mean()`` and σ = √``dist.variance()``. This is the standard
+    moment-matching BMA approximation.
 
     Fit (EM with Dirichlet prior):
 
@@ -730,24 +729,23 @@ class BMAStacking(BaseEstimator):
     * M-step: α_n_k = α_0 + Σ_i s_i · γ_{ik}, then
       w_k = α_n_k / Σ_j α_n_j (posterior mean).
 
-    s_i = sample_weight_i (1 if unweighted). Iterates until
-    ‖w_new − w‖∞ < ``tol`` or ``max_iter`` is reached, non-convergence
-    raises (Rule #0.5; partial weights would silently misweight tails).
+    Here s_i = sample_weight_i, which is 1 when unweighted. The iteration runs
+    until ‖w_new − w‖∞ < ``tol`` or ``max_iter`` is reached. Non-convergence
+    raises under Rule #0.5, since partial weights would misweight the tails.
 
-    Predict at new x*: the pipeline re-runs upstreams on the inference
-    rows; each contributes (μ_{k,*}, σ_{k,*}). Output is
-    ``MixtureNormalForecast`` with weights = posterior mean w broadcast
-    to (N, K).
+    At a new x* the pipeline re-runs upstreams on the inference rows, and each
+    contributes (μ_{k,*}, σ_{k,*}). The output is a ``MixtureNormalForecast``
+    whose weights are the posterior mean w broadcast to (N, K).
 
-    Why this beats ``StackedParametric``:
+    This has three advantages over ``StackedParametric``.
 
-    * Per-row output σ - the mixture's standard deviation grows wherever
-      upstream μ̂'s disagree on that row. ``StackedParametric``'s σ̂ is one scalar
-      from training residuals.
-    * No σ̂ → 0 collapse (the v0.1 ``StackedParametric`` pathology). The mixture
-      σ is bounded below by min_k σ_{k,i}.
-    * Weights live on the simplex (no extrapolation pathology from
-      unconstrained OLS coefficients).
+    * The output σ is per-row. The mixture's standard deviation grows wherever
+      the upstream μ̂ disagree on that row. The σ̂ of ``StackedParametric`` is
+      one scalar from training residuals.
+    * There is no σ̂ → 0 collapse, the v0.1 ``StackedParametric`` pathology.
+      The mixture σ is bounded below by min_k σ_{k,i}.
+    * Weights live on the simplex, so the extrapolation pathology of
+      unconstrained OLS coefficients does not arise.
     """
 
     alpha_prior: float = 1.0
@@ -831,7 +829,7 @@ class BMAStacking(BaseEstimator):
         # Likelihood matrix L_ik = N(y_i; μ_{k,i}, σ_{k,i}).
         z = (y[:, None] - mu) / sigma
         log_L = -0.5 * z ** 2 - np.log(sigma) - 0.5 * math.log(2.0 * math.pi)
-        # Numerical-stability trick: subtract per-row max before exp.
+        # Subtract the per-row max before exp, for numerical stability.
         log_L_max = log_L.max(axis=1, keepdims=True)
         L = np.exp(log_L - log_L_max)  # (N, K), per-row max == 1
         s = (
@@ -1006,7 +1004,8 @@ class TailSpecialist(BaseEstimator):
                 f"shape mismatch: X N={X.shape[0]} y N={y.shape[0]} ids N={ids.shape[0]}"
             )
         per_row_edges = self._row_edges(ids)
-        # Per-row tail indicators: "y in row's first bin" / "y in row's last bin".
+        # Per-row tail indicators for y in the row's first bin and in the
+        # row's last bin.
         y_lo = np.array([float(y[i] < per_row_edges[i][1]) for i in range(y.size)], dtype=int)
         y_hi = np.array([float(y[i] >= per_row_edges[i][-2]) for i in range(y.size)], dtype=int)
         if y_lo.sum() < 5 or y_hi.sum() < 5:
@@ -1078,8 +1077,8 @@ class TailSpecialist(BaseEstimator):
                 f"the tails. Consider widening the ladder.",
                 UserWarning, stacklevel=2,
             )
-        # Per-row: replace bins [0] and [B_i-1], rescale [1 .. B_i-2] to
-        # (1 - p_lo - p_hi).
+        # Per row, replace bins [0] and [B_i-1] and rescale bins
+        # [1 .. B_i-2] to (1 - p_lo - p_hi).
         out_probs = np.full_like(body_probs, np.nan)
         for i in range(N):
             B_i = int(B_per_row[i])
@@ -1121,20 +1120,20 @@ class TailSpecialist(BaseEstimator):
 
 @dataclass(repr=False)
 class LinearPoolDist(BaseEstimator):
-    """Linear (mixture) opinion pool over K upstream dists:
+    """Linear opinion pool, a mixture over K upstream dists.
 
         F(y | x) = Σ_k w_k · F_k(y | x),    w_k ≥ 0,  Σ w_k = 1
 
-    Weights are GLOBAL (not per-row) and fit by minimising weighted-empirical
-    CRPS on OOF. Per-component samples drawn from a fixed mid-rank τ grid
-    via ppf, so each upstream backing must support ppf.
+    Weights are global rather than per-row, and are fit by minimising the
+    weighted-empirical CRPS on OOF. Per-component samples are drawn from a
+    fixed mid-rank τ grid via ppf, so each upstream backing must support ppf.
 
-    Output backing: quantile, evaluated at a 99-point τ grid by inverting
-    the weighted empirical CDF of stacked component samples. Tail policy:
-    clip.
+    The output backing is quantile, evaluated at a 99-point τ grid by inverting
+    the weighted empirical CDF of the stacked component samples. The tail
+    policy is clip.
 
-    For Gaussian-only upstream a closed-form mixture-CRPS exists (Grimit
-    et al., 2006), left as a v0.2 optimisation.
+    For Gaussian-only upstreams a closed-form mixture-CRPS exists (Grimit
+    et al., 2006). It is left as a v0.2 optimisation.
     """
 
     n_samples: int = 200
@@ -1142,8 +1141,8 @@ class LinearPoolDist(BaseEstimator):
     weights_: np.ndarray | None = field(default=None, init=False)
 
     def _sample_grid(self) -> np.ndarray:
-        # Mid-rank τ grid in (0, 1); excludes endpoints so parametric-normal
-        # tails don't blow up to ±inf.
+        # Mid-rank τ grid in (0, 1). Endpoints are excluded so that
+        # parametric-normal tails do not diverge to ±inf.
         return (np.arange(self.n_samples) + 0.5) / self.n_samples
 
     def _resolve(self, upstream: list[Any] | None, *, where: str) -> list[Any]:
@@ -1170,10 +1169,12 @@ class LinearPoolDist(BaseEstimator):
 
         CRPS = Σ_j w_j |x_j - y|  -  0.5 · Σ_{j,k} w_j w_k |x_j - x_k|
 
-        Vectorised pairwise term via sorted-sample identity:
+        Vectorised pairwise term via the sorted-sample identity
+
             0.5 · Σ_{j,k} w_j w_k |x_j - x_k|
               = Σ_j w_j (x_j · cum_w_j  -  cum_wx_j)
-        where cum_w / cum_wx are cumulative sums over x-sorted samples.
+
+        where cum_w and cum_wx are cumulative sums over x-sorted samples.
         """
         N, M = stacked.shape
         term1 = (sample_w[None, :] * np.abs(stacked - y[:, None])).sum(axis=1)
@@ -1270,7 +1271,8 @@ class LinearPoolDist(BaseEstimator):
 
 
 # ---------------------------------------------------------------------------
-# CDFBoostBracket, B LightGBM heads on upstream-CDF features → bracket dist.
+# CDFBoostBracket, B LightGBM heads on upstream-CDF features giving a
+# bracket dist.
 # ---------------------------------------------------------------------------
 
 
@@ -1279,27 +1281,34 @@ class CDFBoostBracket(BaseEstimator):
     """B LightGBM binary classifiers over upstream-CDF features.
 
     Construction
-        - ``brackets_by_id``: id → 1-D edge array (B = len(edges) - 1 bins,
-          uniform across rows).
+        - ``brackets_by_id`` maps an id to a 1-D edge array. There are
+          B = len(edges) - 1 bins, uniform across rows.
         - K upstream DistForecasters arrive positionally via ``upstream=[...]``.
 
-    Feature matrix per row (passed to all B heads): the CDF of each upstream
-    dist evaluated at every ladder edge → shape ``(K * (B+1),)``. Optionally
-    concat raw X with ``include_raw_X=True`` (off by default, keeps the
-    "dist features only" framing clean).
+    The per-row feature matrix is passed to all B heads. It is the CDF of each
+    upstream dist evaluated at every ladder edge, of shape ``(K * (B+1),)``.
+    Raw X can be concatenated with ``include_raw_X=True``. This is off by
+    default, which keeps the dist-features-only framing clean.
 
-    Training: for each bin b, classifier_b predicts ``y_b = 1[edges[b] <= y < edges[b+1]]``.
-    Outputs (N, B) probabilities, row-renormalised → bracket-backed dist.
+    In training, classifier_b predicts
+    ``y_b = 1[edges[b] <= y < edges[b+1]]`` for each bin b. The output is an
+    (N, B) probability array, row-renormalised into a bracket-backed dist.
 
-    Why this rather than linear stacking on upstream µ:
-      - sees the full CDF shape, not a point summary
-      - tree splits can model conditional "trust schedules" across regimes
-      - output is bracket-backed: natural fit for laddered contract pricing
+    Three properties distinguish this from linear stacking on upstream µ.
 
-    Compare with:
-      - LinearPoolDist:    convex combination, global weights, full-dist mixture
-      - DistAsFeatures + NGBoostNormal:  Gaussian output, dist-summary features
-      - CumulativeBinary:  single classifier with cutpoint augmentation
+      - The full CDF shape is seen, not a point summary.
+      - Tree splits can model conditional trust schedules across regimes.
+      - The output is bracket-backed, a natural fit for laddered contract
+        pricing.
+
+    The related trainers differ as follows.
+
+      - ``LinearPoolDist`` forms a convex combination with global weights, a
+        full-dist mixture.
+      - ``DistAsFeatures`` with ``NGBoostNormal`` gives Gaussian output from
+        dist-summary features.
+      - ``CumulativeBinary`` uses a single classifier with cutpoint
+        augmentation.
     """
 
     brackets_by_id: dict[Any, np.ndarray]
@@ -1318,9 +1327,8 @@ class CDFBoostBracket(BaseEstimator):
                 "CDFBoostBracket needs a non-empty brackets_by_id dict "
                 "(id → 1-D edge array)"
             )
-        # Uniform-B requirement: all rows must share the same bin count
-        # so that B head classifiers can be trained. Edge *values* may
-        # differ, only B is fixed.
+        # All rows must share the same bin count so that B head classifiers
+        # can be trained. Edge values may differ. Only B is fixed.
         Bs = set()
         for k, e in self.brackets_by_id.items():
             e_arr = np.asarray(e, dtype=float)

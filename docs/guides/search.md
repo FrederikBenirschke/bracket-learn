@@ -37,17 +37,17 @@ data. `GridSearch` runs `WalkForward`'s own `expanding-window` or
 - `WalkForward`-level params (`cv`, `n_folds`, `embargo`, `rolling_window`,
   `shuffle`, `random_state`, `refit_on_full`) appear without a prefix and apply
   to the cloned driver.
-- Model stage params use sklearn-style `node__field`:
-  `"emos__sigma_floor"`, `"ridge__base__estimator"`, etc.
+- Model stage params use the sklearn-style `node__field` form, as in
+  `"emos__sigma_floor"` or `"ridge__base__estimator"`.
 
 ## Scoring
 
-Built-in metrics, all losses where lower wins:
+The built-in metrics are all losses, so lower is better.
 
-- `"crps"`: continuous ranked probability score.
-- `"log_score"`: predictive negative log-likelihood.
-- `"log_loss_bracket"`: bracket-contract log loss (requires `edges=`).
-- `"brier_bracket"`: bracket-contract Brier (requires `edges=`).
+- `"crps"` is the continuous ranked probability score.
+- `"log_score"` is the predictive negative log-likelihood.
+- `"log_loss_bracket"` is the bracket-contract log loss and requires `edges=`.
+- `"brier_bracket"` is the bracket-contract Brier score and requires `edges=`.
 
 The objective is `result.score(...)[refit_node][scoring]`. Pass
 `refit_node=None` to average across all nodes, which fits a single combined
@@ -63,7 +63,7 @@ A 3x3 grid over `qreg__learning_rate` and `qreg__n_estimators` for
 point is a full expanding-window run, and the dashed line is the empirical
 baseline at CRPS 0.611.
 
-The shape is the usual one for gradient boosting: more trees buy most of what
+The shape is the usual one for gradient boosting. More trees buy most of what
 a higher learning rate would, so the three curves converge from the left and
 the surface is nearly flat across the right half. Every grid point beats the
 baseline by a wide margin, while the points within that flat region differ

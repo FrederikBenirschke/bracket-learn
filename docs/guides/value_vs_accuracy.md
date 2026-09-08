@@ -1,19 +1,19 @@
 # Accuracy vs value: scoring a price against a reference
 
 The proper-scoring rules in the [scoring guide](scoring.md) (CRPS, log-score,
-Brier, log-loss) all answer one question: **is my price close to the
-outcome?** That is *accuracy*. A trader on a prediction market asks a second
-question: **is my price more valuable than the one already quoted?** That is
-*value*. Value grades your price against a **reference price** `m` (a market
-quote, a consensus, any baseline forecast) instead of against the truth.
+Brier, log-loss) all answer one question. Is my price close to the outcome?
+That is *accuracy*. A trader on a prediction market asks a second question. Is
+my price more valuable than the one already quoted? That is *value*. Value
+grades a price against a **reference price** `m`, which may be a market quote,
+a consensus, or any baseline forecast, rather than against the truth.
 
-The two questions have different answers. **A more accurate forecast can be
-worth less to trade.** The [`score`](../api/score) module ships the metrics that
-measure value: `edge_alignment`, `value_report`, and their bracket-ladder
+The two questions have different answers. A more accurate forecast can be worth
+less to trade. The [`score`](../api/score) module ships the metrics that measure
+value, namely `edge_alignment`, `value_report`, and their bracket-ladder
 wrappers.
 
 > This sits one step before the [trade-decision layer that bracketlearn leaves
-> to you](../index.md). Value is still *scoring*: it grades prices, it does not
+> to you](../index.md). Value is still *scoring*. It grades prices and does not
 > size positions. Unlike calibration, it grades them the way a trader cares
 > about.
 
@@ -23,18 +23,18 @@ For one binary contract, write `q` for your price of YES, `m` for the reference
 price, `r ∈ {0,1}` for the realized outcome, and `π` for the (latent) true
 probability, so `E[r] = π`.
 
-Buy YES at price `m`: you pay `m`, collect `1` if it occurs. Acting on your edge
-`q − m` (buy when positive, sell when negative), sized by the edge, the expected
-profit on one contract is
+Buying YES at price `m` costs `m` and collects `1` if the event occurs. Acting
+on the edge `q − m` (buy when positive, sell when negative), sized by the edge,
+the expected profit on one contract is
 
 ```
 E[PnL] = (q − m)(π − m)
 ```
 
-Read the formula: **the profit is the reference's mispricing `(π − m)`. Your
-price only sets the direction and size of the bet.** If the reference is already
-correct (`m = π`), no price `q` earns anything. Summed over many contracts, total
-PnL is an inner product:
+The profit is the reference's mispricing `(π − m)`. Your price only sets the
+direction and size of the bet. If the reference is already correct (`m = π`),
+no price `q` earns anything. Summed over many contracts, total PnL is an inner
+product.
 
 ```
 PnL ≈ ⟨ q − m , π − m ⟩
@@ -42,8 +42,9 @@ PnL ≈ ⟨ q − m , π − m ⟩
 
 ## 2. Decomposing the PnL
 
-Let `δ = π − m` (the reference's mispricing, what you want to capture) and
-`ε = π − q` (your error vs the truth). Substituting `q − m = δ − ε`:
+Let `δ = π − m` be the reference's mispricing, the quantity to be captured, and
+let `ε = π − q` be your error against the truth. Substituting `q − m = δ − ε`
+gives
 
 ```
 PnL ≈ ‖δ‖²  −  ⟨ ε , δ ⟩
@@ -52,35 +53,36 @@ PnL ≈ ‖δ‖²  −  ⟨ ε , δ ⟩
        └─ the inefficiency available in the reference
 ```
 
-Three consequences:
+Three consequences follow.
 
-1. **No inefficiency, no profit.** If `‖δ‖² = 0` (the reference is right), PnL is
-   zero for *any* forecast. You cannot out-predict a correct price.
-2. **Most error is free.** You only lose the part of your error that *aligns
-   with the mispricing*. Error where the reference is already right (`δ ≈ 0`)
+1. **No inefficiency, no profit.** If `‖δ‖² = 0`, so the reference is right, PnL
+   is zero for *any* forecast. A correct price cannot be out-predicted.
+2. **Most error is free.** Only the part of the error that *aligns with the
+   mispricing* is lost. Error where the reference is already right (`δ ≈ 0`)
    costs nothing. Nobody trades there.
-3. **The shared-bias trap.** If your error tracks the reference's, `ε → δ`, then
-   `q = π − ε → π − δ = m`: your price collapses onto the reference where
-   it is most wrong. A more accurate forecast that shares the reference's blind
-   spots is worthless for trading.
+3. **Shared bias.** If the error tracks the reference's, `ε → δ`, then
+   `q = π − ε → π − δ = m`, and your price collapses onto the reference exactly
+   where it is most wrong. A more accurate forecast that shares the reference's
+   blind spots is worthless for trading.
 
 > **The price that makes money holds errors orthogonal to the reference's
-> mispricing: accurate where the reference is wrong, free to be sloppy where it
-> is right.** This is the Grossman–Stiglitz point in microcosm (§7): a price
+> mispricing, accurate where the reference is wrong and free to be sloppy where
+> it is right.** This is the Grossman–Stiglitz point in microcosm (§7). A price
 > aggregates common information, so the only exploitable signal is information
 > *orthogonal* to it.
 
 ## 3. Calibration ≠ value
 
-Calibration, log-loss, CRPS all minimize `‖ε‖`: the closeness of `q` to truth
-over every direction. Value minimizes `⟨ε, δ⟩`: your error *projected onto the
-reference's mispricing*. These coincide only if your residual error happens to
-avoid the `δ` direction. Calibrating in a direction the reference *shares* (or
-that is orthogonal to `δ`) is wasted effort for trading.
+Calibration, log-loss, and CRPS all minimize `‖ε‖`, the closeness of `q` to
+truth over every direction. Value minimizes `⟨ε, δ⟩`, the error *projected onto
+the reference's mispricing*. These coincide only if the residual error happens
+to avoid the `δ` direction. Calibrating in a direction the reference *shares*,
+or one orthogonal to `δ`, is wasted effort for trading.
 
 ## 4. The metric: Edge-Alignment
 
-Replace the latent `π` with the observed `r` (unbiased, `E[r] = π`):
+Replace the latent `π` with the observed `r`, which is unbiased since
+`E[r] = π`.
 
 ```python
 from bracketlearn.score import edge_alignment, value_report
@@ -89,22 +91,22 @@ ea = edge_alignment(q, m, r)        # mean over contracts of (q - m)(r - m)
 ```
 
 `edge_alignment` is the un-thresholded, every-contract expected betting PnL. It
-scores *every* contract (not just the ones that clear a trade threshold), so it
+scores *every* contract rather than only those clearing a trade threshold, so it
 has far more statistical power than a thresholded, costed PnL. That power helps
-on short windows. It is the **value** sibling of `brier_bracket`: Brier measures `‖q − r‖`,
-EA measures the alignment of `q − m` with `r − m`.
+on short windows. It is the value sibling of `brier_bracket`. Brier measures
+`‖q − r‖`, and EA measures the alignment of `q − m` with `r − m`.
 
-> **EA is frictionless: linear in your edge, so it rewards every more
-> over-confident forecast.** That is correct for a fee-free, proportional-bet
-> world, but it means EA alone will tell you to over-tilt. With per-trade fees
+> **EA is frictionless.** It is linear in the edge, so it rewards every more
+> over-confident forecast. That is correct for a fee-free, proportional-bet
+> world, but it means EA alone will recommend over-tilting. With per-trade fees
 > the objective becomes a *deductible* `E[(|δ| − fee)₊]` and grows an interior
-> optimum; use `edge_alignment_costed` for the deploy decision. See
+> optimum. Use `edge_alignment_costed` for the deploy decision. See
 > [value with fees](value_with_fees.md).
 
 ### The A − B split: attributing a change in value to its cause
 
 `value_report` returns EA together with its exact additive decomposition, with no
-latent `π` required, by the identity `(q−m)(r−m) = (r−m)² − (r−q)(r−m)`:
+latent `π` required, by the identity `(q−m)(r−m) = (r−m)² − (r−q)(r−m)`.
 
 ```python
 rep = value_report(q, m, r)
@@ -112,31 +114,32 @@ rep = value_report(q, m, r)
 #  'align_corr', 'shared_bias_slope', 'n_contracts'}
 ```
 
-* **`A = mean (r − m)²`**: the reference's mean-squared error. How much
-  mispricing is *available*. Outside your control.
-* **`B = mean (r − q)(r − m)`**: co-projection of your error onto the
-  reference's. How much of the available mispricing you *fail* to capture
-  because your errors coincide with the reference's.
+* **`A = mean (r − m)²`** is the reference's mean-squared error, the amount of
+  mispricing *available*. It is outside your control.
+* **`B = mean (r − q)(r − m)`** is the co-projection of your error onto the
+  reference's. It measures how much of the available mispricing you *fail* to
+  capture because your errors coincide with the reference's.
 
-`EA = A − B`. When EA moves across models or regimes, `ΔEA = ΔA − ΔB` tells you
-*why*: `A` fell ⇒ the reference got more efficient (less to capture, not your
-fault); `B` rose ⇒ your forecast lost orthogonality (`q → m` where it is wrong,
-a model problem you can fix). This attribution is what Brier
-cannot give: Brier sees only `‖ε‖²`, blind to `‖δ‖²` and to the alignment.
+`EA = A − B`. When EA moves across models or regimes, `ΔEA = ΔA − ΔB` attributes
+the move. A fall in `A` means the reference got more efficient, so there is less
+to capture and the model is not at fault. A rise in `B` means the forecast lost
+orthogonality, with `q → m` where it is wrong, which is a model problem that can
+be fixed. Brier cannot give this attribution, since it sees only `‖ε‖²` and is
+blind to both `‖δ‖²` and the alignment.
 
-Two normalized companions come along: `align_corr = corr(q − m, r − m)` (the
-cosine between your edge and the reference's realized error; `→ 0` is the
-shared-bias limit) and `shared_bias_slope` (the OLS slope of your error `q − r`
-on the reference's error `m − r`; a large positive value means you forfeit edge
-to blind spots you share with the reference).
+Two normalized companions come along. `align_corr = corr(q − m, r − m)` is the
+cosine between your edge and the reference's realized error, with `→ 0` the
+shared-bias limit. `shared_bias_slope` is the OLS slope of your error `q − r` on
+the reference's error `m − r`, and a large positive value means edge is
+forfeited to blind spots shared with the reference.
 
 ## 5. A benign demonstration: accuracy and value disagree
 
-This toy (the `_toy` helper in `tests/test_value_metrics.py`) builds a world with
-two independent drivers. The **reference sees only the dominant one**; one
-candidate forecast knows that dominant driver (accurate, but its edge sits in
-already-priced territory), the other knows only the orthogonal driver (less
-accurate, but its edge is un-priced).
+This toy, the `_toy` helper in `tests/test_value_metrics.py`, builds a world with
+two independent drivers. The reference sees only the dominant one. One candidate
+forecast knows that dominant driver, so it is accurate but its edge sits in
+already-priced territory. The other knows only the orthogonal driver, so it is
+less accurate but its edge is un-priced.
 
 ```python
 import numpy as np
@@ -160,11 +163,12 @@ print(f"q_orth:  Brier {brier(q_orth):.4f}   EA {edge_alignment(q_orth, m, r):+.
 # q_orth:  Brier 0.2263   EA +0.0347      <- LESS accurate, all the value
 ```
 
-`q_acc` is more accurate (lower Brier) yet carries almost no edge: everything it
-knows, the market already priced. `q_orth` is *less* accurate but holds the
-information the market lacks, so its edge points where the market is wrong. An
-independent thresholded, costed betting strategy agrees with EA here, not with
-Brier. Selecting on accuracy would have shipped the wrong forecast.
+`q_acc` is more accurate, with a lower Brier, yet carries almost no edge, because
+everything it knows the market already priced. `q_orth` is *less* accurate but
+holds the information the market lacks, so its edge points where the market is
+wrong. An independent thresholded, costed betting strategy agrees with EA here
+rather than with Brier. Selecting on accuracy would have shipped the wrong
+forecast.
 
 ## 5b. Real data: EMOS against a market reference
 
@@ -173,10 +177,10 @@ This section applies the same measurement to observed forecasts and observed
 prices, where the separation does not reproduce.
 
 [`bracketlearn/examples/value_vs_accuracy_weather.py`](https://github.com/FrederikBenirschke/bracket-learn/blob/main/bracketlearn/examples/value_vs_accuracy_weather.py)
-fits EMOS on `bracketlearn/examples/data/weather_value_sample.parquet`: 5,429
-station-days over 2026-03-17 to 2026-09-03 across 18 stations, carrying
-multi-model ensemble mean and spread, realized temperatures, per-row bracket
-grids, and a normalized reference price per bracket. It prices the fitted
+fits EMOS on `bracketlearn/examples/data/weather_value_sample.parquet`, which
+holds 5,429 station-days over 2026-03-17 to 2026-09-03 across 18 stations,
+carrying multi-model ensemble mean and spread, realized temperatures, per-row
+bracket grids, and a normalized reference price per bracket. It prices the fitted
 distribution onto each row's grid with `dist.integrate` and scores it against
 the reference under both metrics. The split is chronological, 60/40.
 
@@ -193,55 +197,55 @@ the reference under both metrics. The split is chronological, 60/40.
 
 Three observations follow from the table.
 
-* EMOS is less accurate than the reference (Brier 0.126 against 0.107), so it
-  is ranked below the market on a calibration criterion.
-* Its Edge-Alignment is also negative (-0.049, `align_corr = -0.011`). The
+* EMOS is less accurate than the reference, with Brier 0.126 against 0.107, so
+  it is ranked below the market on a calibration criterion.
+* Its Edge-Alignment is also negative, at -0.049 with `align_corr = -0.011`. The
   errors are not decorrelated from the reference's in a direction that would
   be exploitable, so this sample does not exhibit the case §2 and §3 describe,
   in which a less accurate forecast retains positive value.
 * The two metrics nonetheless order the adjustments differently. The edge
-  recalibration improves Brier (0.1069, near the reference's 0.1066) and
-  raises EA; the mean de-bias leaves Brier almost unchanged and lowers EA
+  recalibration improves Brier to 0.1069, near the reference's 0.1066, and
+  raises EA. The mean de-bias leaves Brier almost unchanged and lowers EA
   further. Accuracy and value do not covary in either direction, which is the
   property this guide is concerned with, and it is observable here without a
   positive-value instance.
 
-The LOW side gives the same qualitative result: EMOS raw EA -0.110, 95% CI
-[-0.2662, +0.0464], `align_corr = -0.023`.
+The LOW side gives the same qualitative result, with EMOS raw EA -0.110, 95% CI
+[-0.2662, +0.0464], and `align_corr = -0.023`.
 
 ### What changed, and why the older numbers are gone
 
 An earlier version of this section reported HIGH EA `+0.4938` and read it as
 real-data confirmation of the synthetic result. Those numbers came off a
 fixture with two defects, in a file that was hand-built and never committed as
-a script, so nothing could re-derive it:
+a script, so nothing could re-derive it. The defects were these.
 
-* the ladder's open tails were flattened to finite sentinels, and
-* the fifth inner edge was written one degree low, collapsing one bracket to
+* The ladder's open tails were flattened to finite sentinels.
+* The fifth inner edge was written one degree low, collapsing one bracket to
   width 1 and shifting the next boundary.
 
 Prices were intact, so the file looked right, but edges decide which bracket
 the realized temperature fell in, and 162 of its 2,168 rows (7.5%) carried the
 wrong outcome label. Repairing only the edges, holding rows and split fixed,
 moves HIGH from `+0.4938` to `+0.3326` and LOW from `+1.2960` to `+0.5922`.
-The rest of the move to today's negative figures is population: that fixture
+The rest of the move to today's negative figures is population. That fixture
 was a subset, and the current one covers a longer window. The chronological
-split (replacing a random permutation, which leaks across an autocorrelated
-series) accounts for little, about `-0.199` to `-0.151` on matched data.
+split, which replaces a random permutation that leaks across an autocorrelated
+series, accounts for little, about `-0.199` to `-0.151` on matched data.
 
 The fixture is now generated by a committed script that pulls from the source
 pipeline's research API and asserts, per row, that tails stay open and inner
-brackets are width-2; a `.provenance.json` sidecar records the source commit
+brackets are width-2. A `.provenance.json` sidecar records the source commit
 and query.
 
 > **Scope.** EA here is computed against the bid-ask midpoint of a real
 > exchange's quotes, frictionless, not a tradeable price net of fees and
-> spread. `ens_mean`/`ens_std` are a declared definition (multi-model spread
-> across all available sources), not one recovered from the older fixture,
-> whose definition is unrecoverable; numbers here are a new measurement rather
+> spread. `ens_mean`/`ens_std` are a declared definition, the multi-model spread
+> across all available sources, not one recovered from the older fixture, whose
+> definition is unrecoverable. The numbers here are a new measurement rather
 > than a correction of the old ones. The intervals above are percentile
 > bootstraps clustered by station-day, since contracts on one ladder resolve
-> off a single realized temperature; both cross zero, so read these as "not
+> off a single realized temperature. Both cross zero, so read these as "not
 > distinguishable from zero on this evidence" rather than as measured
 > negatives.
 >
@@ -251,57 +255,57 @@ and query.
 
 ## 6. Improving value: edge-recalibration
 
-The principle says: don't push `q → π` (calibration); push the **edge `q − m`**
-to track the **realized mispricing `r − m`**. On data strictly prior to the
-prediction (walk-forward, causal), fit the monotone map
+The principle is not to push `q → π`, which is calibration, but to push the
+**edge `q − m`** to track the **realized mispricing `r − m`**. On data strictly
+prior to the prediction, walk-forward and causal, fit the monotone map
 
 ```
 h = isotonic regression of (r − m) on (q − m)      # h(e) ≈ E[r − m | edge e]
 ```
 
-then set `q' = m + h(q − m)` (clip to `(0,1)`, renormalize per event). `h`
+then set `q' = m + h(q − m)`, clipped to `(0,1)` and renormalized per event. `h`
 amplifies edges that have historically predicted real mispricing and damps edges
-that were noise or shared bias. Contrast with PIT-recalibration (`q' = g(CDF)`),
-which maximizes *calibration* and need not help value.
+that were noise or shared bias. Contrast this with PIT-recalibration
+(`q' = g(CDF)`), which maximizes *calibration* and need not help value.
 
 This step needs the reference prices at fit time and edges toward the trade
 layer, so bracketlearn keeps it as a documented recipe rather than a core
-pipeline stage, the same boundary that puts [trade decisions out of
-scope](../index.md). The metrics that *grade* it (`edge_alignment`,
-`value_report`) are in the library.
+pipeline stage. That is the same boundary that puts [trade decisions out of
+scope](../index.md). The metrics that *grade* it, `edge_alignment` and
+`value_report`, are in the library.
 
-`h` is fit against the same realized outcomes it is scored on, so it **overfits
-readily**, far more than a calibration map, which targets the smoother `π`. On
+`h` is fit against the same realized outcomes it is scored on, so it overfits
+readily, far more than a calibration map, which targets the smoother `π`. On
 the small real sample of §5b the isotonic `h` *lowered* test EA rather than
-raising it (it amplified in-sample-only edges). Edge-recalibration earns its
-keep only with enough data and strict walk-forward validation; treat a
-recalibration that "wins" in-sample as unproven until it holds out-of-window
+raising it, by amplifying in-sample-only edges. Edge-recalibration earns its
+keep only with enough data and strict walk-forward validation. Treat a
+recalibration that wins in-sample as unproven until it holds out-of-window
 (see the §5b "Honest caveats").
 
 ## 7. Relation to known theory
 
-The structure is classical; recognizing the lineage is the point.
+The structure is classical, and recognizing the lineage is the point.
 
-* **Kelly / information theory.** Betting your model `q` against prices `m`, the
-  expected log-growth of wealth is `D(π‖m) − D(π‖q)`: *(how far the reference is
-  from truth) − (how far you are)* in KL divergence. You grow iff you are closer
-  to truth than the reference. The inner product `⟨q−m, π−m⟩` is its
-  second-order Taylor expansion for small mispricings. (Kelly 1956; Cover &
-  Thomas 2006, ch. 6.)
-* **Active portfolio management.** Grinold's Fundamental Law, `IR ≈ IC · √breadth`,
-  with `IC = corr(forecast − benchmark, realized − benchmark)`. Swap benchmark →
-  reference price and IC *is* the normalized EA (`align_corr`). The *rank* form
-  of IC discards the magnitude/sizing the law needs, which is why EA is the
-  covariance form, not a rank correlation. (Grinold 1989;
-  Grinold & Kahn 2000.)
+* **Kelly / information theory.** Betting a model `q` against prices `m`, the
+  expected log-growth of wealth is `D(π‖m) − D(π‖q)`, that is, how far the
+  reference is from truth minus how far you are, in KL divergence. Wealth grows
+  if and only if you are closer to truth than the reference. The inner product
+  `⟨q−m, π−m⟩` is its second-order Taylor expansion for small mispricings.
+  (Kelly 1956; Cover & Thomas 2006, ch. 6.)
+* **Active portfolio management.** Grinold's Fundamental Law reads
+  `IR ≈ IC · √breadth`, with `IC = corr(forecast − benchmark, realized −
+  benchmark)`. Swap the benchmark for the reference price and IC *is* the
+  normalized EA, `align_corr`. The *rank* form of IC discards the magnitude and
+  sizing the law needs, so EA is the covariance form rather than a rank
+  correlation. (Grinold 1989; Grinold & Kahn 2000.)
 * **Forecast verification.** Meteorology long ago separated a forecast's
-  *quality* (accuracy: proper scores) from its *value* to a decision-maker,
-  defined relative to a reference forecast and a decision structure:
-  "relative to the reference price, for a bet." (Murphy 1993; Murphy 1977;
-  Richardson 2000.)
-* **Market efficiency.** The shared-bias trap is Grossman & Stiglitz (1980): a
-  price aggregates common information, so the only exploitable signal is
-  information orthogonal to it.
+  *quality*, its accuracy under proper scores, from its *value* to a
+  decision-maker, defined relative to a reference forecast and a decision
+  structure. Here that structure is "relative to the reference price, for a
+  bet." (Murphy 1993; Murphy 1977; Richardson 2000.)
+* **Market efficiency.** Shared bias is Grossman & Stiglitz (1980). A price
+  aggregates common information, so the only exploitable signal is information
+  orthogonal to it.
 
 ## API summary
 
@@ -314,5 +318,5 @@ The structure is classical; recognizing the lineage is the point.
 | `edge_alignment_bracket(contracts, reference, edges, y)` | value of a ladder | `ContractForecast` + reference + edges |
 | `value_report_bracket(contracts, reference, edges, y)` | full report for a ladder | `ContractForecast` + reference + edges |
 
-`reference` is the quoted/baseline price for the same contracts: a
+`reference` is the quoted or baseline price for the same contracts, given as a
 `ContractForecast` or a raw array matching `contracts.fair_price`.

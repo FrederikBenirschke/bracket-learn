@@ -1,19 +1,18 @@
 """Save and load fitted ``WalkForward`` / ``PipelineResult`` instances.
 
-bracketlearn objects pickle natively, every trainer's fitted state is
-plain numpy arrays plus picklable third-party models (sklearn,
-LightGBM, NGBoost, torch). This module wraps ``pickle`` with a small
-envelope so that:
+bracketlearn objects pickle natively. Every trainer's fitted state is plain
+numpy arrays together with picklable third-party models from sklearn, LightGBM,
+NGBoost and torch. This module wraps ``pickle`` with a small envelope, for
+three reasons.
 
-- The bracketlearn version that produced the artefact is stored alongside
-  it (``__bracketlearn_version__``). ``load()`` warns loudly when loading
-  an artefact built with a different version, drift between
-  algorithm-internal representations is the most common cause of
-  silently-wrong predictions after a library upgrade.
-- The artefact is self-describing: a single ``.pkl`` carries the
-  pipeline, the metadata version, and an optional user note.
-- The on-disk format is a plain pickle, not a custom serialisation. If
-  you ever need to inspect it without bracketlearn installed, raw
+- The bracketlearn version that produced the artefact is stored alongside it as
+  ``__bracketlearn_version__``. ``load()`` warns when loading an artefact built
+  with a different version. Drift between algorithm-internal representations is
+  the most common cause of wrong predictions after a library upgrade.
+- The artefact is self-describing. A single ``.pkl`` carries the pipeline, the
+  metadata version, and an optional user note.
+- The on-disk format is a plain pickle rather than a custom serialisation. To
+  inspect it without bracketlearn installed, raw
   ``pickle.load(open(path,'rb'))['payload']`` works.
 
 Usage::

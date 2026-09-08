@@ -1,9 +1,9 @@
 """The calibration suite, and the failures var(PIT) alone cannot see.
 
-Each test in the first block PLANTS a specific miscalibration, asserts that
+Each test in the first block plants a specific miscalibration, asserts that
 var(PIT) is blind to it, and asserts that some other column in the suite
-catches it. That pairing is the argument for the suite existing: without
-the "var(PIT) is blind" half, the extra columns are just more numbers.
+catches it. That pairing is the argument for the suite existing. Without the
+"var(PIT) is blind" half, the extra columns are only more numbers.
 """
 
 from __future__ import annotations
@@ -33,24 +33,24 @@ def _normal_q(mu, sigma):
 # ---------------------------------------------------------------------------
 
 
-def test_bias_is_MISREAD_by_var_pit_as_overdispersion():
-    """The headline reason var(PIT) cannot stand alone.
+def test_bias_is_misread_by_var_pit_as_overdispersion():
+    """The principal reason var(PIT) cannot stand alone.
 
-    A forecast that is 3°F warm with a PERFECTLY CORRECT spread has its PIT
-    mass pushed toward one end, which SHRINKS the variance: 0.0835 -> 0.0558
-    here. On the documented reading rule that is "overdispersed": the
-    intervals are too wide, which is precisely the wrong diagnosis. The
-    spread needs no change at all; the centre does.
+    A forecast that is 3°F warm with an exactly correct spread has its PIT
+    mass pushed toward one end, which shrinks the variance from 0.0835 to
+    0.0558 here. On the documented reading rule that is "overdispersed",
+    meaning the intervals are too wide. That is the wrong diagnosis. The
+    spread needs no change at all, and the centre does.
 
-    So var(PIT) is not merely blind to bias, it MISLABELS it. Two failures
-    with opposite remedies produce the same verdict:
+    var(PIT) is therefore not merely blind to bias but mislabels it. Two
+    failures with opposite remedies produce the same verdict:
 
         bias +3F, spread correct    -> pit_var 0.0558, "overdispersed"
         no bias, spread 1.7x wide   -> pit_var 0.0415, "overdispersed"
 
-    Only pit_mean separates them (0.24 vs 0.50). This matters directly for
-    the vendor lift: an overdispersion finding read off var(PIT) alone could
-    be an uncorrected bias wearing a dispersion verdict.
+    Only pit_mean separates them, at 0.24 against 0.50. This matters directly
+    for the vendor lift. An overdispersion finding read off var(PIT) alone
+    could be an uncorrected bias wearing a dispersion verdict.
     """
     rng = np.random.default_rng(0)
     n = 200_000
@@ -65,7 +65,7 @@ def test_bias_is_MISREAD_by_var_pit_as_overdispersion():
     assert s["pit_var"] < NEUTRAL_PIT_VAR * 0.90, (
         "the planted bias must actually produce the wrong dispersion verdict"
     )
-    # The suite catches the true failure four independent ways.
+    # The suite catches the true failure in four independent ways.
     assert s["pit_mean"] < 0.35, "pit_mean must see the shift"
     assert s["pit_ks"] > 0.15, "KS must reject uniformity"
     assert s["tail_left"] > 0.20, "mass piles into the left tail"
@@ -73,7 +73,7 @@ def test_bias_is_MISREAD_by_var_pit_as_overdispersion():
 
 
 def test_bias_and_overdispersion_are_indistinguishable_on_var_pit():
-    """The confound, stated directly: same verdict, opposite remedies."""
+    """The confound, stated directly. Same verdict, opposite remedies."""
     rng = np.random.default_rng(12)
     n = 200_000
     y = rng.normal(70.0, 3.0, n)
@@ -95,7 +95,7 @@ def test_asymmetric_tails_share_one_var_pit_but_differ_in_skew():
     """Two forecasts, mirror-image tail errors, identical var(PIT).
 
     Skew is what separates 'too heavy on the left' from 'too heavy on the
-    right'. A variance is symmetric by construction and cannot.
+    right'. A variance is symmetric by construction and cannot do so.
     """
     rng = np.random.default_rng(1)
     n = 120_000
@@ -119,10 +119,10 @@ def test_asymmetric_tails_share_one_var_pit_but_differ_in_skew():
 def test_heavy_tails_and_a_narrow_body_are_one_verdict_on_var_pit():
     """A shape error that no rescaling can fix, and how the suite says so.
 
-    Outcomes from a t_3 scored under a normal of the SAME SCALE: the body is
-    too narrow AND both tails are too heavy. var(PIT) reports 0.1004, i.e.
-    "underdispersed: widen the intervals". But widening makes the body worse;
-    the fault is the family, not the scale.
+    Outcomes from a t_3 are scored under a normal of the same scale. The body
+    is then too narrow and both tails are too heavy at once. var(PIT) reports
+    0.1004, read as "underdispersed, widen the intervals". Widening makes the
+    body worse. The fault lies in the family rather than the scale.
 
     Measured, t_3 outcomes under a normal, 400k rows:
 
@@ -132,12 +132,12 @@ def test_heavy_tails_and_a_narrow_body_are_one_verdict_on_var_pit():
 
     (calibrated is 0.0833 / 0.05 / 0.05 / 0)
 
-    The two ways of matching a normal to the same data give OPPOSITE
+    The two ways of matching a normal to the same data give opposite
     dispersion verdicts. That is the argument against a single dispersion
-    number: what it reports depends on a modelling choice it does not show
-    you. The tail masses do show it: 0.05/0.05 is the calibrated value, and
-    both rows are wrong on both sides simultaneously, which a scale change
-    cannot repair in either direction.
+    number. What it reports depends on a modelling choice it does not
+    display. The tail masses do display it. The calibrated value is
+    0.05/0.05, and both rows are wrong on both sides simultaneously, which a
+    scale change cannot repair in either direction.
     """
     n = 400_000
     y = student_t.rvs(df=3.0, size=n, random_state=7)
@@ -151,7 +151,7 @@ def test_heavy_tails_and_a_narrow_body_are_one_verdict_on_var_pit():
     assert scale_matched["pit_var"] > NEUTRAL_PIT_VAR * 1.10   # "too narrow"
     assert var_matched["pit_var"] < NEUTRAL_PIT_VAR * 0.90     # "too wide"
 
-    # Tails say what is really wrong, in both cases. Calibrated is 0.05.
+    # The tails say what is really wrong in both cases. Calibrated is 0.05.
     assert scale_matched["tail_left"] > 0.09
     assert scale_matched["tail_right"] > 0.09
     assert var_matched["tail_left"] < 0.04
@@ -159,7 +159,7 @@ def test_heavy_tails_and_a_narrow_body_are_one_verdict_on_var_pit():
 
     # KS rejects both, which a dispersion number cannot do on its own. At
     # n=400k the 1% critical value is ~0.0026, so both are decisive
-    # rejections (measured 0.049 and 0.087).
+    # rejections, measured at 0.049 and 0.087.
     assert scale_matched["pit_ks"] > 0.04
     assert var_matched["pit_ks"] > 0.04
 
@@ -195,9 +195,10 @@ def test_perfect_forecast_hits_every_neutral_value():
 def test_var_pit_signs_dispersion_in_the_documented_direction(factor, expect):
     """Guard on the reading rule in the docstring.
 
-    Too-narrow intervals give a U-shaped PIT (variance ABOVE 1/12); too-wide
-    give a hump (BELOW). Getting this backwards would invert every dispersion
-    verdict in the repo, and the direction is easy to talk oneself out of.
+    Too-narrow intervals give a U-shaped PIT, with variance above 1/12.
+    Too-wide intervals give a hump, with variance below 1/12. Reversing this
+    would invert every dispersion verdict in the repo, and the direction is
+    easy to talk oneself out of.
     """
     rng = np.random.default_rng(4)
     n = 100_000
@@ -216,7 +217,7 @@ def test_sharpness_is_measured_without_the_outcome():
     """Sharpness is a property of the forecast alone.
 
     Two runs with identical forecasts but different outcomes must report the
-    same sharpness: otherwise it is an accuracy metric in disguise, and
+    same sharpness. Otherwise it is an accuracy metric in disguise, and
     "sharp subject to calibrated" stops meaning anything.
     """
     rng = np.random.default_rng(5)
@@ -229,7 +230,7 @@ def test_sharpness_is_measured_without_the_outcome():
                           sd=sd, quantile=_normal_q(mu, sd))
     assert a["rmv"] == b["rmv"]
     assert a["sharpness_iqr"] == b["sharpness_iqr"]
-    # ...while calibration differs wildly, confirming the forecasts were
+    # ...while calibration differs widely, confirming the forecasts were
     # genuinely being scored against different outcomes.
     assert abs(a["pit_ks"] - b["pit_ks"]) > 0.3
 
@@ -240,7 +241,7 @@ def test_sharpness_is_measured_without_the_outcome():
 
 
 def test_discrete_pit_needs_its_own_neutral_reference():
-    """The correction is to the TARGET, not only to the statistic.
+    """The correction applies to the target, not only to the statistic.
 
     Rounding the outcome removes the within-cell spread a continuous PIT
     would have, so a perfectly calibrated forecast on a grid attains
@@ -250,8 +251,9 @@ def test_discrete_pit_needs_its_own_neutral_reference():
     which is strictly below 1/12. Comparing a discrete PIT against 1/12
     therefore manufactures an "overdispersed" verdict out of the grid alone.
 
-    This test pins the identity, and pins that the naive PIT, which happens
-    to sit numerically closer to 1/12: is nonetheless the wrong quantity.
+    This test pins the identity. It also pins that the naive PIT, which
+    happens to sit numerically closer to 1/12, is nonetheless the wrong
+    quantity.
     """
     rng = np.random.default_rng(6)
     n = 400_000
@@ -263,26 +265,26 @@ def test_discrete_pit_needs_its_own_neutral_reference():
 
         s = calibration_suite(_normal_cdf(mu, sd), y, grid_step=1.0)
 
-        # The forecast IS calibrated, so the excess over the correct target
-        # must be ~0: even though pit_var itself is well below 1/12.
+        # The forecast is calibrated, so the excess over the correct target
+        # must be ~0, even though pit_var itself is well below 1/12.
         assert abs(s["pit_var_excess"]) < 0.002, (
             f"sigma={sigma}: calibrated forecast must show ~zero excess"
         )
         assert s["pit_var_neutral"] < NEUTRAL_PIT_VAR, (
             "the discrete target must sit below the continuous 1/12"
         )
-        # Against the WRONG (continuous) reference the same forecast looks
+        # Against the wrong, continuous reference the same forecast looks
         # overdispersed. This is the error the reference exists to prevent.
         if sigma <= 2.0:
             assert s["pit_var"] < NEUTRAL_PIT_VAR * 0.995
 
 
 def test_naive_discrete_pit_is_biased_up_and_is_the_wrong_quantity():
-    """Naive F(y) on rounded outcomes reads ABOVE the true continuous value.
+    """Naive F(y) on rounded outcomes reads above the true continuous value.
 
     It is biased toward "underdispersed". It can look closer to 1/12 than the
-    corrected statistic, which is exactly the trap: the corrected statistic is
-    being compared to the wrong target, not computing the wrong thing.
+    corrected statistic. The corrected statistic is then being compared to
+    the wrong target rather than computing the wrong thing.
     """
     rng = np.random.default_rng(13)
     n = 400_000
@@ -297,8 +299,8 @@ def test_naive_discrete_pit_is_biased_up_and_is_the_wrong_quantity():
     fixed = calibration_suite(_normal_cdf(mu, sd), y, grid_step=1.0)
 
     assert naive["pit_var"] > true_cont, "naive must be biased upward"
-    # The corrected statistic matches ITS OWN target far better than the naive
-    # one matches the continuous target.
+    # The corrected statistic matches its own target far better than the
+    # naive one matches the continuous target.
     assert abs(fixed["pit_var_excess"]) < abs(naive["pit_var"] - true_cont)
 
 
@@ -313,10 +315,11 @@ def test_neutral_reference_is_continuous_when_outcome_is():
 
 
 def test_grid_step_is_deterministic_not_randomised():
-    """No RNG: repeated calls on the same input give identical values.
+    """No random number generator, so repeated calls on the same input give
+    identical values.
 
-    This repo bans the randomised PIT (it shifted the mean +0.093..+0.111 on
-    every model over 85,250 forecasts). The mid-interval form is its
+    This repo bans the randomised PIT, which shifted the mean +0.093..+0.111
+    on every model over 85,250 forecasts. The mid-interval form is its
     deterministic analogue and must be reproducible.
     """
     rng = np.random.default_rng(7)
@@ -352,7 +355,8 @@ def test_discrete_log_score_is_comparable_across_families():
 
 
 def test_log_score_is_nan_without_a_grid_step():
-    """A continuous outcome has no cell probability. NaN, not a silent 0."""
+    """A continuous outcome has no cell probability, so the result is NaN
+    rather than 0."""
     rng = np.random.default_rng(9)
     n = 1_000
     mu = np.zeros(n)
@@ -404,8 +408,9 @@ def test_bad_sd_raises():
 
 @pytest.mark.parametrize("bad", [-1.0, 0.0, float("nan"), float("inf")])
 def test_bad_grid_step_raises(bad):
-    """NaN and inf too: a NaN step NaNs every PIT, an inf step makes them
-    all 0.5, and both read as a result rather than as a failure."""
+    """NaN and inf are covered too. A NaN step makes every PIT NaN and an inf
+    step makes them all 0.5, and both read as a result rather than as a
+    failure."""
     with pytest.raises(ValueError, match="grid_step must be positive"):
         pit_values(lambda t: np.zeros_like(np.asarray(t)),
                    np.zeros(10), grid_step=bad)

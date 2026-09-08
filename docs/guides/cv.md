@@ -1,11 +1,11 @@
 # Cross-validation
 
-`WalkForward(cv=...)` accepts three modes:
+`WalkForward(cv=...)` accepts three modes.
 
 ## `cv="expanding-window"` (default)
 
-Train window grows by one chunk per fold; test fold sits immediately after.
-Use for sequential / time-series data. `embargo=k` skips `k` rows between
+The train window grows by one chunk per fold, and the test fold sits
+immediately after. Use it for sequential and time-series data. `embargo=k` skips `k` rows between
 train and test to handle look-ahead leakage when rows are autocorrelated.
 
 ```
@@ -35,7 +35,8 @@ Plain k-fold. Splits rows into `n_folds` disjoint test sets. Pass
 `shuffle=True, random_state=...` for a permuted split.
 
 **Use only when rows are exchangeable.** On time-series data it trains on
-future rows and inflates OOF metrics, so keep it away from sequential data.
+future rows and inflates OOF metrics, so it should be kept away from sequential
+data.
 
 ```python
 WalkForward(cv="kfold", n_folds=5, shuffle=True, random_state=0)
@@ -43,10 +44,10 @@ WalkForward(cv="kfold", n_folds=5, shuffle=True, random_state=0)
 
 ## Enabling refit-on-full
 
-By default (`refit_on_full=False`) `fit_predict` produces OOF predictions
+By default, with `refit_on_full=False`, `fit_predict` produces OOF predictions
 only. To call `wf.predict(X_new)` on unseen rows, pass `refit_on_full=True`.
 `fit_predict` then ends with a full-data refit per model and stores it.
-Calling `predict()` without it raises, a loud failure that beats handing back
+Calling `predict()` without it raises, which is preferable to handing back
 OOF-style predictions in disguise.
 
 ```python
@@ -60,14 +61,15 @@ wf.predict(X_new, ids=new_ids, timestamps=new_ts)
 `embargo` defaults to 0. On an autocorrelated series the row immediately after
 the train boundary carries information about the last training row, so a
 nonzero embargo drops a gap between the two. Set it to the horizon over which
-the target is autocorrelated, in rows: for a daily series with a week of
-persistence, `embargo=7`. It applies to the time-series splitters only;
-`kfold` ignores it and warns if you set it.
+the target is autocorrelated, measured in rows. For a daily series with a week
+of persistence, use `embargo=7`. It applies to the time-series splitters only.
+`kfold` ignores it and warns when it is set.
 
 ## Holdouts nested inside a fold
 
 Two stages hold out data of their own, inside whatever slice the fold hands
-them. Both are automatic; neither needs configuring beyond its fraction.
+them. Both are automatic, and neither needs configuring beyond its
+fraction.
 
 - A `Pipeline` ending in a **Calibrator** reserves the last
   `calibration_fraction` of the fold's train rows. The transformers and the
@@ -81,7 +83,7 @@ them. Both are automatic; neither needs configuring beyond its fraction.
 - A **`Stacker`** leaf that feeds a meta is fit twice on the train slice, on
   each half in turn, so the predictions the meta receives as `upstream=` are
   out-of-sample. Without this the meta sees each upstream at its in-sample
-  best and learns to weight whichever one overfits hardest; measured on a
+  best and learns to weight whichever one overfits hardest. Measured on a
   linear DGP with a deep tree beside a ridge, the stack scored CRPS 0.809
   against the ridge's 0.555, worse than either input. Leaves not consumed by a
   meta skip the extra fit.

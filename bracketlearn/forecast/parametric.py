@@ -37,11 +37,12 @@ class _ParametricMixin:
     _rv: ClassVar[Any]
     # Supplied by the concrete subclass (via DistributionForecast). Declared
     # here so the row-count checks below type-check, the same reason ``_rv``
-    # is declared: the mixin requires it but does not define it.
+    # is declared. The mixin requires it but does not define it.
     ids: np.ndarray
 
     def _per_row_params(self) -> dict[str, np.ndarray]:
-        """Per-row 1-D shape params for self._rv (e.g. {'loc': mu, 'scale': sigma})."""
+        """Per-row 1-D shape params for self._rv, such as
+        {'loc': mu, 'scale': sigma}."""
         raise NotImplementedError
 
     def _bcast_params(self) -> dict[str, np.ndarray]:
@@ -476,7 +477,7 @@ class MixtureNormalForecast(DistributionForecast):
         if how == "mode":
             best = np.argmax(self.weights, axis=1)
             return self.mus[np.arange(self.mus.shape[0]), best]
-        # median: numerical CDF inversion
+        # median, by numerical CDF inversion
         return _quantile_via_brentq(self, 0.5)
 
     @classmethod

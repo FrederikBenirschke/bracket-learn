@@ -1,13 +1,14 @@
-"""Data objects: PointForecast, DistributionForecast hierarchy, ContractForecast.
+"""Data objects, comprising PointForecast, the DistributionForecast hierarchy,
+and ContractForecast.
 
-All frozen dataclasses. ndarrays inside are set read-only in __post_init__
-to make immutability real (frozen=True alone only freezes attribute binding,
-not buffer contents).
+All are frozen dataclasses. The ndarrays inside are set read-only in
+__post_init__ to make immutability real, since frozen=True alone freezes only
+attribute binding and not buffer contents.
 
 v0.3.0 layout
 -------------
-``DistributionForecast`` is an ``abc.ABC`` base with concrete subclasses
-per backing:
+``DistributionForecast`` is an ``abc.ABC`` base with one concrete subclass per
+backing.
 
     DistributionForecast (abstract)         → base.py
     ├── NormalForecast                      → parametric.py

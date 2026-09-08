@@ -1,28 +1,29 @@
 """RNN-on-hourly-tensor end-to-end PoC.
 
-The target is a daily HIGH temperature, a continuous quantity. As in every
-example here, we model its full predictive distribution and price a bracket
-ladder over it rather than predicting a single number. This script's focus is
-the sequence model, RNNHourly on a 3-D hourly tensor.
+The target is a daily high temperature, a continuous quantity. As in every
+example here, its full predictive distribution is modelled and a bracket ladder
+is priced over it, rather than predicting a single number. This script's focus
+is the sequence model, RNNHourly on a 3-D hourly tensor.
 
-Standalone because RNNHourly requires X.ndim == 3 (the (N, T, C) hourly tensor
-convention), while the main weather_e2e demo runs on 2-D feature matrices.
-Pipeline slicing on axis 0 works identically; the one restriction is that you
-can't mix 2-D and 3-D trainers in one pipeline.
+It is standalone because RNNHourly requires X.ndim == 3, the (N, T, C) hourly
+tensor convention, while the main weather_e2e demo runs on 2-D feature
+matrices. Pipeline slicing on axis 0 works identically. The one restriction is
+that 2-D and 3-D trainers cannot be mixed in one pipeline.
 
 Run::
 
     conda run -n weathermarkets python -m bracketlearn.examples.weather_rnn_e2e
 
 Trainers:
-  - rnn_hourly:  GRU(32) on the 24-hour, 6-channel tensor + station embedding,
-                 lifted to parametric normal via GlobalResidual.
+  - rnn_hourly:  GRU(32) on the 24-hour, 6-channel tensor with a station
+                 embedding, lifted to parametric normal via GlobalResidual.
 
-Synthetic data mirrors the real HRRR hourly tensor shape (N, 24, 6): channels =
-(temperature_f, dewpoint_f, RH, wind, cloud, CAPE). Target = daily HIGH ≈
-max(T) − 0.3·mean(cloud) + warm-season term + noise.
+The synthetic data mirrors the real HRRR hourly tensor shape (N, 24, 6). The
+channels are (temperature_f, dewpoint_f, RH, wind, cloud, CAPE) and the target
+is the daily high, approximately max(T) − 0.3·mean(cloud) plus a warm-season
+term and noise.
 
-The RNN learns the cloud-correction residual; ridge can't, because it sees a
+The RNN learns the cloud-correction residual. Ridge cannot, because it sees a
 flat 6-D mean and misses the cloud signal.
 """
 
@@ -30,7 +31,7 @@ from __future__ import annotations
 
 import os
 
-# Set before torch import: macOS libomp clash.
+# Set before the torch import, to avoid the macOS libomp clash.
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import warnings
@@ -58,17 +59,17 @@ def make_synthetic_hourly(
     hour_of_day = np.arange(n_hours)
     diurnal = 8.0 * np.sin(2 * np.pi * (hour_of_day - 6) / 24.0)
     for d in range(n_days):
-        # ch 0: temperature_f
+        # ch 0, temperature_f
         X[d, :, 0] = seasonal[d] + diurnal + rng.normal(0, 1.5, n_hours)
-        # ch 1: dewpoint_f
+        # ch 1, dewpoint_f
         X[d, :, 1] = X[d, :, 0] - rng.uniform(5, 20)
-        # ch 2: relative_humidity, anti-correlated with T
+        # ch 2, relative_humidity, anti-correlated with T
         X[d, :, 2] = np.clip(80 - 1.5 * (X[d, :, 0] - seasonal[d]), 0, 100)
-        # ch 3: wind, ch 4: cloud, ch 5: CAPE, random.
+        # ch 3 wind, ch 4 cloud, ch 5 CAPE, all random.
         X[d, :, 3] = rng.gamma(2, 3, n_hours)
         X[d, :, 4] = rng.uniform(0, 100, n_hours)
         X[d, :, 5] = rng.gamma(1.5, 100, n_hours)
-    # Target: realized HIGH = max(T) − 0.3·mean(cloud) + noise.
+    # The target is the realized high, max(T) − 0.3·mean(cloud) + noise.
     baseline = X[:, :, 0].max(axis=1)
     y = baseline - 0.3 * X[:, :, 4].mean(axis=1) + rng.normal(0, 1.2, n_days)
     ids = np.arange(n_days)

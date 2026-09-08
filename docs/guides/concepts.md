@@ -1,6 +1,6 @@
 # Concepts
 
-Five protocols, no inheritance maze:
+Five protocols, with no inheritance maze.
 
 | Protocol            | Input → Output                                | Examples |
 | ------------------- | --------------------------------------------- | -------- |
@@ -12,29 +12,30 @@ Five protocols, no inheritance maze:
 
 List stages in a `Pipeline` and the protocol types wire the chain
 left-to-right. A `PointForecaster` followed by a `Lifter` becomes a
-`DistForecaster`; follow that with a `Calibrator` and it stays one. The
-`Pipeline` is the forecaster: `Pipeline([SklearnPoint(Ridge()),
+`DistForecaster`, and following that with a `Calibrator` leaves it one. The
+`Pipeline` is itself the forecaster, as in `Pipeline([SklearnPoint(Ridge()),
 GlobalResidual(), Isotonic(...)])`. For parallel ensembling, wrap upstream
-`Pipeline` objects in a `Stacker`; `WalkForward` drives the CV and OOF. Names
+`Pipeline` objects in a `Stacker`. `WalkForward` drives the CV and OOF. Names
 label the leaderboard, never the wiring.
 
 ## Distribution backings
 
-A `DistributionForecast` can carry any of four backings; metrics dispatch
-on the type:
+A `DistributionForecast` can carry any of four backings, and metrics dispatch
+on the type.
 
-- **parametric** (`normal`, `mixture_normal`): closed-form CRPS, log-score,
-  and CDF.
-- **quantile**: an array of `qvals` at fixed `taus`. CRPS comes from a
+- **parametric** (`normal`, `mixture_normal`) gives closed-form CRPS,
+  log-score, and CDF.
+- **quantile** is an array of `qvals` at fixed `taus`. CRPS comes from a
   pinball-trapezoidal integral, and the tail policy controls extrapolation
   past the outermost quantile.
-- **bracket**: an array of `probs` on `edges` with uniform-within-bin density.
-- **empirical** (planned): an array of `members`.
+- **bracket** is an array of `probs` on `edges` with uniform-within-bin
+  density.
+- **empirical** (planned) is an array of `members`.
 
 ## Provenance
 
-Every `PointForecast` and `DistributionForecast` carries a
-`ProvenanceMeta` tag: which forecaster produced it, which fold, what
-random seed, what conversion chain (e.g.
-`["Ridge", "GlobalResidual", "Isotonic"]`). Lifters and calibrators append
+Every `PointForecast` and `DistributionForecast` carries a `ProvenanceMeta`
+tag recording which forecaster produced it, which fold, what random seed, and
+what conversion chain, for example
+`["Ridge", "GlobalResidual", "Isotonic"]`. Lifters and calibrators append
 to the conversion chain rather than discarding upstream provenance.

@@ -2,29 +2,29 @@
 
 Background
 ----------
-Pre-v0.5.0 the deleted ``BracketClassifier`` / ``BracketRegressor``
-classes conflated two concerns inside ``fit``:
+Pre-v0.5.0 the deleted ``BracketClassifier`` and ``BracketRegressor`` classes
+conflated two concerns inside ``fit``.
 
-  1. **Expand**: a per-row design ``(N, F)`` becomes a per-(row, bracket)
+  1. Expansion. A per-row design ``(N, F)`` becomes a per-(row, bracket)
      design ``(M, F + 2)`` with ``[..., lo_b, hi_b]`` appended.
-  2. **Fit**: an sklearn estimator on that expanded design and a target
-     derived from ``y``, *always* the bracket-hit indicator
+  2. Fitting. An sklearn estimator is fit on that expanded design and on a
+     target derived from ``y``, always the bracket-hit indicator
      ``1[y ∈ bracket_b]``.
 
-That hardcoded target made them inflexible: any caller who wanted a
-*different* per-(row, bracket) target (e.g. the mispricing residual
-``hit − market_p``) had to fork the class. v0.5.0 split the two
-concerns and removed both classes, ``BracketExpander`` owns the
-reshape, and the caller picks any sklearn estimator and any target.
+The hardcoded target made them inflexible. Any caller wanting a different
+per-(row, bracket) target, such as the mispricing residual ``hit − market_p``,
+had to fork the class. v0.5.0 split the two concerns and removed both classes.
+``BracketExpander`` owns the reshape, and the caller picks any sklearn
+estimator and any target.
 
-- ``BracketExpander`` (this module): owns the per-row ↔ per-(row, bracket)
-  conversion. Builds ``X_expanded`` and, by default, a bracket-hit
-  target ``y_expanded``, but the caller can ignore that and supply any
-  target of shape ``(M,)`` they like.
+- ``BracketExpander``, in this module, owns the conversion between per-row and
+  per-(row, bracket). It builds ``X_expanded`` and, by default, a bracket-hit
+  target ``y_expanded``. The caller may ignore that and supply any target of
+  shape ``(M,)``.
 
-- Model fit is plain sklearn: the caller calls ``.fit(X_expanded,
-  y_expanded)`` on whatever estimator they chose. ``assemble_dist``
-  packs raw per-(row, bracket) predictions back into a row-renormalised
+- Model fitting is plain sklearn. The caller calls ``.fit(X_expanded,
+  y_expanded)`` on whatever estimator was chosen. ``assemble_dist`` packs raw
+  per-(row, bracket) predictions back into a row-renormalised
   ``BracketForecast``.
 
 API shape
@@ -35,11 +35,11 @@ API shape
 
     expander = BracketExpander(brackets_by_id={...})
 
-    # Train: expand X, get the default bracket-hit target, fit any estimator.
+    # Train. Expand X, take the default bracket-hit target, fit any estimator.
     X_expanded, y_expanded = expander.fit_transform(X, y, ids=train_ids)
     clf = LGBMClassifier().fit(X_expanded, y_expanded)
 
-    # Predict: expand X only, score, assemble back to a dist.
+    # Predict. Expand X only, score, then assemble back to a dist.
     X_pred_expanded, _ = expander.transform(X_pred, ids=pred_ids)
     scores = clf.predict_proba(X_pred_expanded)[:, 1]
     dist = expander.assemble_dist(scores, ids=pred_ids, timestamps=...)
@@ -74,34 +74,34 @@ from bracketlearn.trainers._common import (
 class BracketExpander:
     """Per-row ↔ per-(row, bracket) transformer.
 
-    Stores the per-id edge ladders and exposes:
+    Stores the per-id edge ladders and exposes three methods.
 
-    - ``fit_transform(X, y, *, ids)`` → ``(X_expanded, y_expanded)``.
-      ``X_expanded`` is ``(M, F + 2)``: each original row ``i`` becomes
-      ``B_i`` rows of ``[X_i..., lo_b, hi_b]``, where ``M = Σ B_i``.
-      ``y_expanded`` is the default bracket-hit target ``1[y_i ∈ bracket_b]``,
-      shape ``(M,)``; pass ``y=None`` to get only ``X_expanded`` back.
+    - ``fit_transform(X, y, *, ids)`` returns ``(X_expanded, y_expanded)``.
+      ``X_expanded`` has shape ``(M, F + 2)``, since each original row ``i``
+      becomes ``B_i`` rows of ``[X_i..., lo_b, hi_b]``, where ``M = Σ B_i``.
+      ``y_expanded`` is the default bracket-hit target ``1[y_i ∈ bracket_b]``
+      of shape ``(M,)``. Pass ``y=None`` to get only ``X_expanded`` back.
 
-    - ``transform(X, *, ids)`` → ``(X_expanded, None)``. Predict-side
-      counterpart; never returns a target.
+    - ``transform(X, *, ids)`` returns ``(X_expanded, None)``. This is the
+      predict-side counterpart and never returns a target.
 
     - ``assemble_dist(predictions, *, ids, timestamps, name=..., clip_eps=...)``
-      → ``DistributionForecast``. Inverse of ``transform`` on the
-      prediction side: per-row clip + renormalise + pack into a
-      ``BracketForecast`` whose ``edges`` and ``probs`` match the ids'
+      returns a ``DistributionForecast``. It inverts ``transform`` on the
+      prediction side by clipping and renormalising per row, then packing into
+      a ``BracketForecast`` whose ``edges`` and ``probs`` match the ids'
       ladders.
 
-    State is captured at construction: ``brackets_by_id`` is the
-    authoritative dict. ``fit_transform`` does *not* mutate it, callers
-    that need to add per-row ladders at predict time should construct
-    a new expander or mutate the dict directly before calling
-    ``transform`` / ``assemble_dist``.
+    State is captured at construction, where ``brackets_by_id`` is the
+    authoritative dict. ``fit_transform`` does not mutate it. A caller needing
+    to add per-row ladders at predict time should construct a new expander, or
+    mutate the dict directly before calling ``transform`` or
+    ``assemble_dist``.
 
     Output X column layout
     ----------------------
-    ``[X_0, X_1, ..., X_{F-1}, lo, hi]``, original features first, then
-    the two bracket-bound columns. Callers extending the feature set
-    (e.g. with ``market_p``) should append AFTER ``hi``::
+    ``[X_0, X_1, ..., X_{F-1}, lo, hi]``, with the original features first and
+    then the two bracket-bound columns. A caller extending the feature set,
+    with ``market_p`` for instance, should append after ``hi``::
 
         X_expanded, _ = expander.fit_transform(X, ids=ids)
         extras = build_extras(...)             # shape (M, E)
@@ -184,7 +184,7 @@ class BracketExpander:
                 y_expanded[int(self.offsets_[i]) + k] = 1.0
         return X_expanded, y_expanded
 
-    # ----- inverse: assemble per-row dist from per-(row, bracket) preds ----
+    # ----- inverse, assembling a per-row dist from per-(row, bracket) preds --
 
     def assemble_dist(
         self,

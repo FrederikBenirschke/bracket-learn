@@ -1,25 +1,26 @@
 """GridSearch over a QuantileReg pipeline on California housing.
 
-The underlying is the California house value. As in the other examples we model
-its full predictive distribution and price brackets over it; see
-``housing_brackets.py`` for that framing. This script's focus is the search:
-sweeping a small 2-D grid of LightGBM hyperparameters with bracketlearn's own
-time-aware CV inside each grid point (sklearn's ``GridSearchCV`` would break
-time ordering, see ``bracketlearn.search``).
+The underlying is the California house value. As in the other examples, its
+full predictive distribution is modelled and brackets are priced over it. See
+``housing_brackets.py`` for that framing. This script's focus is the search
+itself, sweeping a small 2-D grid of LightGBM hyperparameters with
+bracketlearn's own time-aware CV inside each grid point. Sklearn's
+``GridSearchCV`` would break time ordering, for which see
+``bracketlearn.search``.
 
 Run::
 
     conda run -n weathermarkets python -m bracketlearn.examples.grid_search_demo
 
-What this script demonstrates:
+This script demonstrates the following.
 
 - ``GridSearch`` over a (model graph, WalkForward) pair with two node-level
-  params (``qreg__n_estimators`` and ``qreg__learning_rate``) using sklearn's
-  ``__``-nested syntax.
-- The result table sorted by CRPS so you see the whole landscape, not just the
-  winner.
-- ``best_wf_`` is a fitted ``WalkForward`` (refit_on_full=True) ready for
-  ``.predict()`` on new rows, with no extra refit needed.
+  parameters, ``qreg__n_estimators`` and ``qreg__learning_rate``, using
+  sklearn's ``__``-nested syntax.
+- The result table sorted by CRPS, showing the whole landscape rather than the
+  winner alone.
+- ``best_wf_``, a fitted ``WalkForward`` with refit_on_full=True, ready for
+  ``.predict()`` on new rows with no extra refit needed.
 """
 
 from __future__ import annotations

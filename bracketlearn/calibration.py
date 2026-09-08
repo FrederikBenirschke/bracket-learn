@@ -1,4 +1,4 @@
-"""A calibration SUITE. var(PIT) alone cannot diagnose a forecast.
+"""A calibration suite. var(PIT) alone cannot diagnose a forecast.
 
 var(PIT) is one number summarising a whole histogram, and it is blind to
 most of the ways a predictive distribution goes wrong. Three concrete
@@ -12,58 +12,58 @@ failures it cannot see:
   them, and ``tail_left``/``tail_right`` say by how much.
 * **Bimodality.** A mixture that is too wide in the body and too narrow in
   the tails can average out to a neutral variance while fitting neither.
-  ``pit_ks`` and the reliability curve catch it; the variance does not.
+  ``pit_ks`` and the reliability curve catch it, and the variance does not.
 
-So var(PIT) belongs in a suite, never on its own. This module computes the
-suite on a family-agnostic interface: the caller supplies a CDF, so a
-Gaussian, Student-t or mixture forecast all report the same columns.
+var(PIT) therefore belongs in a suite rather than standing alone. This
+module computes the suite on a family-agnostic interface. The caller
+supplies a CDF, so a Gaussian, Student-t or mixture forecast all report the
+same columns.
 
 The three axes, and why all three are needed
 --------------------------------------------
-A forecast is only useful if it is calibrated AND sharp AND accurate, and
-these trade off:
+A forecast is useful only if it is calibrated, sharp and accurate at once,
+and these trade off against each other.
 
 1. **Calibration** (``pit_*``, ``reliability_mae``, ``coverage_*``): are
    the stated probabilities honest? A climatological forecast is perfectly
    calibrated and worthless.
 2. **Sharpness** (``rmv``, ``sharpness_iqr``): how concentrated is the
-   distribution? Measured WITHOUT reference to the outcome: sharpness is a
-   property of the forecast alone, which is why it cannot be optimised on
-   its own.
+   distribution? Sharpness is measured without reference to the outcome.
+   It is a property of the forecast alone and cannot be optimised alone.
 3. **Accuracy** (``crps``, ``log_score``): proper scores, which reward
    calibration and sharpness jointly. Report these as the summary, and the
-   diagnostics above to explain WHY a score moved.
+   diagnostics above to explain why a score moved.
 
 Discrete outcomes
 -----------------
 ``grid_step`` handles settlement on a grid. NWS CLI reports an integer °F,
 so a continuous CDF evaluated at the realized value is not the Rosenblatt
-PIT: uniformity needs a continuous Y as well as a continuous F. Passing
-``grid_step=1.0`` switches to the mid-interval (continuity-corrected) form
+PIT. Uniformity needs a continuous Y as well as a continuous F. Passing
+``grid_step=1.0`` switches to the mid-interval, continuity-corrected form
 
     F(y − h) + ½·[F(y + h) − F(y − h)],   h = grid_step/2
 
-which is the DETERMINISTIC analogue of the randomised PIT, not the
-randomised PIT itself: no RNG, so it cannot smear an outcome across its
-cell. That distinction is load-bearing here: the randomised form shifted
-the mean +0.093…+0.111 on every model over 85,250 forecasts (2026-09-02),
-which is why this repo bans it.
+which is the deterministic analogue of the randomised PIT rather than the
+randomised PIT itself. It uses no random number generator and so cannot
+smear an outcome across its cell. The distinction matters here. The
+randomised form shifted the mean +0.093…+0.111 on every model over 85,250
+forecasts (2026-09-02), and this repo bans it for that reason.
 
 Reading the numbers
 -------------------
 
 ::
 
-    pit_mean      0.5 neutral. BELOW 0.5 means the forecast runs HIGH
+    pit_mean      0.5 neutral. Below 0.5 means the forecast runs high
                   (the outcome falls low in its distribution).
-    pit_var       Compare against ``pit_var_neutral``, NOT against 1/12: on
-                  a discrete outcome the calibrated value is strictly below
-                  1/12. BELOW neutral = overdispersed (intervals too wide,
-                  hump-shaped histogram); ABOVE = underdispersed (too
-                  narrow, U-shaped). ``pit_var_excess`` is the signed gap
-                  and is the column to read.
+    pit_var       Compare against ``pit_var_neutral`` rather than against
+                  1/12. On a discrete outcome the calibrated value is
+                  strictly below 1/12. Below neutral is overdispersed
+                  (intervals too wide, hump-shaped histogram), and above is
+                  underdispersed (too narrow, U-shaped). ``pit_var_excess``
+                  is the signed gap and is the column to read.
     pit_skew      0 neutral. Signs which tail carries the excess.
-    pit_ks        0 is perfect. KS distance of the PIT from uniform: an
+    pit_ks        0 is perfect. KS distance of the PIT from uniform, an
                   omnibus check that catches shapes the moments miss.
     reliability_mae
                   0 is perfect. Mean abs(empirical - nominal) coverage over
@@ -87,32 +87,33 @@ __all__ = [
     "NEUTRAL_PIT_VAR",
 ]
 
-# Neutral var(PIT) for a CONTINUOUS outcome: Var[U(0,1)] = 1/12.
+# Neutral var(PIT) for a continuous outcome, Var[U(0,1)] = 1/12.
 NEUTRAL_PIT_VAR = 1.0 / 12.0
 
 
 def neutral_pit_var(cell_probs: np.ndarray | None = None) -> float:
     """The var(PIT) a perfectly calibrated forecast actually attains.
 
-    For a continuous outcome this is 1/12. For an outcome on a GRID it is
+    For a continuous outcome this is 1/12. For an outcome on a grid it is
     strictly less, and comparing a discrete PIT against 1/12 manufactures a
     spurious "overdispersed" verdict.
 
-    The mid-interval PIT of a calibrated forecast is not Uniform(0,1): it can
+    The mid-interval PIT of a calibrated forecast is not Uniform(0,1). It can
     only take the value at the centre of each cell's probability mass, so the
-    within-cell spread that a continuous PIT would have is missing. Writing
-    p_i for the probability the forecast puts on the cell the outcome landed
-    in, the exact result is
+    within-cell spread a continuous PIT would have is missing. Write p_i for
+    the probability the forecast puts on the cell the outcome landed in. The
+    exact result is then
 
         Var[PIT_mid] = 1/12 - E[p^2]/12
 
     Verified against simulation (1M rows, integer settlement, Gaussian
     forecast) to within 8e-5 at sigma = 1, 2, 3, 4.
 
-    This is why the naive PIT can look "closer to 1/12" than the corrected
-    one while being the wrong quantity: the naive form is biased UP, the
-    correct target is biased DOWN, and the two errors are confused for each
-    other. Measured at grid step 1 degF, against the true continuous 0.0833:
+    The naive PIT can therefore look closer to 1/12 than the corrected one
+    while being the wrong quantity. The naive form is biased upward and the
+    correct target is biased downward, and the two errors are easily confused
+    for each other. Measured at grid step 1 degF, against the true continuous
+    0.0833:
 
         sigma   naive    mid-interval   correct target (1/12 - E[p^2]/12)
         1.0    0.0870        0.0762                              0.0763
@@ -121,9 +122,9 @@ def neutral_pit_var(cell_probs: np.ndarray | None = None) -> float:
         4.0    0.0834        0.0827                              0.0829
 
     The mid-interval column matches its own target to 3 decimal places at
-    every sigma; the naive column matches nothing.
+    every sigma. The naive column matches nothing.
 
-    Pass the per-row cell probabilities to get the right reference; pass
+    Pass the per-row cell probabilities to get the right reference, or pass
     nothing for the continuous case.
     """
     if cell_probs is None:
@@ -133,10 +134,9 @@ def neutral_pit_var(cell_probs: np.ndarray | None = None) -> float:
         raise ValueError("neutral_pit_var: empty cell_probs")
     return float(NEUTRAL_PIT_VAR * (1.0 - np.mean(p ** 2)))
 
-# Central-interval levels the reliability curve is evaluated on. Chosen to
-# span the range a reader cares about rather than to be dense: a finer grid
-# does not add information, because neighbouring levels are near-perfectly
-# correlated.
+# Central-interval levels the reliability curve is evaluated on. They span
+# the range a reader cares about rather than being dense. A finer grid adds
+# no information, because neighbouring levels are near-perfectly correlated.
 _RELIABILITY_LEVELS = (0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99)
 
 
@@ -149,10 +149,10 @@ def pit_values(
     """PIT values, continuity-corrected when the outcome lives on a grid.
 
     ``cdf`` maps thresholds to P(Y <= threshold) under the row's predictive
-    distribution: the caller closes over μ, σ and the family, so this works
+    distribution. The caller closes over μ, σ and the family, so this works
     for any distribution without a family switch here.
 
-    ``grid_step`` is the outcome's resolution (1.0 for integer °F). ``None``
+    ``grid_step`` is the outcome's resolution, 1.0 for integer °F. ``None``
     means a genuinely continuous outcome and uses the plain F(y).
     """
     y = np.asarray(y, dtype=float)
@@ -187,7 +187,7 @@ def calibration_suite(
     grid_step: float | None = None,
     crps: np.ndarray | None = None,
 ) -> dict[str, float]:
-    """Calibration + sharpness + accuracy for one set of predictions.
+    """Calibration, sharpness and accuracy for one set of predictions.
 
     Parameters
     ----------
@@ -197,16 +197,16 @@ def calibration_suite(
         Realized outcomes.
     sd
         Per-row predictive standard deviation, for sharpness. For a
-        Student-t this must be σ√(ν/(ν−2)), NOT the scale: passing the
-        scale understates dispersion and is the trap this argument is named
-        ``sd`` to avoid.
+        Student-t this must be σ√(ν/(ν−2)) rather than the scale. Passing the
+        scale understates dispersion, and the argument is named ``sd`` to
+        make that harder to do.
     quantile
         ``levels -> value`` per row, used for coverage and the reliability
         curve. Without it those columns are omitted rather than
-        approximated: a Gaussian-shaped guess at a t's quantiles would be a
+        approximated. A Gaussian-shaped guess at a t's quantiles would be a
         silent fallback (Rule #0.5).
     grid_step
-        Outcome resolution; see ``pit_values``.
+        Outcome resolution. See ``pit_values``.
     crps
         Per-row CRPS if the caller has a closed form for its family. Omitted
         rather than approximated when absent.
@@ -228,8 +228,8 @@ def calibration_suite(
     if y.size < 2:
         raise ValueError("calibration_suite: need >=2 rows")
 
-    # Cell probabilities are needed twice: for the discrete log score, and
-    # for the neutral var(PIT) reference. Compute once.
+    # Cell probabilities are needed twice, for the discrete log score and
+    # for the neutral var(PIT) reference. They are computed once.
     cell = None
     if grid_step is not None:
         h = grid_step / 2.0
@@ -249,7 +249,7 @@ def calibration_suite(
     v = float(np.var(u))
     sdv = float(np.std(u))
 
-    # The calibrated target, which is BELOW 1/12 whenever the outcome is on
+    # The calibrated target, which is below 1/12 whenever the outcome is on
     # a grid. Reading pit_var against 1/12 on discrete data invents an
     # overdispersion that is an artifact of the grid.
     neutral = neutral_pit_var(cell)
@@ -259,22 +259,23 @@ def calibration_suite(
         "pit_mean": m,
         "pit_var": v,
         "pit_var_neutral": neutral,
-        # Signed gap: negative = overdispersed, positive = underdispersed.
-        # This is the column to read; pit_var alone needs its reference.
+        # Signed gap. Negative is overdispersed and positive is
+        # underdispersed. This is the column to read, since pit_var alone
+        # needs its reference.
         "pit_var_excess": v - neutral,
-        # Skew of the PIT: which side of the distribution carries the excess.
-        # Zero for any symmetric miscalibration, which is exactly why it adds
+        # Skew of the PIT, saying which side of the distribution carries the
+        # excess. It is zero for any symmetric miscalibration, and so adds
         # information var(PIT) does not have.
         "pit_skew": (float(np.mean(((u - m) / sdv) ** 3)) if sdv > 0 else 0.0),
         "pit_ks": _ks_uniform(u),
         # Tail masses. A calibrated forecast puts 5% of outcomes below its
-        # 5th percentile and 5% above its 95th. These say WHICH tail is wrong,
-        # which the variance cannot.
+        # 5th percentile and 5% above its 95th. These say which tail is
+        # wrong, which the variance cannot.
         "tail_left": float(np.mean(u < 0.05)),
         "tail_right": float(np.mean(u > 0.95)),
     }
 
-    # Log score on the DISCRETE cell probability when the outcome is on a
+    # Log score on the discrete cell probability when the outcome is on a
     # grid. This is comparable across distribution families, unlike a
     # density, whose units depend on the family's parameterisation.
     if cell is not None:
@@ -290,7 +291,7 @@ def calibration_suite(
             )
         if not np.all(np.isfinite(s)) or np.any(s <= 0):
             raise ValueError("calibration_suite: sd must be finite and positive")
-        # Root mean variance: the paper's sharpness column (Table 11).
+        # Root mean variance, the paper's sharpness column (Table 11).
         out["rmv"] = float(np.sqrt(np.mean(s ** 2)))
 
     if quantile is not None:
@@ -305,15 +306,15 @@ def calibration_suite(
                 out["coverage_50"] = emp
             elif abs(lvl - 0.90) < 1e-9:
                 out["coverage_90"] = emp
-        # Mean |empirical - nominal| over the whole reliability curve: one
-        # number for "are the intervals right", robust to a single level
+        # Mean |empirical - nominal| over the whole reliability curve. It is
+        # one number for "are the intervals right", robust to a single level
         # happening to land well.
         out["reliability_mae"] = float(np.mean(errs))
         q25 = np.asarray(quantile(np.full(n, 0.25)), dtype=float)
         q75 = np.asarray(quantile(np.full(n, 0.75)), dtype=float)
-        # Sharpness measured WITHOUT the outcome: a property of the forecast
-        # alone. Distribution-free, so it compares across families where RMV
-        # (which needs a finite variance) cannot.
+        # Sharpness measured without the outcome, a property of the forecast
+        # alone. It is distribution-free, so it compares across families
+        # where RMV, which needs a finite variance, cannot.
         out["sharpness_iqr"] = float(np.mean(q75 - q25))
 
     if crps is not None:

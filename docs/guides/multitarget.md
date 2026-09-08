@@ -1,7 +1,7 @@
 # Multi-target
 
-For `Y` of shape `(N, M)`, wrap a single-target model + its `WalkForward`
-driver in `MultiOutput`:
+For `Y` of shape `(N, M)`, wrap a single-target model and its `WalkForward`
+driver in `MultiOutput`.
 
 ```python
 from bracketlearn import MultiOutput, Pipeline, WalkForward
@@ -30,8 +30,8 @@ pervasive complexity. For joint modelling, write a single trainer that consumes
 `(N, M)` y and run it under an ordinary `WalkForward`.
 
 `predict()` on the multi-target wrapper returns
-`{target_name: {stage_name: DistributionForecast}}` (requires the
-`WalkForward` to have `refit_on_full=True`):
+`{target_name: {stage_name: DistributionForecast}}`. This requires the
+`WalkForward` to have `refit_on_full=True`.
 
 ```python
 preds = mt.predict(X_new, ids=new_ids, timestamps=new_ts)

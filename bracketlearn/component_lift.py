@@ -1,8 +1,8 @@
 """Turn raw point forecasts into per-component predictive distributions.
 
 This is step 0 of Gneiting & Ranjan, "Combining Predictive Distributions"
-(EJS 7:1747-1782, 2013), §4.2: the step that happens BEFORE any pooling
-formula runs, and the step this repo currently skips.
+(EJS 7:1747-1782, 2013), §4.2. It is the step that runs before any pooling
+formula, and the step this repo currently skips.
 
 Their procedure, verbatim from §4.2:
 
@@ -13,63 +13,65 @@ Their procedure, verbatim from §4.2:
     to fit, for each ensemble member i = 1, …, 8 individually, a Gaussian
     predictive density of the form  f_i = N(a_i + b_i x_ij, σ_i²).
 
-Three fitted parameters per member: intercept a_i, SLOPE b_i, and the
-member's OWN scale σ_i. On their data σ̂_i ranged 1.958–2.214: a 13%
-spread, and those differences survive into the pool, because every
-combination formula (TLP/SLP/BLP/BMA) reads the component CDFs F_i.
+Three parameters are fitted per member, the intercept a_i, the slope b_i,
+and the member's own scale σ_i. On their data σ̂_i ranged 1.958–2.214, a
+13% spread. Those differences survive into the pool, because every
+combination formula (TLP, SLP, BLP, BMA) reads the component CDFs F_i.
 
 Why this matters here, and how it differs from what the repo does
 -----------------------------------------------------------------
-``_meteo_features.add_skill_blend`` combines 10 vendors as POINTS:
+``_meteo_features.add_skill_blend`` combines 10 vendors as points:
 
     dbf_v = x_v + bias_v                      # additive EWMA shift only
     w_v   ∝ 1 / max(recent_var_v, 0.05)²
-    blend = Σ w_v·dbf_v / Σ w_v               # ONE number
+    blend = Σ w_v·dbf_v / Σ w_v               # a single number
 
-then a single downstream EMOS lifts that one number with one σ head. So
-the vendor-level combination happens in temperature space, upstream of any
-distribution existing, and three things are structurally unreachable:
+A single downstream EMOS then lifts that one number with one σ head. The
+vendor-level combination therefore happens in temperature space, upstream
+of any distribution existing, and three things are structurally
+unreachable.
 
-1. **Slope.** The de-bias is additive, so a vendor whose forecast
-   AMPLITUDE is miscalibrated (systematically over- or under-reacting)
-   cannot be corrected: only shifted.
+1. **Slope.** The de-bias is additive. A vendor whose forecast amplitude
+   is miscalibrated, systematically over-reacting or under-reacting,
+   cannot be corrected, only shifted.
 
-2. **Per-vendor scale.** ``recent_var_v`` IS a per-vendor variance
+2. **Per-vendor scale.** ``recent_var_v`` is a per-vendor variance
    estimate, already computed per station and EWMA'd. It is spent
-   entirely on ranking vendors in the weight and then discarded; it never
-   becomes a σ. One blend-level σ from ``ens_std`` cannot express that
-   HRRR is sharp and GEFS diffuse on a given row.
+   entirely on ranking vendors in the weight and then discarded, and it
+   never becomes a σ. One blend-level σ from ``ens_std`` cannot express
+   that HRRR is sharp and GEFS diffuse on a given row.
 
 3. **Correlated vendors.** ``1/recent_var²`` is computed per vendor in
-   ISOLATION: there is no covariance term, so it cannot down-weight a
+   isolation. There is no covariance term, so it cannot down-weight a
    redundant vendor. The paper's Table 10 zeroes ETA (w = 0.000) precisely
    because it shares an institutional origin with GFS. The same structure
-   exists here: nws_hourly/nbm are both NWS, hrrr/gefs_p50 both NCEP. A
-   FITTED pool over components can zero one; a per-vendor precision weight
-   cannot.
+   exists here, since nws_hourly and nbm are both NWS, and hrrr and
+   gefs_p50 are both NCEP. A fitted pool over components can zero one, and
+   a per-vendor precision weight cannot.
 
 None of that makes precision weighting wrong. For unbiased, independent
-estimators with known variances, w ∝ 1/σ² IS the efficient linear
-combination, and the registry records that it beat AdaHedge/Hedge here
-with a stated mechanism (vendors are correlated stochastic estimators, not
-adversarial experts). This module does not replace it: it enables the
-comparison the repo cannot currently make.
+estimators with known variances, w ∝ 1/σ² is the efficient linear
+combination, and the registry records that it beat AdaHedge and Hedge here
+with a stated mechanism, namely that vendors are correlated stochastic
+estimators rather than adversarial experts. This module does not replace
+it. It enables the comparison the repo cannot currently make.
 
 Relation to the rest of bracketlearn
 ------------------------------------
-``AffineNormal`` implements the ``Lifter`` protocol shape (point → dist)
-but fits MANY components at once, so it takes arrays rather than a single
-``PointForecast``. Its output feeds ``bracketlearn.pool``: once each
-vendor is an N(μ_v, σ_v), every formula there applies: including SLP and
-BMA, which need per-component moments and therefore cannot run on the
-PMF-only experts the repo currently pools.
+``AffineNormal`` implements the ``Lifter`` protocol shape, mapping a point
+to a distribution, but it fits many components at once and so takes arrays
+rather than a single ``PointForecast``. Its output feeds
+``bracketlearn.pool``. Once each vendor is an N(μ_v, σ_v), every formula
+there applies, including SLP and BMA, which need per-component moments and
+therefore cannot run on the PMF-only experts the repo currently pools.
 
-Note which Pipeline branch this belongs to: the LIFTER path is the one
-that is genuinely out-of-fold (fit on ``[:half]``, predict ``[half:]``,
-then refit). The CALIBRATOR path calls ``_core_predict_dist`` on rows the
-core model was already fitted on. A component lift is a Lifter, so it does
-not inherit that problem, but callers still own the split, and ``fit``
-must be handed rows the components did not train on.
+The Pipeline branch this belongs to matters. The lifter path is the one
+that is genuinely out-of-fold, fitting on ``[:half]``, predicting
+``[half:]``, and then refitting. The calibrator path calls
+``_core_predict_dist`` on rows the core model was already fitted on. A
+component lift is a Lifter and so does not inherit that problem, but
+callers still own the split, and ``fit`` must be handed rows the
+components did not train on.
 """
 
 from __future__ import annotations
@@ -90,18 +92,19 @@ FitMethod = Literal["mle", "ols_resid", "crps"]
 DistForm = Literal["normal", "student_t"]
 
 # Student-t degrees of freedom are searched on this grid rather than
-# optimised continuously. The log-likelihood in nu is very flat above ~15:
-# t_30 and t_60 are visually indistinguishable from a normal, so a fitted
-# real-valued nu reports spurious precision. The grid ends at 60 and the
-# fitter reports "normal-like" there rather than pretending to resolve it.
+# optimised continuously. The log-likelihood in nu is very flat above ~15,
+# where t_30 and t_60 are visually indistinguishable from a normal, so a
+# fitted real-valued nu would report spurious precision. The grid ends at 60
+# and the fitter reports "normal-like" there rather than resolving further.
 _NU_GRID = (2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 15.0, 20.0, 30.0, 60.0)
 
 # Minimum finite (x, y) pairs before a component's parameters mean anything.
 # Below this the slope is noise and σ is dominated by a handful of rows.
 _MIN_COMPONENT_ROWS = 30
-# Floor on any fitted scale, in the target's units (°F here). Prevents a
-# component that happens to fit its training slice exactly from producing a
-# near-degenerate density that then dominates every pool it enters.
+# Floor on any fitted scale, in the target's units, which are °F here. It
+# prevents a component that happens to fit its training slice exactly from
+# producing a near-degenerate density that then dominates every pool it
+# enters.
 _SIGMA_FLOOR = 1e-3
 
 
@@ -116,16 +119,17 @@ class ComponentFit:
     n_rows: int
     coverage: float          # fraction of rows where this component reported
     converged: bool = True
-    # Student-t only. ``sigma`` stays the SCALE parameter, never the standard
-    # deviation: for t_nu the SD is sigma*sqrt(nu/(nu-2)), which is larger, and
-    # is undefined at nu<=2. Anything comparing dispersion across dist families
-    # must call ``sd`` rather than reading ``sigma``.
+    # Student-t only. ``sigma`` stays the scale parameter and is never the
+    # standard deviation. For t_nu the standard deviation is
+    # sigma*sqrt(nu/(nu-2)), which is larger, and it is undefined at nu<=2.
+    # Anything comparing dispersion across dist families should call ``sd``
+    # rather than reading ``sigma``.
     nu: float | None = None
     dist: DistForm = "normal"
 
     @property
     def sd(self) -> float:
-        """Predictive standard deviation: comparable across dist families."""
+        """Predictive standard deviation, comparable across dist families."""
         if self.dist == "normal":
             return self.sigma
         if self.nu is None:
@@ -139,64 +143,68 @@ class ComponentFit:
         """nu low enough that the t is materially not a normal.
 
         At nu=15 the excess kurtosis is 6/(nu-4) = 0.55 and the 99th
-        percentile differs from the normal's by ~4%; the grid's top end
-        (nu=60) is a normal for every practical purpose.
+        percentile differs from the normal's by ~4%. At the grid's top end,
+        nu=60, the t is a normal for every practical purpose.
         """
         return self.dist == "student_t" and self.nu is not None and self.nu <= 15.0
 
     @property
     def is_amplitude_miscalibrated(self) -> bool:
-        """Slope far from 1: the failure an additive de-bias cannot fix.
+        """Slope far from 1, the failure an additive de-bias cannot fix.
 
-        b < 1 means the component over-reacts (its deviations from the mean
-        are too large and get shrunk); b > 1 means it under-reacts.
+        A slope b < 1 means the component over-reacts, so its deviations from
+        the mean are too large and get shrunk. A slope b > 1 means it
+        under-reacts.
         """
         return abs(self.slope - 1.0) > 0.15
 
 
 @dataclass(repr=False)
 class AffineNormal(BaseEstimator):
-    """Per-component Gaussian lift: ``f_i = N(a_i + b_i·x_i, σ_i²)``.
+    """Per-component Gaussian lift, ``f_i = N(a_i + b_i·x_i, σ_i²)``.
 
-    Fits each component independently on the rows where that component
-    reported, which is the practical departure from the paper: their 8
-    ensemble members always report, whereas vendor coverage here ranges
-    from 3% to 93% missing. A component is fitted on its own finite rows and
-    carries its ``coverage``; rows where it is silent yield NaN moments and
-    the caller (or the pool) drops it for that row: never an imputed value
-    standing in for a forecast (Rule #0.5).
+    Each component is fitted independently on the rows where that component
+    reported. This is the practical departure from the paper, whose 8
+    ensemble members always report, whereas vendor coverage here ranges from
+    3% to 93% missing. A component is fitted on its own finite rows and
+    carries its ``coverage``. Rows where it is silent yield NaN moments, and
+    the caller or the pool drops it for that row. No imputed value ever
+    stands in for a forecast (Rule #0.5).
 
     Parameters
     ----------
     bias
-        ``"affine"`` fits intercept and slope (the paper). ``"shift"`` fits
-        intercept only with slope pinned at 1: the form
-        ``add_skill_blend`` currently uses, kept so the two are comparable
-        under one estimator. ``"none"`` passes the raw point through.
+        ``"affine"`` fits intercept and slope, as in the paper. ``"shift"``
+        fits the intercept alone with the slope pinned at 1. That is the form
+        ``add_skill_blend`` currently uses, kept here so the two are
+        comparable under one estimator. ``"none"`` passes the raw point
+        through.
     scale
-        ``"per_component"`` gives each component its own σ_i (the paper).
-        ``"shared"`` fits one σ across all components: Raftery et al.
-        (2005) / BMA eq. (12), and the reason BMA and SLP coincide: the
-        ratio σ_shared/σ_i is SLP's spread adjustment c by another route.
-        ``"conditional"`` regresses log σ on a supplied per-row covariate,
-        so spread can vary by row rather than only by component.
+        ``"per_component"`` gives each component its own σ_i, as in the
+        paper. ``"shared"`` fits one σ across all components, following
+        Raftery et al. (2005) and BMA eq. (12). This is also the reason BMA
+        and SLP coincide, since the ratio σ_shared/σ_i is SLP's spread
+        adjustment c by another route. ``"conditional"`` regresses log σ on a
+        supplied per-row covariate, so spread can vary by row rather than
+        only by component.
     dist
         ``"normal"`` is the paper's step 0. ``"student_t"`` replaces the
         Gaussian with a scaled t_ν, fitting ν jointly with the scale on
-        ``_NU_GRID``. The paper had no reason to reach for it: their
-        components were members of ONE ensemble over 8 near-exchangeable
-        NWP runs, but vendor residuals here mix provider outages, station
-        siting and occasional gross errors, which is exactly the generating
-        story that produces heavy tails. Note ``sigma`` is then the SCALE,
-        not the SD; use ``ComponentFit.sd`` to compare dispersion across
-        families.
+        ``_NU_GRID``. The paper had no reason to reach for it, as its
+        components were members of a single ensemble over 8
+        near-exchangeable NWP runs. Vendor residuals here instead mix
+        provider outages, station siting and occasional gross errors, which
+        is the generating story that produces heavy tails. Under this option
+        ``sigma`` is the scale rather than the standard deviation. Use
+        ``ComponentFit.sd`` to compare dispersion across families.
     fit_method
-        ``"mle"`` is the paper's (for a Gaussian with fixed mean form this
-        coincides with least squares plus the ML residual scale).
-        ``"ols_resid"`` fits the mean by OLS then takes the residual SD
-        with n-2 dof: the same point estimate, an unbiased scale.
-        ``"crps"`` minimises the closed-form Gaussian CRPS, which is less
-        sensitive to a few large residuals than the log score.
+        ``"mle"`` is the paper's. For a Gaussian with a fixed mean form it
+        coincides with least squares plus the ML residual scale.
+        ``"ols_resid"`` fits the mean by OLS and then takes the residual
+        standard deviation with n-2 degrees of freedom, giving the same point
+        estimate with an unbiased scale. ``"crps"`` minimises the closed-form
+        Gaussian CRPS, which is less sensitive to a few large residuals than
+        the log score.
     """
 
     bias: BiasForm = "affine"
@@ -284,7 +292,8 @@ class AffineNormal(BaseEstimator):
                 for f in fits
             ]
         elif self.scale == "conditional":
-            # Guarded at the top of fit: scale='conditional' requires z.
+            # Guarded at the top of fit, where scale='conditional'
+            # requires z.
             assert z is not None
             self.cond_coef_ = self._fit_conditional_scale(Xa, ya, fits, z)
 
@@ -296,15 +305,16 @@ class AffineNormal(BaseEstimator):
         if self.bias == "none":
             return 0.0, 1.0
         if self.bias == "shift":
-            # Slope pinned at 1; the intercept is the mean signed error.
+            # Slope pinned at 1, so the intercept is the mean signed error.
             # This is add_skill_blend's form, expressed in the same object.
             return float(np.mean(y - x)), 1.0
-        # affine: least squares, which for Gaussian errors is also the MLE
-        # of the mean parameters regardless of the scale treatment.
+        # The affine form is least squares, which for Gaussian errors is
+        # also the maximum likelihood estimate of the mean parameters,
+        # whatever the scale treatment.
         var = float(np.var(x))
         if var <= 0:
-            # A constant component carries no slope information; fall back to
-            # a shift rather than dividing by zero.
+            # A constant component carries no slope information, so a shift
+            # is used rather than a division by zero.
             return float(np.mean(y - x)), 1.0
         b = float(np.cov(x, y, bias=True)[0, 1] / var)
         a = float(np.mean(y) - b * np.mean(x))
@@ -315,7 +325,7 @@ class AffineNormal(BaseEstimator):
     ) -> tuple[float, float | None]:
         """Scale, and for Student-t the degrees of freedom alongside it.
 
-        Dispatches on ``self.dist`` so callers never branch. Returns
+        Dispatch is on ``self.dist`` so that callers never branch. Returns
         ``(sigma, None)`` for a normal and ``(scale, nu)`` for a t.
         """
         if self.dist == "normal":
@@ -325,22 +335,23 @@ class AffineNormal(BaseEstimator):
     def _fit_scale_student_t(
         self, resid: np.ndarray,
     ) -> tuple[float, float]:
-        """Joint (scale, ν) MLE for centred residuals under a scaled t_ν.
+        """Joint (scale, ν) maximum likelihood fit for centred residuals
+        under a scaled t_ν.
 
-        ν is profiled over ``_NU_GRID`` rather than optimised: for each
-        candidate ν the conditional scale MLE is found by EM, and the ν with
-        the best log-likelihood wins. The likelihood in ν is flat at the top
-        of the grid, so a continuous optimiser would return a precise-looking
-        number that the data does not support.
+        ν is profiled over ``_NU_GRID`` rather than optimised. For each
+        candidate ν the conditional scale is fitted by EM, and the ν with the
+        best log-likelihood wins. The likelihood in ν is flat at the top of
+        the grid, so a continuous optimiser would return a precise-looking
+        number the data does not support.
 
-        The EM step is the standard Gaussian-scale-mixture one: t_ν is
-        N(0, σ²/w) with w ~ Gamma(ν/2, ν/2), so
+        The EM step is the standard Gaussian-scale-mixture one. Since t_ν is
+        N(0, σ²/w) with w ~ Gamma(ν/2, ν/2),
 
             E[w_i | r_i] = (ν + 1) / (ν + r_i²/σ²)
             σ² ← mean(E[w_i] · r_i²)
 
-        which is monotone in the likelihood and needs no derivatives. Note
-        this downweights large residuals, which is the whole point: an MLE
+        which is monotone in the likelihood and needs no derivatives. The
+        update downweights large residuals by design. A maximum likelihood
         normal σ is dragged up by the tail, and that inflated σ is one
         candidate explanation for the overdispersion this module measures.
         """
@@ -395,11 +406,12 @@ class AffineNormal(BaseEstimator):
         return max(s, self.sigma_floor)
 
     def _fit_scale_crps(self, resid: np.ndarray) -> float:
-        """σ minimising mean Gaussian CRPS of the centred residuals.
+        """σ minimising the mean Gaussian CRPS of the centred residuals.
 
         CRPS(N(0,σ); r) = σ·[ z(2Φ(z)−1) + 2φ(z) − 1/√π ],  z = r/σ.
-        Less sensitive to a few large residuals than the log score, which is
-        why it is offered alongside MLE rather than as a variant of it.
+        It is less sensitive to a few large residuals than the log score, and
+        so is offered alongside maximum likelihood rather than as a variant
+        of it.
         """
         from scipy.optimize import minimize_scalar
         from scipy.stats import norm
@@ -415,10 +427,11 @@ class AffineNormal(BaseEstimator):
             )
 
         s0 = math.log(max(float(np.sqrt(np.mean(resid**2))), self.sigma_floor))
-        # Bounded, not bracketed: a bracket triple has to satisfy
-        # f(xb) < f(xa) and f(xb) < f(xc), which fails whenever the MLE start
-        # already sits at or beyond the CRPS optimum, and that is the common
-        # case, since CRPS wants a SMALLER sigma than MLE on heavy tails.
+        # Bounded rather than bracketed. A bracket triple has to satisfy
+        # f(xb) < f(xa) and f(xb) < f(xc), which fails whenever the maximum
+        # likelihood start already sits at or beyond the CRPS optimum. That
+        # is the common case, since CRPS wants a smaller sigma than maximum
+        # likelihood on heavy tails.
         res = minimize_scalar(
             mean_crps, bounds=(s0 - 3.0, s0 + 3.0), method="bounded",
         )
@@ -428,15 +441,15 @@ class AffineNormal(BaseEstimator):
         self, X: np.ndarray, y: np.ndarray,
         fits: list[ComponentFit], z: np.ndarray,
     ) -> tuple[float, float]:
-        """Regress log|resid| on a per-row covariate: log σ = c0 + c1·z."""
+        """Regress log|resid| on a per-row covariate, log σ = c0 + c1·z."""
         zs, ls = [], []
         za = np.asarray(z, dtype=float)
         for i, f in enumerate(fits):
             ok = np.isfinite(X[i]) & np.isfinite(y) & np.isfinite(za)
             r = y[ok] - (f.intercept + f.slope * X[i][ok])
             keep = np.abs(r) > 0
-            # E[log|N(0,σ)|] = log σ − (γ + log 2)/2; subtracting that constant
-            # makes the intercept an unbiased estimate of log σ.
+            # E[log|N(0,σ)|] = log σ − (γ + log 2)/2. Subtracting that
+            # constant makes the intercept an unbiased estimate of log σ.
             ls.append(np.log(np.abs(r[keep])) + 0.5 * (np.euler_gamma + math.log(2)))
             zs.append(za[ok][keep])
         zz, ll = np.concatenate(zs), np.concatenate(ls)
@@ -454,8 +467,8 @@ class AffineNormal(BaseEstimator):
     ) -> tuple[np.ndarray, np.ndarray]:
         """``(k, N)`` μ and σ per component. NaN where a component is silent.
 
-        NaN is deliberate and load-bearing: a silent vendor must drop out of
-        whatever pools these moments, not be imputed to a blend mean. The
+        The NaN is deliberate. A silent vendor must drop out of whatever
+        pools these moments rather than be imputed to a blend mean. The
         pool's own sleeping-component handling then renormalises the
         surviving weights.
         """
@@ -491,10 +504,10 @@ class AffineNormal(BaseEstimator):
     ) -> np.ndarray:
         """P(Y <= threshold) under the fitted family, elementwise.
 
-        Exists so callers computing a PIT or bracket probability never
-        hard-code ``norm.cdf``: switching ``dist`` to ``"student_t"`` and
-        forgetting one call site silently mixes families, which shows up as
-        a dispersion result rather than as an error.
+        This exists so that callers computing a PIT or bracket probability
+        never hard-code ``norm.cdf``. Switching ``dist`` to ``"student_t"``
+        and forgetting one call site mixes families, and the result surfaces
+        as a dispersion number rather than as an error.
         """
         z = (np.asarray(thresholds, dtype=float) - mu) / sigma
         if self.dist == "normal":
@@ -512,7 +525,7 @@ class AffineNormal(BaseEstimator):
     # ---------- reporting ----------
 
     def report(self) -> str:
-        """One line per component: the paper's Table 9 for this fit."""
+        """One line per component, the paper's Table 9 for this fit."""
         if self.fits_ is None:
             raise RuntimeError("AffineNormal.report called before fit")
         t = self.dist == "student_t"
@@ -542,9 +555,9 @@ class AffineNormal(BaseEstimator):
                     f"{f.name:22s} {f.intercept:8.3f} {f.slope:7.3f} "
                     f"{f.sigma:7.3f} {f.n_rows:6d} {f.coverage:6.2f}  {flag}"
                 )
-        # Compare SDs, not scales: for a t the scale understates dispersion by
-        # sqrt(nu/(nu-2)), so a scale-based spread ratio is not comparable to
-        # the normal fit's.
+        # Standard deviations are compared rather than scales. For a t the
+        # scale understates dispersion by sqrt(nu/(nu-2)), so a scale-based
+        # spread ratio is not comparable to the normal fit's.
         sds = [f.sd for f in self.fits_]
         out.append(
             f"sd spread: {min(sds):.3f}–{max(sds):.3f} "

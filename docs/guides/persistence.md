@@ -18,10 +18,10 @@ new_dists = loaded.predict(X_new, ids=..., timestamps=...)
 ## The version envelope
 
 A raw `pickle.dump(pipeline)` works today. On a future upgrade, though, a
-trainer's internal representation can change, and the artefact loads without
-complaint and starts producing wrong predictions. The envelope stores the
-bracketlearn version alongside the payload, so `load()` warns (or, in
-production, raises) on a mismatch:
+trainer's internal representation can change, and the artefact then loads
+without complaint and starts producing wrong predictions. The envelope stores
+the bracketlearn version alongside the payload, so `load()` warns on a
+mismatch, or raises in production.
 
 ```python
 load("old.pkl", strict_version=True)   # raises ValueError on mismatch

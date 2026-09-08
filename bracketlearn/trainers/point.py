@@ -1,4 +1,4 @@
-"""Point forecasters (output: PointForecast).
+"""Point forecasters, whose output is a PointForecast.
 
 SklearnPoint, OnlineAggregator, RNNHourly.
 """
@@ -33,7 +33,7 @@ class SklearnPoint(BaseEstimator):
     LightGBM/XGBoost regressors, sklearn ensembles, custom estimators,
     anything matching the sklearn contract.
 
-    Examples:
+    Examples
         SklearnPoint(sklearn.linear_model.Ridge(alpha=1.0))
         SklearnPoint(sklearn.ensemble.GradientBoostingRegressor())
         SklearnPoint(lightgbm.LGBMRegressor(n_estimators=200))
@@ -53,13 +53,14 @@ class SklearnPoint(BaseEstimator):
         *,
         sample_weight: np.ndarray | None = None,
     ) -> Self:
-        # Record input signature BEFORE np.asarray strips the columns
-        # attribute (sklearn convention: feature_names_in_ from DataFrame).
+        # Record the input signature before np.asarray strips the columns
+        # attribute. By sklearn convention feature_names_in_ comes from a
+        # DataFrame.
         self._record_input_signature(X)
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
-        # Forward sample_weight only if the estimator accepts it. We
-        # introspect the signature (no silent TypeError swallow).
+        # Forward sample_weight only if the estimator accepts it. The
+        # signature is introspected, so no TypeError is swallowed.
         if sample_weight is not None and _estimator_accepts_sample_weight(self.estimator):
             self.estimator.fit(X, y, sample_weight=sample_weight)
         else:
@@ -93,33 +94,31 @@ class SklearnPoint(BaseEstimator):
 class OnlineAggregator(BaseEstimator):
     """AdaHedge over forecast experts (columns of X).
 
-    Walks rows in order, treats each column of X as an expert's point
-    prediction (NaN = asleep on that row), accumulates per-expert squared
-    losses, updates the mixability-gap learning rate, and produces an
-    aggregated prediction per row.
+    Walks rows in order and treats each column of X as an expert's point
+    prediction, where NaN means the expert is asleep on that row. It
+    accumulates per-expert squared losses, updates the mixability-gap learning
+    rate, and produces an aggregated prediction per row.
 
-    Predict-time behavior mirrors the original's `predict_inference_side`
-    path: at fit time the final weight vector is snapshotted; at predict
-    time we compute weighted mean over awake experts, renormalising the
-    snapshot weights to the active subset. This is what the original ships
-    to inference, pure online behavior during fit, snapshot-and-apply at
-    predict.
+    Predict-time behavior mirrors the original's `predict_inference_side` path.
+    At fit time the final weight vector is snapshotted. At predict time the
+    weighted mean is computed over awake experts, renormalising the snapshot
+    weights to the active subset. This is what the original ships to inference,
+    with pure online behavior during fit and snapshot-and-apply at predict.
 
-    Grouped mode (per-group AdaHedge): pass ``groups`` to ``fit`` and
-    ``predict`` (e.g. a per-row station_id array) to run a *separate*
-    AdaHedge instance per group, each accumulating its own loss vector
-    and snapshotting its own final weight vector. Useful when different
-    groups have different optimal experts (e.g. weather forecast
-    vendors where ECMWF dominates Phoenix while ICON wins Boston),
-    a single global AdaHedge averages across the groups and loses that
-    specialisation.
+    In grouped mode, passing ``groups`` to ``fit`` and ``predict``, for
+    instance a per-row station_id array, runs a separate AdaHedge instance per
+    group. Each accumulates its own loss vector and snapshots its own final
+    weight vector. This is useful when different groups have different optimal
+    experts, as with weather forecast vendors where ECMWF dominates Phoenix
+    while ICON wins Boston. A single global AdaHedge averages across the groups
+    and loses that specialisation.
 
-    Predict-time rows whose group key was not seen at fit time raise
-    (Rule #0.5; silent fallback to global weights would mask coverage
-    gaps).
+    Predict-time rows whose group key was not seen at fit time raise under Rule
+    #0.5. A fallback to global weights would mask coverage gaps.
 
-    Output: PointForecaster, pair with GlobalResidual (or other Lifter)
-    for distribution coverage. Composition is explicit, not baked in.
+    The output is a PointForecaster. Pair it with GlobalResidual, or another
+    Lifter, for distribution coverage. Composition is explicit rather than
+    baked in.
     """
 
     min_experts: int = 2
@@ -305,8 +304,8 @@ class OnlineAggregator(BaseEstimator):
                 f"OnlineAggregator: groups has {groups.shape[0]} entries, "
                 f"predict X has {N} rows"
             )
-        # Validate every group key was seen at fit. Rule #0.5: missing
-        # group is a coverage hole, not a silent fall-back to global.
+        # Validate that every group key was seen at fit. Under Rule #0.5 a
+        # missing group is a coverage hole rather than a fall-back to global.
         unseen = [g for g in set(groups.tolist())
                   if g not in self.final_w_by_group_]
         if unseen:
@@ -386,18 +385,18 @@ class RNNHourly(BaseEstimator):
     scalar residual to the channel-0 max (HRRR's max-T baseline). Final
     prediction = channel_0_max + residual.
 
-    Expects X.ndim == 3 with shape (N, T, C). For weather: T=24 hours,
-    C=6 (temperature, dewpoint, RH, wind, cloud, CAPE).
+    Expects X.ndim == 3 with shape (N, T, C). For weather, T=24 hours and C=6,
+    namely temperature, dewpoint, RH, wind, cloud, and CAPE.
 
-    `baseline_channel`: which channel's max provides the residual anchor
-    (default 0 = temperature, matching the original trainer).
+    `baseline_channel` selects which channel's max provides the residual
+    anchor. The default 0 is temperature, matching the original trainer.
 
-    `station_ids` (optional, passed at fit/predict via `meta=...` arg):
-    integer-encoded station for the embedding. If absent, embedding is
-    skipped and the model uses GRU only.
+    `station_ids` is optional and is passed at fit and predict via the `meta=`
+    argument. It holds the integer-encoded station for the embedding. If
+    absent, the embedding is skipped and the model uses the GRU only.
 
-    Output: PointForecaster, pair with GlobalResidual (or other Lifter)
-    for distribution coverage.
+    The output is a PointForecaster. Pair it with GlobalResidual, or another
+    Lifter, for distribution coverage.
     """
 
     hidden: int = 32

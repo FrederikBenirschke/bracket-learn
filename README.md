@@ -18,11 +18,11 @@ python -m bracketlearn.examples.value_vs_accuracy_weather
 ## Worked result
 
 The package fits a distributional model, prices it onto a venue's bracket
-ladder, and scores the resulting prices two ways: for **accuracy**, the
-distance from the realized outcome, and for **value**, whether the deviations
-from the quoted price are directionally correct. The bundled example runs this
-on 5,429 station-days of Kalshi weather contracts (2026-03-17 to 2026-09-03,
-18 stations, chronological 60/40 split):
+ladder, and scores the resulting prices two ways. Accuracy is the distance from
+the realized outcome. Value is whether the deviations from the quoted price are
+directionally correct. The bundled example runs this on 5,429 station-days of
+Kalshi weather contracts, covering 2026-03-17 to 2026-09-03, 18 stations, and a
+chronological 60/40 split.
 
 ```
 ===== HIGH  (train 1737, test 1158) =====
@@ -36,16 +36,16 @@ on 5,429 station-days of Kalshi weather contracts (2026-03-17 to 2026-09-03,
 
 The two calibration adjustments move Brier and Edge-Alignment in opposite
 directions. The mean de-bias leaves Brier essentially unchanged while lowering
-EA; the edge recalibration improves both. Accuracy and value are therefore
-distinct orderings over the same forecasts, which is the property the
+EA. The edge recalibration improves both. Accuracy and value are therefore
+distinct orderings over the same forecasts. That property is what the
 [Edge-Alignment metric](docs/guides/value_vs_accuracy.md) is constructed to
-measure, and the reason a leaderboard ranked by Brier can select the wrong
-model for a trading application.
+measure. A leaderboard ranked by Brier can accordingly select the wrong model
+for a trading application.
 
 On this sample EMOS is less accurate than the market and its EA is negative,
 with a bootstrap interval that contains zero. Section 5b of the value guide
-gives the decomposition, including the correction of an earlier result computed
-against a fixture whose bracket edges were wrong.
+gives the decomposition. It also corrects an earlier result computed against a
+fixture whose bracket edges were wrong.
 
 ![CRPS leaderboard](docs/_static/leaderboard_crps.png)
 
@@ -53,10 +53,10 @@ against a fixture whose bracket edges were wrong.
 
 Let `Y` be a continuous outcome (tomorrow's high temperature, a game's final
 margin, the next GDP print) with features `X`. A prediction-market contract
-pays a known function `g(Y) ∈ {0, 1}` of that outcome, so its risk-neutral fair
-price is the conditional expectation `E[g(Y) | X]`, a functional of the
-conditional predictive distribution `F(y | X) = P(Y ≤ y | X)`. Every contract a
-venue lists reduces to one such functional:
+pays a known function `g(Y) ∈ {0, 1}` of that outcome. Its risk-neutral fair
+price is therefore the conditional expectation `E[g(Y) | X]`, a functional of
+the conditional predictive distribution `F(y | X) = P(Y ≤ y | X)`. Every
+contract a venue lists reduces to one such functional.
 
 | Contract | Payoff `g(Y)` | Fair price as a functional of `F` |
 |---|---|---|
@@ -65,39 +65,41 @@ venue lists reduces to one such functional:
 | Threshold below `k` | `1[Y ≤ k]` | `F(k)` |
 | Twin (paired) at `k` | `(1[Y ≤ k], 1[Y > k])` | `(F(k), 1 − F(k))` |
 
-Pricing a venue therefore decomposes into two estimands: the predictive
-distribution `F(· | X)`, and the functionals of `F` that the listed contracts
-select. bracketlearn estimates the first and evaluates the second, then scores
-both against realized outcomes with proper scoring rules.
+Pricing a venue therefore decomposes into two estimands. The first is the
+predictive distribution `F(· | X)`. The second is the collection of functionals
+of `F` that the listed contracts select. bracketlearn estimates the first and
+evaluates the second, then scores both against realized outcomes with proper
+scoring rules.
 
 ## Relation to existing libraries
 
-The first estimand above is well served. The second is not, and the gap is the
-reason this package exists.
+The first estimand above is well served. The second is not. This package
+exists to close that gap.
 
 | Library | Provides | Does not provide |
 |---|---|---|
-| NGBoost, `sklearn.QuantileRegressor`, quantile-forest | a conditional distribution or its quantiles | contract pricing; scoring against a reference price |
-| `properscoring`, `scoringrules` | CRPS, log score, Brier on arrays | a typed distribution object; per-row contract ladders |
+| NGBoost, `sklearn.QuantileRegressor`, quantile-forest | a conditional distribution or its quantiles | contract pricing, or scoring against a reference price |
+| `properscoring`, `scoringrules` | CRPS, log score, Brier on arrays | a typed distribution object, or per-row contract ladders |
 | statsmodels | inference for parametric models | distributional CV, bracket adapters |
 | MAPIE, crepes | conformal prediction intervals | full `F`, and the functionals a venue lists |
 
-Composing those covers the forecasting half. What remains is the part specific
-to prediction markets: mapping `F(· | X)` onto a venue's listed contracts,
-including the per-row rotating ladders Kalshi relists daily, and scoring the
-resulting prices both for accuracy against the outcome and for value against
-the quoted price. A distribution that is closer to the truth is not always the
-one with more edge over the market, and the two orderings can disagree; §5 of
-the [value guide](docs/guides/value_vs_accuracy.md) constructs a case where
-they do.
+Composing those covers the forecasting half. What remains is specific to
+prediction markets. It has two parts. The first is mapping `F(· | X)` onto a
+venue's listed contracts, including the per-row rotating ladders Kalshi relists
+daily. The second is scoring the resulting prices both for accuracy against the
+outcome and for value against the quoted price. A distribution that is closer
+to the truth is not always the one with more edge over the market. The two
+orderings can disagree, and §5 of the
+[value guide](docs/guides/value_vs_accuracy.md) constructs a case where they
+do.
 
 If the goal is a predictive distribution and nothing else, NGBoost or
-quantile-forest is the shorter path, and this package will call them for you as
-`SklearnPoint` / `NGBoostNormal` / `QuantileForest` stages.
+quantile-forest is the shorter path. This package will call them for you as
+`SklearnPoint`, `NGBoostNormal` and `QuantileForest` stages.
 
 ## Install
 
-bracketlearn has not reached PyPI yet. Install from source:
+bracketlearn has not reached PyPI yet. Install from source.
 
 ```bash
 git clone https://github.com/FrederikBenirschke/bracket-learn
@@ -112,10 +114,10 @@ After PyPI publication the install becomes `pip install bracket-learn` or
 
 ## Quickstart: the three steps end to end
 
-This one script runs all three steps: generate synthetic weather features, fit
-EMOS (step 1), price the four contract shapes a venue lists (step 2), then score
-the fair prices against what happened (step 3). Each building block gets its own
-section after this.
+This one script runs all three steps. It generates synthetic weather features
+and fits EMOS (step 1), prices the four contract shapes a venue lists (step 2),
+then scores the fair prices against what happened (step 3). Each building block
+gets its own section after this.
 
 ```python
 import numpy as np
@@ -207,8 +209,8 @@ Full walkthrough with output: [Quickstart guide](docs/guides/quickstart.md).
 
 Everything starts with a `DistributionForecast`, a typed predictive density over
 the underlying number. You build one by chaining stages into a `Pipeline` and
-running it under `WalkForward`. This section covers how models compose, the
-distribution types they emit, and the trainer families you pick from.
+running it under `WalkForward`. This section covers how models compose, which
+distribution types they emit, and the trainer families available.
 
 ### Compose models with Pipeline and WalkForward
 
@@ -247,16 +249,16 @@ new_dists = wf.predict(X_new, ids=new_ids, timestamps=new_ts)
 
 Every forecaster, lifter, and calibrator inherits from `BaseEstimator` and
 supports `get_params`, `set_params`, and `clone()`. `WalkForward` clones each
-model before every fold's fit, so your instances stay unmutated and you reuse
-them across runs.
+model before every fold's fit. Your instances stay unmutated and can be reused
+across runs.
 
-**What "sklearn-style" does not mean here:** these estimators are *not*
+"sklearn-style" is limited here. These estimators are not
 `sklearn.utils.estimator_checks.check_estimator`-compliant, and are not
 intended to be. A `DistForecaster` returns a typed `DistributionForecast`
-rather than an array, which several of sklearn's checks require. What is
-borrowed is the parameter protocol (`get_params`/`set_params`/`clone`), the
-compose-and-cross-validate shape, and the naming, not API-level
-substitutability inside sklearn's own meta-estimators.
+rather than the array several of sklearn's checks require. What is borrowed is
+the parameter protocol (`get_params`, `set_params`, `clone`), the
+compose-and-cross-validate shape, and the naming. API-level substitutability
+inside sklearn's own meta-estimators is not borrowed.
 
 ### The five protocols
 
@@ -269,24 +271,25 @@ substitutability inside sklearn's own meta-estimators.
 | `ContractAdapter` | `DistributionForecast → ContractForecast`     | `BinaryAbove`, `BinaryBelow`, `Twin`, `ThresholdLadder`, `BracketLadder` |
 
 List stages in a `Pipeline` and it wires them left-to-right by protocol type. A
-`PointForecaster` followed by a `Lifter` becomes a `DistForecaster`; add a
-`Calibrator` and it stays one. For parallel ensembling, wrap upstream `Pipeline`
+`PointForecaster` followed by a `Lifter` becomes a `DistForecaster`. Adding a
+`Calibrator` leaves it one. For parallel ensembling, wrap upstream `Pipeline`
 objects in a `Stacker`. `WalkForward` drives the CV and OOF. Names label the
-leaderboard; they never wire anything.
+leaderboard and never wire anything.
 
 ### Distribution backings and estimator families
 
-A `DistributionForecast` carries an explicit backing. Normal, Student-t,
-mixture, quantile, or bracket, and every backing answers `cdf`, `crps`,
-`pit`, `integrate` and `log_score`. Which trainers emit which backing, what
-each is for, and when to prefer one over another: **[Catalog](docs/guides/catalog.md)**.
+A `DistributionForecast` carries an explicit backing, one of normal, Student-t,
+mixture, quantile, or bracket. Every backing answers `cdf`, `crps`, `pit`,
+`integrate` and `log_score`. The **[Catalog](docs/guides/catalog.md)** records
+which trainers emit which backing, what each is for, and when to prefer one
+over another.
 
 ### Combining several forecasts
 
 `bracketlearn.pool` implements the four aggregation families of Gneiting &
 Ranjan, [*Combining Predictive
 Distributions*](https://arxiv.org/abs/1106.1638) (EJS 7:1747-1782, 2013),
-behind one interface:
+behind one interface.
 
 | Formula | Form | Fitted parameters |
 |---|---|---|
@@ -297,34 +300,34 @@ behind one interface:
 | **BMA** | `Σ wᵢ N(y; μᵢ, σ²)` | weights + a common `σ`, fitted jointly |
 
 The choice matters because of Theorem 3.1. A linear pool's PIT is
-`Z = Σ wᵢZᵢ`, so `var(Z) ≤ max var(Zᵢ)`: the pool is at least as dispersed as
-its least-dispersed component, and pooling neutrally-dispersed components
+`Z = Σ wᵢZᵢ`, hence `var(Z) ≤ max var(Zᵢ)`. The pool is at least as dispersed
+as its least-dispersed component, and pooling neutrally-dispersed components
 makes the result strictly *over*dispersed. Theorem 3.3 says no weight vector
-fixes this, because the defect is in the functional form rather than the fit.
-So a well-fitted pool of well-fitted models can be worse-calibrated than any
-member alone. BLP is *exchangeably flexibly dispersive* (Thm 3.9) and reaches
-any `var(PIT)` in `(0, ¼)`; SLP cannot, but suffices when the components are
-neutrally dispersed or underdispersed.
+fixes this, because the defect is in the functional form rather than the fit. A
+well-fitted pool of well-fitted models can therefore be worse-calibrated than
+any member alone. BLP is *exchangeably flexibly dispersive* (Thm 3.9) and
+reaches any `var(PIT)` in `(0, ¼)`. SLP cannot, but it suffices when the
+components are neutrally dispersed or underdispersed.
 
-BLP is also *local*: `G(y)` depends on the components only through
+BLP is also *local*. Its `G(y)` depends on the components only through
 `F₁(y), …, F_k(y)` at that same `y`. On a bracket ladder those values are
-exactly the cumulative mass at each edge, so BLP is an exact pointwise map on
+exactly the cumulative mass at each edge. BLP is then an exact pointwise map on
 edge CDFs, with no resampling, no interpolation, and no assumption about
-within-bracket shape. That is what makes it the natural combiner for this
-library's contracts.
+within-bracket shape. This makes it the natural combiner for this library's
+contracts.
 
 Pooling assumes its inputs are *distributions*. A raw point forecast is the
-most extreme form of an underdispersed density, so §4.2 of the paper first
-fits each component a predictive density of its own, with an intercept, a
-slope, and that component's own scale. `AffineNormal` is that step. Fitting a
-slope is what an additive de-bias cannot do: it corrects a component whose
-*amplitude* is miscalibrated, not just its level.
+most extreme form of an underdispersed density. Section 4.2 of the paper
+therefore first fits each component a predictive density of its own, with an
+intercept, a slope, and that component's own scale. `AffineNormal` is that
+step. An additive de-bias cannot fit a slope. The slope corrects a component
+whose *amplitude* is miscalibrated, not only its level.
 
 ```python
 from bracketlearn import AffineNormal, fit_pool
 
 # step 0: lift k raw point forecasts into per-component distributions.
-# X_points is (k, N): component axis FIRST, as everywhere in this module.
+# X_points is (k, N), with the component axis first.
 lift = AffineNormal(bias="affine").fit(X_points, y)   # per component: a, b, sigma
 mu, sd = lift.moments(X_points)                       # (k, N) each; NaN where silent
 
@@ -344,7 +347,7 @@ silent component yields NaN moments rather than an imputed value.
 
 You have a `DistributionForecast`. A `ContractAdapter` reads fair prices off it
 for the exact contracts a venue lists. The Quickstart used `BinaryAbove`,
-`Twin`, and `BracketLadder`; here is the full set, with each adapter mapped to
+`Twin`, and `BracketLadder`. The full set follows, with each adapter mapped to
 the venue shape it prices.
 
 ### Adapter catalogue
@@ -355,7 +358,7 @@ the venue shape it prices.
 | `BinaryBelow(k)`       | `P(X ≤ k)`                         | Kalshi "GDP ≤ 2.5%", "low below freezing"                   |
 | `Twin(k)`              | paired `P(X > k)` / `P(X ≤ k)`     | Polymarket spread (`Eagles -3.5`), total (`Over 47.5`)      |
 | `ThresholdLadder(ks)`  | `[P(X > k_i)]` per strike          | Kalshi multi-threshold temperature ladders                  |
-| `BracketLadder(edges_per_row)` | `[P(lo ≤ X < hi)]` per-row edges | Kalshi daily-rotating brackets; Polymarket weather brackets (pass `[edges]*N`) |
+| `BracketLadder(edges_per_row)` | `[P(lo ≤ X < hi)]` per-row edges | Kalshi daily-rotating brackets, Polymarket weather brackets (pass `[edges]*N`) |
 
 All five adapters take any `DistributionForecast` (normal, student-t,
 mixture-normal, quantile, or bracket backing) and return a long-form
@@ -365,27 +368,27 @@ mixture-normal, quantile, or bracket backing) and return a long-form
 ### Worked mapping: Kalshi NYC temperature
 
 Kalshi runs a daily-rotating bracket ladder on NYC max temperature. The
-brackets shift every day: Monday lists `{<60, 60–65, 65–70, …}`, Tuesday
-`{<58, 58–62, 62–66, …}`. The mapping:
+brackets shift every day. Monday lists `{<60, 60–65, 65–70, …}` and Tuesday
+lists `{<58, 58–62, 62–66, …}`. The mapping is as follows.
 
 | Venue                                       | Library                                                                  |
 |---------------------------------------------|--------------------------------------------------------------------------|
 | Underlying = today's NYC max temp (°F)      | `y` is a length-N vector of realized temps                               |
 | One ladder per day, edges differ            | `edges_per_row[i]` = day `i`'s edges                                     |
 | 5–7 mutually-exclusive YES contracts        | `BracketLadder(edges_per_row=..., include_tail_buckets=True)`            |
-| Outermost `< X` and `> Y` "tail" contracts  | `include_tail_buckets=True` adds them; per-entity rows then sum to 1.0   |
+| Outermost `< X` and `> Y` "tail" contracts  | `include_tail_buckets=True` adds them, and rows then sum to 1.0         |
 | YES pays $1 if temp falls in bracket        | `fair_price` is `P(lo ≤ temp < hi)` for that row                         |
 | Calibration check after settlement          | `score.brier_bracket(contracts, edges, y)` on the realized temps         |
 
 When every day shares one edge set (Polymarket weekly weather contracts), pass
 `edges_per_row=[edges] * N`. The inner list holds N references to the same
-array, so it costs no extra memory.
+array and costs no extra memory.
 
 ### Worked mapping: spread / total markets
 
 An NFL spread of "Eagles −3.5" pays YES when `(Eagles − opp) > 3.5`. A total of
 "Over 47.5" pays YES when `(Eagles + opp) > 47.5`. Both are single-strike
-binaries with paired YES/NO sides:
+binaries with paired YES and NO sides.
 
 | Venue                                        | Library                                            |
 |----------------------------------------------|----------------------------------------------------|
@@ -400,23 +403,23 @@ For multi-strike lines ("Eagles −3, −3.5, −4"), price the same `dist` thro
 several `Twin` instances at different strikes. For a one-sided Kalshi
 temperature ladder ("above 70", "above 75", "above 80"), use
 `ThresholdLadder(strikes=[70, 75, 80])`. It returns survival probabilities at
-rising strikes: monotone, and they don't sum to 1.
+rising strikes. These are monotone and do not sum to 1.
 
 ## Step 3: score the prices
 
 With fair prices in hand, check them against what settled. bracketlearn scores
 on two levels, both through `result.to_table(y, metrics=[...])` on a
-`WalkForward` run:
+`WalkForward` run.
 
-- **Distribution metrics** read the predictive density directly: `crps`,
-  `log_score`, and `pit`.
-- **Contract metrics** read the priced ladder: `brier_bracket` and
+- **Distribution metrics** read the predictive density directly. These are
+  `crps`, `log_score`, and `pit`.
+- **Contract metrics** read the priced ladder. These are `brier_bracket` and
   `log_loss_bracket`, each taking `edges=` in any of the three shapes
   `integrate` accepts, a shared `(B+1,)` vector, a dense `(N, B+1)` grid, or a
   ragged per-row sequence. On a rotating ladder pass the per-row edges the
-  ladder was priced with; the scorers raise if handed one row's vector
-  instead. They answer the
-  practical question, were the bracket prices calibrated.
+  ladder was priced with. The scorers raise if handed one row's vector
+  instead. They answer the practical question, were the bracket prices
+  calibrated.
 
 The standalone `score.brier_bracket` and `score.log_loss_bracket` helpers, used
 in the [Quickstart](#quickstart-the-three-steps-end-to-end), score a single
@@ -427,47 +430,47 @@ in the [Quickstart](#quickstart-the-three-steps-end-to-end), score a single
 Evaluating a distributional forecast is harder than evaluating a point one,
 because there is no single number that says "better". A forecast is judged on
 three axes that trade off against each other, and a model can win on one while
-losing on another:
+losing on another.
 
 1. **Calibration.** Are the stated probabilities honest? Measured by the
    `pit_*` columns, `reliability_mae` and `coverage_*`. A climatological
-   forecast is perfectly calibrated and worthless, so this is necessary and
-   nowhere near sufficient.
+   forecast is perfectly calibrated and worthless. Calibration is therefore
+   necessary and nowhere near sufficient.
 2. **Sharpness.** How concentrated is the distribution? Measured by `rmv` and
-   `sharpness_iqr`, *without reference to the outcome*. It is a property of
-   the forecast alone, which is why it cannot be optimised on its own: the
-   sharpest forecast is a point mass.
+   `sharpness_iqr`, *without reference to the outcome*. Sharpness is a
+   property of the forecast alone and cannot be optimised alone. The sharpest
+   forecast is a point mass.
 3. **Accuracy.** Proper scores (`crps`, `log_score`) that reward calibration
-   and sharpness jointly. Report these as the summary and the diagnostics
-   above to explain *why* a score moved.
+   and sharpness jointly. Report these as the summary, and report the
+   diagnostics above to explain why a score moved.
 
 Three disagreements show up often enough to be worth naming.
 
-**CRPS against log score.** Both are proper, and they still rank differently
-when models differ in tail weight, because the log score is unbounded and
-punishes a thin tail over a realized outlier without limit, while CRPS is in
-the units of the outcome and does not. Fit a Normal to a `t₃` truth and sweep
-its σ: the log score is minimised at σ = √3 ≈ 1.73 (its optimum is `√E[Y²]`,
-in closed form), while CRPS settles near σ ≈ 1.25. Neither is wrong. They ask
-different questions about the same misspecification, so a model selected on
-one is not the model selected on the other. Pick the metric before the run,
-not after seeing which flatters the model.
+**CRPS against log score.** Both are proper and they still rank differently
+when models differ in tail weight. The log score is unbounded and punishes a
+thin tail over a realized outlier without limit. CRPS is in the units of the
+outcome and does not. Fit a Normal to a `t₃` truth and sweep its σ. The log
+score is minimised at σ = √3 ≈ 1.73, its optimum being `√E[Y²]` in closed
+form, while CRPS settles near σ ≈ 1.25. Neither is wrong. They ask different
+questions about the same misspecification, so a model selected on one is not
+the model selected on the other. Pick the metric before the run, not after
+seeing which flatters the model.
 
 **Accuracy against value.** A more accurate price can be worth less than a
-less accurate one. That is the next section, and it is the one that decides
-whether a forecast is tradeable.
+less accurate one. The next section covers this. It decides whether a forecast
+is tradeable.
 
 **Calibration against sharpness.** Widening a forecast improves its coverage
 and worsens its sharpness. A calibration fix that only widens has not made the
-forecast more useful, so read `pit_var_excess` and `rmv` together rather than
+forecast more useful. Read `pit_var_excess` and `rmv` together rather than
 chasing either alone.
 
 ### Diagnosing calibration: var(PIT) is not enough
 
-`pit` gives you a number; it does not tell you what went wrong.
+`pit` gives you a number. It does not tell you what went wrong.
 `calibration_suite` reports calibration, sharpness and accuracy together
-against a family-agnostic interface, so Normal, Student-t and mixture
-forecasts all return the same columns:
+against a family-agnostic interface. Normal, Student-t and mixture forecasts
+all return the same columns.
 
 ```python
 from bracketlearn import calibration_suite
@@ -479,60 +482,61 @@ s["log_score"]                                        # accuracy
 ```
 
 Optional columns are the ones needing an optional argument, and they are
-omitted rather than approximated: `rmv` needs `sd=`, coverage, reliability and
-`sharpness_iqr` need `quantile=`, and `crps` needs a per-row `crps=` array
-from the caller's own closed form. A Gaussian-shaped guess at a Student-t's
-quantiles would be a silent fallback, so absence is the honest answer.
+omitted rather than approximated. `rmv` needs `sd=`. Coverage, reliability and
+`sharpness_iqr` need `quantile=`. `crps` needs a per-row `crps=` array from the
+caller's own closed form. A Gaussian-shaped guess at a Student-t's quantiles
+would be a fallback the caller never asked for, so absence is the honest
+answer.
 
-var(PIT) is one summary of a whole histogram, and it is blind to most ways a
+var(PIT) is one summary of a whole histogram and is blind to most ways a
 forecast fails. A model biased 3°F warm with the right spread can sit near the
-neutral variance while every interval is centred wrong; only `pit_mean` sees
+neutral variance while every interval is centred wrong. Only `pit_mean` sees
 it. Two models, one too heavy left and one too heavy right, share a var(PIT),
 and `pit_skew` with `tail_left`/`tail_right` separates them. A mixture too wide
 in the body and too narrow in the tails averages out to neutral while fitting
-neither, which `pit_ks` and the reliability curve catch.
+neither. `pit_ks` and the reliability curve catch that case.
 
-Settlement on a grid needs care, and it changes the reference value rather
-than just the number. An integer outcome means a continuous CDF evaluated at
-the realized value is not the Rosenblatt PIT. Pass `grid_step` and the
-mid-interval continuity-corrected form is used instead, the deterministic
-analogue of the randomised PIT: no RNG, so it cannot smear an outcome across
-its cell. Discretisation then compresses the PIT's spread, so a calibrated
-forecast attains
+Settlement on a grid changes the reference value, not only the number. For an
+integer outcome, a continuous CDF evaluated at the realized value is not the
+Rosenblatt PIT. Pass `grid_step` and the mid-interval continuity-corrected form
+is used instead. That form is the deterministic analogue of the randomised PIT.
+It uses no RNG and cannot smear an outcome across its cell. Discretisation
+compresses the PIT's spread, so a calibrated forecast attains
 
     var(PIT_mid) = 1/12 - E[p²]/12
 
-where `p` is the probability the forecast put on the cell that settled. That
-is strictly below 1/12, so judging a corrected variance against 1/12 reports a
-calibrated model as underdispersed. Both `calibration_suite` and
+where `p` is the probability the forecast put on the cell that settled. This
+value is strictly below 1/12, so judging a corrected variance against 1/12
+reports a calibrated model as underdispersed. Both `calibration_suite` and
 `result.score(..., grid_step=...)` return `pit_var_neutral` and
-`pit_var_excess` alongside `pit_var` for this reason: **read the excess**. The
-corrected reference is a property of the panel, not of `grid_step`, since it
-depends on how wide the forecast is relative to the grid. That is why it is
-returned per run rather than written down here.
+`pit_var_excess` alongside `pit_var` for this reason. Read the excess rather
+than `pit_var` itself. The corrected reference is a property of the panel and
+not of `grid_step`, since it depends on how wide the forecast is relative to
+the grid. It is returned per run rather than written down here.
 
 ### Accuracy is not value
 
-The metrics above ask "are my prices **calibrated**?": close to the realized
-outcome. A trader asks a second question: "are my prices more **valuable** than
-the one already quoted?" That is graded against a *reference price* `m` (a market
-quote or baseline), not against truth. A more accurate price can be worth less.
-`score.edge_alignment(q, m, r)` measures value (the
-expected betting payoff `(q−m)(r−m)`), and `score.value_report` splits a change
-in value into "how much mispricing was available" vs "how much your forecast
-failed to capture." This is still scoring, not a trade decision; the
-[value-vs-accuracy guide](docs/guides/value_vs_accuracy.md) derives
-the principle and shows a benign case where the two metrics disagree.
+The metrics above ask whether the prices are **calibrated**, meaning close to
+the realized outcome. A trader asks a second question. Are the prices more
+**valuable** than the one already quoted? That is graded against a *reference
+price* `m`, a market quote or baseline, rather than against truth. A more
+accurate price can be worth less. `score.edge_alignment(q, m, r)` measures
+value, the expected betting payoff `(q−m)(r−m)`. `score.value_report` splits a
+change in value into how much mispricing was available and how much the
+forecast failed to capture. This remains scoring rather than a trade decision.
+The [value-vs-accuracy guide](docs/guides/value_vs_accuracy.md) derives the
+principle and shows a benign case where the two metrics disagree.
 
 You can also **train for value** directly. `bracketlearn.value` holds two
 bracket trainers, `BlendedBracketGBM` (LightGBM) and `BlendedBracketNet`
-(torch), that optimize `L = CE − λ·EA`: calibration tilted toward capturing the
-reference's mispricing. They take the reference price `m` at fit time (the one
-thing that separates them from the core forecasters, hence their own module),
-and you select the tilt `λ` by *costed* value, since fee-free EA over-tilts;
-see the [value-with-fees](docs/guides/value_with_fees.md) and
-[value-trainers](docs/guides/value_trainers.md) guides. Still a price, not a
-position: the trade layer remains yours.
+(torch), that optimize `L = CE − λ·EA`. This is calibration tilted toward
+capturing the reference's mispricing. They take the reference price `m` at fit
+time, which is the one thing separating them from the core forecasters and the
+reason they have their own module. Select the tilt `λ` by *costed* value, since
+fee-free EA over-tilts. See the
+[value-with-fees](docs/guides/value_with_fees.md) and
+[value-trainers](docs/guides/value_trainers.md) guides. The output is still a
+price rather than a position. The trade layer remains yours.
 
 ## Operating the pipeline
 
@@ -540,8 +544,8 @@ The sections above cover a single fit. These control how `WalkForward` runs
 across folds and how the pipeline scales to more data, more sites, and more
 targets.
 
-Covered in the guides rather than here, because each has more detail than a
-README should carry:
+The following topics are covered in the guides rather than here, because each
+has more detail than a README should carry.
 
 | Topic | Guide |
 |---|---|
@@ -555,11 +559,12 @@ README should carry:
 ## Out of scope: trade decisions
 
 bracketlearn stops at the fair price. Turning `fair_price` into a position size
-stays out, by design. That step holds your private signal: side selection on
-correlated ladders, edge gates tuned to liquidity, group Kelly across a bracket,
-fee schedules, queue assumptions. Ship a default and it lands wrong for the next
-user or leaks the edge of the one who had it. You get the calibrated fair price.
-You write the trading layer.
+stays out by design. That step holds the user's private signal, including side
+selection on correlated ladders, edge gates tuned to liquidity, group Kelly
+across a bracket, fee schedules, and queue assumptions. A shipped default would
+either land wrong for the next user or leak the edge of the one who had it. The
+package supplies the calibrated fair price. The trading layer is yours to
+write.
 
 ## Status and test suite
 
@@ -569,7 +574,7 @@ modules, and a CI job that installs the built wheel into a clean virtualenv
 and imports it.
 
 The suite is written against past defects rather than for coverage. Several
-tests exist because the corresponding bug shipped:
+tests exist because the corresponding bug shipped.
 
 | Test | Property it pins |
 |---|---|
@@ -581,9 +586,9 @@ tests exist because the corresponding bug shipped:
 | `test_no_silent_fallbacks.py` | a missing input raises rather than defaulting |
 | `test_notebooks_are_stripped.py` | committed notebooks carry no output |
 
-The README test is there because this file carried a headline number for
-several weeks after the fixture behind it was found to be corrupted. Prose does
-not fail a test suite; that one does.
+The README test exists because this file carried a headline number for several
+weeks after the fixture behind it was found to be corrupted. Prose does not
+fail a test suite. That test does.
 
 [CHANGELOG.md](CHANGELOG.md) records the version history, the migration recipes
 for past API changes, and a decomposition of every result that has moved.

@@ -22,12 +22,13 @@ def _repair_quantile_crossings(
 ) -> np.ndarray:
     """Repair per-row quantile crossings under one of two methods.
 
-    ``maximum_accumulate``: clamp each entry to the running row-max.
-    Fast, monotone, but biased upward at every crossing.
+    ``maximum_accumulate`` clamps each entry to the running row-max. It is
+    fast and monotone, but biased upward at every crossing.
 
-    ``sklearn_pava``: per-row sklearn ``IsotonicRegression`` (pool-adjacent-
-    violators, increasing). Matches the legacy parent-repo trainer
-    convention. Slower (Python loop over rows) but smoother.
+    ``sklearn_pava`` applies a per-row sklearn ``IsotonicRegression``, using
+    pool-adjacent-violators and increasing. It matches the legacy parent-repo
+    trainer convention. It is slower, being a Python loop over rows, but
+    smoother.
 
     Rows without crossings are left untouched in both methods.
     """
@@ -60,12 +61,12 @@ _DEFAULT_QUANTILES: tuple[float, ...] = (
 class QuantileReg(BaseEstimator):
     """Per-τ LightGBM quantile-regression heads.
 
-    Fits one LightGBM regressor per τ ∈ taus with objective='quantile',
-    alpha=τ; isotonic-repairs predicted quantiles per row.
+    Fits one LightGBM regressor per τ ∈ taus with objective='quantile' and
+    alpha=τ, then isotonic-repairs the predicted quantiles per row.
 
-    Output: quantile-backed DistributionForecast with TailRule.clip on both
-    sides (extreme bracket mass stays at the outermost quantile; switch to
-    gpd/gaussian_match in v0.3).
+    The output is a quantile-backed DistributionForecast with TailRule.clip on
+    both sides, so extreme bracket mass stays at the outermost quantile. Switch
+    to gpd or gaussian_match in v0.3.
     """
 
     taus: tuple[float, ...] = _DEFAULT_QUANTILES

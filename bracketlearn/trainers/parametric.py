@@ -34,48 +34,48 @@ from bracketlearn.trainers._common import (
 class EMOS(BaseEstimator):
     """EMOS / NGR distributional regression for an ensemble forecast.
 
-    Two fit algorithms are supported, selected by ``fit_method``:
+    Two fit algorithms are supported, selected by ``fit_method``.
 
-    ``fit_method="ols"`` (default, bracketlearn's v0.1 method):
+    ``fit_method="ols"``, the default and bracketlearn's v0.1 method
         μ̂(x) = a + b·ens_mean
-        σ̂²(x) = c + d·ens_var      (linear-in-variance)
-        Closed-form: OLS for (a, b); OLS on squared residuals for
-        (c, d). Falls back to constant σ̂² (mean r²) if the linear
-        variance fit emits non-positive variance anywhere in the
-        training range. Fast (single lstsq call per side), no
+        σ̂²(x) = c + d·ens_var, linear in the variance.
+        The fit is closed-form, by OLS for (a, b) and OLS on squared
+        residuals for (c, d). It falls back to a constant σ̂², the mean r²,
+        when the linear variance fit emits non-positive variance anywhere in
+        the training range. This is fast, one lstsq call per side, with no
         optimiser.
 
-    ``fit_method="crps_nelder_mead"`` (matches the parent repo's
-        ``prediction_market_weather/ml/trainers/emos.py`` snowflake
-        exactly. Gneiting & Raftery 2005, Gneiting et al. 2005):
+    ``fit_method="crps_nelder_mead"``, which matches the parent repo's
+        ``prediction_market_weather/ml/trainers/emos.py`` exactly, following
+        Gneiting & Raftery 2005 and Gneiting et al. 2005
         μ̂(x) = a + b·ens_mean
-        σ̂²(x) = exp(c) + exp(d)·ens_std²   (exp-link variance)
-        Coefficients (a, b, c, d) minimise mean closed-form Gaussian
-        CRPS via Nelder-Mead, initialised from OLS for (a, b) and
-        half-split residual-variance for (c, d). Slower (a few seconds
-        on 1k rows) but tightly fits the CRPS surface end-to-end.
+        σ̂²(x) = exp(c) + exp(d)·ens_std², an exp-link variance.
+        The coefficients (a, b, c, d) minimise the mean closed-form Gaussian
+        CRPS via Nelder-Mead, initialised from OLS for (a, b) and a
+        half-split residual variance for (c, d). This is slower, a few
+        seconds on 1k rows, but fits the CRPS surface end to end.
 
-    Two input forms via ``input_form``:
+    Two input forms are available via ``input_form``.
 
-    ``input_form="members"`` (default):
-        X holds the per-row ensemble *members* (one column per member).
-        ens_mean/ens_var/ens_std are computed via ``X.mean(axis=1)`` /
-        ``X.var(axis=1, ddof=0)`` / ``np.sqrt(var)``.
+    ``input_form="members"``, the default
+        X holds the per-row ensemble members, one column per member.
+        ens_mean, ens_var and ens_std are computed via ``X.mean(axis=1)``,
+        ``X.var(axis=1, ddof=0)`` and ``np.sqrt(var)``.
 
-    ``input_form="aggregates"``:
-        X already holds the pre-computed aggregates as two columns:
-        ``X[:, 0] = ens_mean`` and ``X[:, 1] = ens_std``. Useful when
-        the upstream pipeline already builds these (e.g. parent-repo
-        weather feature matrix has ``src_<SIDE>_mean`` and
-        ``src_<SIDE>_std`` columns).
+    ``input_form="aggregates"``
+        X already holds the pre-computed aggregates as two columns,
+        ``X[:, 0] = ens_mean`` and ``X[:, 1] = ens_std``. This is useful when
+        the upstream pipeline already builds them. The parent-repo weather
+        feature matrix, for instance, has ``src_<SIDE>_mean`` and
+        ``src_<SIDE>_std`` columns.
 
     For ``fit_method="crps_nelder_mead"`` the closed-form Gaussian CRPS::
 
         CRPS(N(μ, σ²), y) = σ · [ z·(2·Φ(z) − 1) + 2·φ(z) − 1/√π ]
         where z = (y − μ) / σ
 
-    is minimised over ``(a, b, c, d)``. Sample weights are not yet
-    threaded through this fit method (raises if passed).
+    is minimised over ``(a, b, c, d)``. Sample weights are not yet threaded
+    through this fit method and raise if passed.
     """
 
     name: str = "EMOS"
@@ -157,10 +157,11 @@ class EMOS(BaseEstimator):
         y: np.ndarray,
         sample_weight: np.ndarray | None,
     ) -> None:
-        # OLS for μ: y ≈ a + b·ens_mean (weighted if sample_weight given).
+        # OLS for μ, fitting y ≈ a + b·ens_mean, weighted when sample_weight
+        # is given.
         A_mu = np.column_stack([np.ones_like(ens_mean), ens_mean])
         self.a_, self.b_ = _weighted_lstsq2(A_mu, y, sample_weight)
-        # Squared residuals → σ². Method-of-moments OLS for variance:
+        # Squared residuals give σ². Method-of-moments OLS for the variance,
         # r² ≈ c + d·ens_var. Unconstrained OLS can return c_<0 or d_<0,
         # which makes σ²(x) negative somewhere in the training range,
         # silently clipping that at predict time hides a bad fit (Rule
@@ -319,40 +320,42 @@ class HeteroscedasticNormal(BaseEstimator):
         μ(x)      = β_μ0 + xμ · β_μ
         log σ(x)  = β_σ0 + xσ · β_σ           (log link → σ > 0 always)
 
-    where ``xμ = X[:, mu_idx]`` and ``xσ = X[:, sigma_idx]`` select which
-    columns of the shared design matrix ``X`` drive the mean vs the scale
-    (the two sets may overlap, e.g. cloud cover in both). When ``mu_idx`` /
-    ``sigma_idx`` are ``None`` every column drives that moment.
+    Here ``xμ = X[:, mu_idx]`` and ``xσ = X[:, sigma_idx]`` select which
+    columns of the shared design matrix ``X`` drive the mean and which drive
+    the scale. The two sets may overlap, with cloud cover in both, for
+    instance. When ``mu_idx`` and ``sigma_idx`` are ``None``, every column
+    drives that moment.
 
-    This is the parametric, interpretable counterpart to ``NGBoostNormal``
-    (which boosts μ̂/σ̂ non-linearly) and the feature-driven generalisation
-    of ``EMOS`` (whose mean is hard-wired to ``ens_mean`` and whose scale is
-    hard-wired to ``ens_std``). Setting ``mu_idx=(i_mean,)`` and
-    ``sigma_idx=(i_logstd,)`` recovers EMOS's modelling philosophy, affine
-    mean, spread-driven scale, but now cloud / wind / dewpoint can enter
-    *either* moment as additional columns. The coefficients are readable:
-    each ``β_σ`` is the multiplicative log-scale response to its feature.
+    This is the parametric, interpretable counterpart to ``NGBoostNormal``,
+    which boosts μ̂ and σ̂ non-linearly. It is also the feature-driven
+    generalisation of ``EMOS``, whose mean is hard-wired to ``ens_mean`` and
+    whose scale is hard-wired to ``ens_std``. Setting ``mu_idx=(i_mean,)`` and
+    ``sigma_idx=(i_logstd,)`` recovers the EMOS modelling philosophy of an
+    affine mean and a spread-driven scale. Cloud, wind and dewpoint can now
+    enter either moment as additional columns. The coefficients are readable,
+    since each ``β_σ`` is the multiplicative log-scale response to its feature.
 
-    Fit details:
+    The fit has five components.
 
-    * **NLL.** Minimises the Gaussian negative log-likelihood
-      ``Σ wᵢ·(log σᵢ + ½·zᵢ²)``, ``zᵢ = (yᵢ − μᵢ)/σᵢ`` (the constant
-      ``½log 2π`` is dropped). ``sample_weight`` reweights rows.
-    * **Optimiser.** L-BFGS-B with the analytic gradient
+    * NLL. Minimises the Gaussian negative log-likelihood
+      ``Σ wᵢ·(log σᵢ + ½·zᵢ²)`` with ``zᵢ = (yᵢ − μᵢ)/σᵢ``. The constant
+      ``½log 2π`` is dropped. ``sample_weight`` reweights rows.
+    * Optimiser. L-BFGS-B with the analytic gradient
       ``∂/∂β_μ = −Aμᵀ(w·(y−μ)/σ²)`` and ``∂/∂β_σ = Aσᵀ(w·(1−z²))``.
-      Initialised from an OLS mean fit + a constant log-scale at the
-      residual std. Non-convergence raises (Rule #0.5, no silent
-      return of the init).
-    * **Standardisation.** Columns are standardised (mean/std stored from
-      fit, reused at predict) so the optimiser is well-conditioned across
-      features on different scales. Predictions are invariant to this.
-    * **Ridge.** ``l2 > 0`` adds an L2 penalty on the non-intercept
-      coefficients of *both* heads, the low-N overfit guard.
-    * **σ floor.** ``sigma_floor`` clamps σ̂ at predict time only (the
-      log link already keeps it positive; the floor bounds confidence).
+      It is initialised from an OLS mean fit and a constant log-scale at the
+      residual standard deviation. Non-convergence raises under Rule #0.5,
+      rather than returning the init.
+    * Standardisation. Columns are standardised, with the mean and standard
+      deviation stored from fit and reused at predict, so the optimiser is
+      well-conditioned across features on different scales. Predictions are
+      invariant to this.
+    * Ridge. ``l2 > 0`` adds an L2 penalty on the non-intercept coefficients
+      of both heads, guarding against low-N overfit.
+    * σ floor. ``sigma_floor`` clamps σ̂ at predict time only. The log link
+      already keeps it positive, and the floor bounds confidence.
 
-    Per Rule #0.5: non-finite ``X``/``y`` raise rather than being imputed
-    here, the caller decides how to handle missing features.
+    Under Rule #0.5, non-finite ``X`` or ``y`` raise rather than being imputed
+    here. The caller decides how to handle missing features.
     """
 
     mu_idx: tuple[int, ...] | None = None
@@ -439,7 +442,8 @@ class HeteroscedasticNormal(BaseEstimator):
         w = (np.ones(N) if sample_weight is None
              else np.asarray(sample_weight, dtype=float))
 
-        # Init: OLS mean, constant log-scale at residual std.
+        # Initialise with the OLS mean and a constant log-scale at the
+        # residual standard deviation.
         beta_mu0, *_ = np.linalg.lstsq(Amu, y, rcond=None)
         resid = y - Amu @ beta_mu0
         log_s0 = math.log(max(float(np.std(resid)), 1e-3))
@@ -508,11 +512,12 @@ class HeteroscedasticNormal(BaseEstimator):
 
 @dataclass(repr=False)
 class BayesianRidge(BaseEstimator):
-    """Conjugate Bayesian linear regression. Predictive distribution per row
-    is Student-t (μ_n, σ_n, ν_n), σ_n grows with feature-space distance from
-    training data, so dispersion is regime-conditional without a boosted σ.
+    """Conjugate Bayesian linear regression. The predictive distribution per
+    row is Student-t (μ_n, σ_n, ν_n). σ_n grows with feature-space distance
+    from the training data, so dispersion is regime-conditional without a
+    boosted σ.
 
-    Prior (Normal-Inverse-Gamma):
+    The prior is Normal-Inverse-Gamma.
 
         β | σ²  ~ N(0,  σ² · diag([1/λ₀, 1/λ, …, 1/λ]))
         σ²     ~ Inv-Gamma(a_0, b_0)
@@ -522,8 +527,8 @@ class BayesianRidge(BaseEstimator):
     the intercept column (default 1e-6). ``a_0`` and ``b_0`` parametrise
     the variance prior; defaults (1e-3, 1e-3) are weakly informative.
 
-    Posterior (closed form, with intercept handled by augmenting X with a
-    column of ones):
+    The posterior is closed form, with the intercept handled by augmenting X
+    with a column of ones.
 
         V_n⁻¹ = V_0⁻¹ + Xᵀ W X
         m_n   = V_n · Xᵀ W y                    (since m_0 = 0)
@@ -533,21 +538,21 @@ class BayesianRidge(BaseEstimator):
     where W is the diagonal of sample_weight (identity if not supplied)
     and N_eff = N (or Σ w_i for weighted fits).
 
-    Predictive at new x*:
+    The predictive at a new x* is as follows.
 
         ν*    = 2 · a_n
         μ*    = x*ᵀ m_n
         σ*²   = (b_n / a_n) · (1 + x*ᵀ V_n x*)
 
-    The (1 + x*ᵀ V_n x*) factor is the posterior-uncertainty inflation:
-    rows whose features sit far from the training set get wider
-    predictive intervals automatically, that's the regime-conditional σ
-    that ``StackedParametric``'s constant residual σ̂ cannot give you.
+    The (1 + x*ᵀ V_n x*) factor is the posterior-uncertainty inflation. Rows
+    whose features sit far from the training set receive wider predictive
+    intervals automatically. This is the regime-conditional σ that the constant
+    residual σ̂ of ``StackedParametric`` cannot provide.
 
-    Features are standardised by default (subtract train mean, divide by
-    train std) before fitting. The prior precision then applies on a
-    consistent feature scale; the same train statistics are reused at
-    predict time.
+    Features are standardised by default before fitting, by subtracting the
+    train mean and dividing by the train standard deviation. The prior
+    precision then applies on a consistent feature scale. The same train
+    statistics are reused at predict time.
     """
 
     prior_precision: float = 1.0
@@ -705,40 +710,41 @@ class BayesianRidge(BaseEstimator):
 class HierarchicalNormal(BaseEstimator):
     """Hierarchical normal regression with site-level partial pooling.
 
-    Cross-site (Form C) model. For each row i belonging to site s_i with
-    K-dim feature vector x_i:
+    This is the cross-site (Form C) model. For each row i belonging to site
+    s_i with K-dim feature vector x_i,
 
         y_i      = x_iᵀ β_{s_i} + ε_i,    ε_i ~ N(0, σ²)
         β_s | β₀ ~ N(β₀, τ² · I_K)        site coefficients ∈ R^K
         β₀        flat (improper)
 
-    Each site has its own coefficient vector β_s. All sites' coefs are
-    shrunk toward the global mean β₀ by an amount τ that the data
-    itself estimates (empirical Bayes. Type-II marginal-likelihood
-    maximisation over (log σ², log τ²); β₀ profiled out by GLS).
+    Each site has its own coefficient vector β_s. All sites' coefficients are
+    shrunk toward the global mean β₀ by an amount τ that the data itself
+    estimates. This is empirical Bayes, by Type-II marginal-likelihood
+    maximisation over (log σ², log τ²), with β₀ profiled out by GLS.
 
-    Predictive at a new row in site s:
+    The predictive at a new row in site s is as follows.
 
         μ̂   = xᵀ E[β_s | data]
         σ̂²  = σ² + xᵀ Cov(β_s | data) x
 
-    For a row in a site not seen at fit time, predictive uses β₀ with
-    the marginal prior τ² added to the posterior on β₀ (proper
-    Bayesian predictive for a new group). Raises by default
-    (``allow_unseen_sites=False``). Rule #0.5.
+    For a row in a site not seen at fit time, the predictive uses β₀ with the
+    marginal prior τ² added to the posterior on β₀. This is the proper
+    Bayesian predictive for a new group. It raises by default, under
+    ``allow_unseen_sites=False`` and Rule #0.5.
 
-    Inputs require a ``groups`` array of length N giving the site
-    identifier per row (str or int). Features are standardised before
-    fit (with stored stats reused at predict time).
+    Inputs require a ``groups`` array of length N giving the site identifier
+    per row, as a str or an int. Features are standardised before fit, with the
+    stored statistics reused at predict time.
 
-    Pipeline integration: this trainer needs ``groups`` at both fit and
-    predict time. ``WalkForward`` threads ``groups`` through to any node whose
-    signature declares it; run standalone or as a ``Pipeline`` node under
-    ``WalkForward(...).fit_predict(..., groups=...)``. Closed-form fit; no MCMC.
+    This trainer needs ``groups`` at both fit and predict time.
+    ``WalkForward`` threads ``groups`` through to any node whose signature
+    declares it. Run it standalone or as a ``Pipeline`` node under
+    ``WalkForward(...).fit_predict(..., groups=...)``. The fit is closed-form,
+    with no MCMC.
 
-    Computational shortcut: per-site Σ_s = σ²·I + τ²·X_s X_sᵀ is a
-    rank-K perturbation of σ²·I, so by Woodbury we only invert K×K
-    matrices regardless of per-site n_s. Fit cost ≈ O(N·K² + S·K³·iters).
+    The per-site Σ_s = σ²·I + τ²·X_s X_sᵀ is a rank-K perturbation of σ²·I.
+    By Woodbury, only K×K matrices are inverted regardless of the per-site
+    n_s. The fit cost is approximately O(N·K² + S·K³·iters).
     """
 
     allow_unseen_sites: bool = False
@@ -819,7 +825,7 @@ class HierarchicalNormal(BaseEstimator):
         const_terms = 0.0
         quad_yy = 0.0
         for (A_s, c_s, d_s, n_s) in stats.values():
-            # Woodbury core: H_s = (I_K/φ + A_s/ψ).
+            # Woodbury core, H_s = (I_K/φ + A_s/ψ).
             H_s = I_K / phi + A_s / psi
             try:
                 L_s = np.linalg.cholesky(H_s)
@@ -848,7 +854,8 @@ class HierarchicalNormal(BaseEstimator):
             return float("inf")
         beta_0 = np.linalg.solve(L_Q.T, np.linalg.solve(L_Q, g))
         log_det_Q = 2.0 * float(np.log(np.diag(L_Q)).sum())
-        # Marginal quadratic form: yᵀΣ^{-1}y - β̂_0ᵀ Q β̂_0 - log|Q| (Schur).
+        # Marginal quadratic form via the Schur complement,
+        # yᵀΣ^{-1}y - β̂_0ᵀ Q β̂_0 - log|Q|.
         quad = quad_yy - float(beta_0 @ g)
         N_total = sum(n_s for (_, _, _, n_s) in stats.values())
         nll = 0.5 * (
@@ -982,8 +989,8 @@ class HierarchicalNormal(BaseEstimator):
         mu = np.empty(N)
         var = np.empty(N)
         psi, phi = self.sigma2_, self.tau2_
-        # Unseen-site predictive: β_new ~ N(β̂_0, V_β0 + φ I). Cheap to always
-        # build; only consumed on the unseen-site branch below.
+        # Unseen-site predictive, β_new ~ N(β̂_0, V_β0 + φ I). This is cheap to
+        # build always, and is consumed only on the unseen-site branch below.
         I_K = np.eye(A.shape[1])
         for i in range(N):
             s = groups[i]
@@ -1020,14 +1027,14 @@ class NGBoostNormal(BaseEstimator):
     sigma_floor clamps σ̂ above a minimum (NGBoost can collapse σ̂ → 0 on
     overfit folds; the floor mirrors the original trainer's SIGMA_FLOOR).
 
-    For reproducible fits, set BOTH seeds:
+    Reproducible fits require both seeds to be set.
 
-    * ``random_seed`` → seeds NGBoost's minibatching / column-subsampling.
-    * ``base_random_state`` → seeds the per-iteration cloned base learner
-      (default ``DecisionTreeRegressor``). NGBoost's default Base has
-      ``random_state=None`` so tree split tie-breaking draws from the OS
-      RNG; without this, successive fits with the same ``random_seed``
-      still produce different μ̂/σ̂.
+    * ``random_seed`` seeds NGBoost's minibatching and column-subsampling.
+    * ``base_random_state`` seeds the per-iteration cloned base learner, by
+      default a ``DecisionTreeRegressor``. NGBoost's default Base has
+      ``random_state=None``, so tree split tie-breaking draws from the OS
+      random number generator. Without this seed, successive fits with the same
+      ``random_seed`` still produce different μ̂ and σ̂.
 
     When ``base_random_state`` is set, this constructs a
     ``DecisionTreeRegressor`` matching ``ngboost.learners.
@@ -1120,17 +1127,16 @@ class MixtureNormals(BaseEstimator):
     that vendor's train-slice RMSE against y. Equal weights over the K
     columns of X.
 
-    Treats X as already-curated vendor columns. NaN entries are honored
-    as "vendor absent for this row":
+    Treats X as already-curated vendor columns. A NaN entry means the vendor
+    is absent for that row.
 
-    - **fit**: σ_v is computed per-column with NaN-skip semantics
-      (``nanmean`` over (x_v − y)²); a column with zero finite entries
-      raises.
-    - **predict_dist**: each row gets weights ∝ (vendor present) and is
-      renormalized to sum to 1; absent components carry zero weight and
-      a placeholder μ/σ so downstream math stays finite. Rows with **all**
-      vendors absent fall back to uniform weights with NaN μ - callers
-      must handle those upstream.
+    - At fit, σ_v is computed per-column with NaN-skip semantics, using
+      ``nanmean`` over (x_v − y)². A column with zero finite entries raises.
+    - At predict_dist, each row gets weights proportional to vendor presence,
+      renormalized to sum to 1. Absent components carry zero weight and a
+      placeholder μ and σ, so downstream math stays finite. Rows with every
+      vendor absent fall back to uniform weights with NaN μ, and callers must
+      handle those upstream.
 
     This mirrors the per-row vendor-presence semantics of the original
     snowflake ``mixture_normals`` trainer (dropping NaN vendors per row,
@@ -1199,8 +1205,8 @@ class MixtureNormals(BaseEstimator):
                 f"MixtureNormals: predict X has K={X.shape[1]}, train had K={self.K_}"
             )
         N = X.shape[0]
-        # A component contributes only if (a) the vendor produced a value
-        # for this row AND (b) σ_v was estimable on the train slice.
+        # A component contributes only if the vendor produced a value for this
+        # row and σ_v was estimable on the train slice.
         vendor_trained = (
             self.vendor_trained_ if self.vendor_trained_ is not None
             else np.ones(self.K_, dtype=np.bool_)
@@ -1211,9 +1217,10 @@ class MixtureNormals(BaseEstimator):
             row_w = np.where(
                 n_present[:, None] > 0,
                 present.astype(float) / np.maximum(n_present, 1)[:, None],
-                # Row with no usable vendors: spread weight over trained
-                # vendors with μ=0 placeholder. Mixture is degenerate but
-                # finite; caller can detect via NaN realized-bracket prob.
+                # For a row with no usable vendors, spread the weight over the
+                # trained vendors with a μ=0 placeholder. The mixture is
+                # degenerate but finite. The caller can detect this via a NaN
+                # realized-bracket prob.
                 vendor_trained.astype(float)
                 / max(int(vendor_trained.sum()), 1),
             )

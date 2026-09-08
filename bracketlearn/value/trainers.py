@@ -1,24 +1,26 @@
-"""Value-tilted bracket trainers: optimize ``L = CE − λ·EA`` against a reference
-price, instead of calibration alone.
+"""Value-tilted bracket trainers optimizing ``L = CE − λ·EA`` against a
+reference price rather than calibration alone.
 
-Both are **bracket-native** (per-(row, bracket) binary, like
-``CumulativeBinary`` / ``BracketExpander``) and both need, in addition to the
-usual per-row grids, a **reference price per bracket** at fit time, the price
-``m`` whose mispricing the tilt chases. That reference is the one thing that
-separates these from every other trainer, and the reason they live in
-``bracketlearn.value`` rather than ``bracketlearn.trainers``: training toward
-value-vs-a-market is a step past pure forecasting.
+Both are bracket-native, using a per-(row, bracket) binary in the manner of
+``CumulativeBinary`` and ``BracketExpander``. In addition to the usual per-row
+grids, both need a reference price per bracket at fit time. This is the price
+``m`` whose mispricing the tilt chases. That reference is the one thing
+separating these from every other trainer, and the reason they live in
+``bracketlearn.value`` rather than ``bracketlearn.trainers``. Training toward
+value against a market is a step past pure forecasting.
 
-The reference is used **only in the loss**, so ``predict_dist`` needs no market
-data, the fitted model maps features → a value-tilted bracket distribution. The
-implied edge ``q − m`` and its costed value are computed at scoring time with
-``bracketlearn.score`` (``edge_alignment``, ``edge_alignment_costed``).
+The reference is used only in the loss, so ``predict_dist`` needs no market
+data. The fitted model maps features to a value-tilted bracket distribution.
+The implied edge ``q − m`` and its costed value are computed at scoring time
+with ``bracketlearn.score``, via ``edge_alignment`` and
+``edge_alignment_costed``.
 
 Data contract, construction is hyperparameters only
 ----------------------------------------------------
-The constructor takes **only hyperparameters** (``lam`` and engine knobs). The
-per-row market data, the bracket ladders ``brackets_by_id`` and the reference
-prices ``reference_by_id``, flows alongside ``X`` / ``y`` at call time::
+The constructor takes only hyperparameters, namely ``lam`` and the engine
+settings. The per-row market data, comprising the bracket ladders
+``brackets_by_id`` and the reference prices ``reference_by_id``, flows
+alongside ``X`` and ``y`` at call time::
 
     model = BlendedBracketGBM(lam=2.0)
     model.fit(X_tr, y_tr, ids=ids_tr,
@@ -26,11 +28,12 @@ prices ``reference_by_id``, flows alongside ``X`` / ``y`` at call time::
     dist = model.predict_dist(X_te, ids=ids_te, timestamps=ts_te,
                               brackets_by_id=bbi)
 
-The dicts are keyed by id and may cover *more* ids than any single call, ``fit``
-/ ``predict`` select the subset they need by the ``ids`` you hand them.
-``reference_by_id`` is needed only at fit (the loss); ``predict`` needs only
-``brackets_by_id`` (to assemble the dist). Under ``WalkForward`` you pass the
-full dicts once and they are forwarded **verbatim** to every fold::
+The dicts are keyed by id and may cover more ids than any single call. ``fit``
+and ``predict`` select the subset they need by the ``ids`` they are handed.
+``reference_by_id`` is needed only at fit, where it enters the loss.
+``predict`` needs only ``brackets_by_id``, to assemble the dist. Under
+``WalkForward`` the full dicts are passed once and forwarded verbatim to every
+fold::
 
     WalkForward(n_folds=5).fit_predict(
         model, X, y, ids=ids, timestamps=ts,
@@ -151,19 +154,21 @@ def _aligned_reference(
 class BlendedBracketGBM(BaseEstimator):
     """LightGBM bracket model trained on ``L = CE − λ·EA`` via a custom objective.
 
-    Construction takes **hyperparameters only** - ``lam`` (the value tilt; ``0``
-    = pure CE) plus LightGBM knobs mirroring ``bl_bracket_classifier``'s
-    regularized low-N defaults. The per-row market data is passed at call time
-    (see the module docstring's data contract)::
+    Construction takes hyperparameters only. These are ``lam``, the value tilt,
+    where ``0`` gives pure CE, together with LightGBM settings mirroring the
+    regularized low-N defaults of ``bl_bracket_classifier``. The per-row market
+    data is passed at call time, as described in the module docstring's data
+    contract::
 
         fit(X, y, *, ids, brackets_by_id, reference_by_id)
         predict_dist(X, *, ids, timestamps, brackets_by_id)
 
     ``brackets_by_id`` maps ``id -> 1-D edge array`` (the bracket ladder);
-    ``reference_by_id`` maps ``id -> 1-D price array`` (length ``len(edges) - 1``,
-    the reference price per bracket, used only in the fit loss). Both may cover
-    more ids than a single call uses; ``fit`` / ``predict`` subset by ``ids``. A
-    ``WalkForward`` forwards these dicts for you.
+    ``reference_by_id`` maps ``id -> 1-D price array`` of length
+    ``len(edges) - 1``, the reference price per bracket, used only in the fit
+    loss. Both may cover more ids than a single call uses, and ``fit`` and
+    ``predict`` subset by ``ids``. A ``WalkForward`` forwards these dicts
+    automatically.
     """
 
     lam: float = 1.0
@@ -226,13 +231,13 @@ class BlendedBracketGBM(BaseEstimator):
 class BlendedBracketNet(BaseEstimator):
     """Torch MLP bracket model trained on ``L = CE − λ·EA``.
 
-    Same data contract as :class:`BlendedBracketGBM`, construction is
-    hyperparameters only; grids/references are passed to ``fit`` /
+    The data contract matches :class:`BlendedBracketGBM`. Construction is
+    hyperparameters only, and grids and references are passed to ``fit`` and
     ``predict_dist``. Inputs are standardized with train-set statistics.
-    ``ea_scale`` rescales the (small-magnitude) per-contract EA term so ``lam``
-    spans a range comparable to the GBM. When ``None``, it is derived from the
-    fit-set references by :func:`ea_scale_for_reference` and recorded on
-    ``ea_scale_``.
+    ``ea_scale`` rescales the small-magnitude per-contract EA term so that
+    ``lam`` spans a range comparable to the GBM. When ``None``, it is derived
+    from the fit-set references by :func:`ea_scale_for_reference` and recorded
+    on ``ea_scale_``.
     """
 
     lam: float = 1.0
@@ -278,8 +283,8 @@ class BlendedBracketNet(BaseEstimator):
         X_exp, y_exp = exp.fit_transform(np.asarray(X, dtype=float),
                                          np.asarray(y, dtype=float), ids=ids)
         m_exp = _aligned_reference(exp, ids, reference_by_id)
-        # Derive the EA rescaling from the fit-set references so `lam` matches the
-        # GBM engine, unless the user pinned it explicitly. See
+        # Derive the EA rescaling from the fit-set references so `lam` matches
+        # the GBM engine, unless the user pinned it explicitly. See
         # objective.ea_scale_for_reference for the gradient-parity argument.
         self.ea_scale_ = (
             self.ea_scale if self.ea_scale is not None

@@ -1,16 +1,19 @@
-"""Train *for value* and score it: the `bracketlearn.value` trainers + metrics.
+"""Training for value and scoring it, using the `bracketlearn.value` trainers
+and metrics.
 
-End to end on the bundled weather sample
-(`examples/data/weather_value_sample.parquet`), 5,429 station-days of Kalshi
-contracts over 2026-03-17..09-03 across 18 stations:
+This runs end to end on the bundled weather sample
+`examples/data/weather_value_sample.parquet`, 5,429 station-days of Kalshi
+contracts over 2026-03-17..09-03 across 18 stations.
 
-  1. Build per-row bracket grids and the reference (market) price per bracket.
-  2. Fit `BlendedBracketGBM` at several tilts `λ` (objective `L = CE − λ·EA`).
-  3. Score each against the reference two ways, `edge_alignment` (value,
-     fee-free) and `edge_alignment_costed` (value net of a per-trade fee).
-  4. Show the rule: EA rises with the tilt, but *costed* value peaks at an
-     interior `λ`, select the tilt by costed value, never by EA.
-  5. Same call, torch engine (`BlendedBracketNet`).
+  1. Build per-row bracket grids and the reference market price per bracket.
+  2. Fit `BlendedBracketGBM` at several tilts `λ`, under the objective
+     `L = CE − λ·EA`.
+  3. Score each against the reference in two ways, by `edge_alignment` for
+     fee-free value and by `edge_alignment_costed` for value net of a per-trade
+     fee.
+  4. Show the rule. EA rises with the tilt, but costed value peaks at an
+     interior `λ`. Select the tilt by costed value, never by EA.
+  5. Repeat the same call on the torch engine, `BlendedBracketNet`.
 
 Run::
 
@@ -46,22 +49,22 @@ def load():
         # Features must be finite too, not just the reference. `nws` is null
         # wherever the NWS hourly forecast was missing for that station-day
         # (772 of 5,429 rows). Polars hands those back as Python None, so
-        # np.array(X) would come back OBJECT dtype. LightGBM tolerates it and
-        # prints a table, then the torch trainer dies on the same data. Skip
-        # the row rather than impute: this is a demo, and a silently imputed
-        # feature is worse than a smaller N.
+        # np.array(X) would come back with object dtype. LightGBM tolerates it
+        # and prints a table, and the torch trainer then dies on the same data.
+        # The row is skipped rather than imputed. This is a demo, and an
+        # imputed feature is worse than a smaller N.
         feats = [r["ens_mean"], r["ens_std"], r["nws"], r["climo"],
                  r["clim_sigma"]]
         if any(v is None or not np.isfinite(v) for v in feats):
             continue
         rid = len(ids)
-        # BracketExpander appends the raw (lo, hi) bounds as two FEATURE
-        # columns, so the ladder's open tails would put -inf/+inf straight
-        # into the design matrix: the net's per-feature standardisation then
-        # yields NaN, which .clamp() passes through and torch reports as the
-        # unhelpful "all elements of input should be between 0 and 1".
-        # Substitute a finite outer bound for the FEATURE only, the scoring
-        # path keeps the true ±inf edges, so no probability mass moves.
+        # BracketExpander appends the raw (lo, hi) bounds as two feature
+        # columns, so the ladder's open tails would put -inf and +inf straight
+        # into the design matrix. The net's per-feature standardisation then
+        # yields NaN, which .clamp() passes through and torch reports as "all
+        # elements of input should be between 0 and 1". A finite outer bound is
+        # substituted for the feature only. The scoring path keeps the true
+        # ±inf edges, so no probability mass moves.
         e = np.asarray(r["edges"], float)
         span = e[-2] - e[1]
         e_feat = e.copy()
@@ -79,12 +82,14 @@ def load():
 
 
 def score(dist, reference_by_id, y_by_id):
-    """Value (EA) + value-net-of-fee (costed) in ONE call, no manual flatten.
+    """Value as EA and value net of fee as costed, in one call with no manual
+    flatten.
 
-    ``value_report_dist`` does the per-row ragged flatten + renormalization and
-    scores against the same ``reference_by_id`` we trained with. We add the model
-    Brier (the *accuracy* axis) separately, since it is not part of the value
-    report (which reports the reference's Brier, ``A``, instead)."""
+    ``value_report_dist`` performs the per-row ragged flatten and
+    renormalization, and scores against the same ``reference_by_id`` used for
+    training. The model Brier, the accuracy axis, is added separately. It is
+    not part of the value report, which reports the reference's Brier ``A``
+    instead."""
     rep = value_report_dist(dist, reference_by_id, y_by_id, fee=FEE)
     briers = []
     for j, rid in enumerate(dist.ids):

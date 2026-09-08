@@ -1,10 +1,11 @@
 """DistributionForecast, abstract base for all distribution backings.
 
-Concrete subclasses live in sibling modules:
+Concrete subclasses live in sibling modules.
 
-- ``parametric.py``, ``NormalForecast``, ``StudentTForecast``, ``MixtureNormalForecast``
-- ``quantile.py``   - ``QuantileForecast``
-- ``bracket.py``    - ``BracketForecast``
+- ``parametric.py``, holding ``NormalForecast``, ``StudentTForecast`` and
+  ``MixtureNormalForecast``
+- ``quantile.py``, holding ``QuantileForecast``
+- ``bracket.py``, holding ``BracketForecast``
 
 Subclass references in ``from_*`` classmethods and ``integrate`` use
 local imports to keep base.py at the bottom of the dependency graph.
@@ -90,34 +91,33 @@ class DistributionForecast(abc.ABC):
     def pit(self, y: np.ndarray, *, grid_step: float | None = None) -> np.ndarray:
         """Probability Integral Transform per row. Uniform if calibrated.
 
-        ``grid_step`` is the resolution the outcome settles on: 1.0 when y is
-        an integer, ``None`` when y is genuinely continuous. It is NOT
-        optional cosmetics on a discrete outcome. The plain ``F(y)`` is
-        uniform only when Y is continuous, so on a grid it is not the
-        Rosenblatt PIT and a correctly-specified forecast still fails a
-        uniformity check.
+        ``grid_step`` is the resolution the outcome settles on. It is 1.0 when
+        y is an integer and ``None`` when y is genuinely continuous. It is not
+        cosmetic on a discrete outcome. The plain ``F(y)`` is uniform only when
+        Y is continuous, so on a grid it is not the Rosenblatt PIT and a
+        correctly-specified forecast still fails a uniformity check.
 
         With ``grid_step`` the mid-interval (continuity-corrected) form
 
             F(y - h) + 1/2 * [F(y + h) - F(y - h)],   h = grid_step/2
 
-        is used instead. That is the DETERMINISTIC analogue of the randomised
-        PIT, not the randomised PIT: no RNG, so it cannot smear one outcome
-        across its cell.
+        is used instead. This is the deterministic analogue of the randomised
+        PIT rather than the randomised PIT itself. It uses no random number
+        generator, so it cannot smear one outcome across its cell.
 
         The correction is a no-op wherever the backing's own CDF is already
         linear across ``[y-h, y+h]``. ``BracketForecast`` interpolates
         uniformly within a bin, so on a bracket ladder this returns ``F(y)``
-        unchanged for every row interior to a bracket: that backing is
-        already discrete, and ``grid_step`` cannot add resolution the
-        forecast does not carry. The reference value below still moves, which
-        is the part that matters for the verdict.
+        unchanged for every row interior to a bracket. That backing is already
+        discrete, and ``grid_step`` cannot add resolution the forecast does not
+        carry. The reference value below still moves, which is the part that
+        matters for the verdict.
 
-        Note that discretisation compresses the PIT's spread: the calibrated
-        var(PIT) is then strictly BELOW the continuous 1/12, by an amount that
-        depends on ``grid_step`` relative to the predictive width. Judge it
-        against :func:`bracketlearn.calibration.neutral_pit_var`, never
-        against 1/12.
+        Discretisation compresses the PIT's spread. The calibrated var(PIT) is
+        then strictly below the continuous 1/12, by an amount depending on
+        ``grid_step`` relative to the predictive width. Judge it against
+        :func:`bracketlearn.calibration.neutral_pit_var` rather than against
+        1/12.
         """
         y_arr = np.asarray(y, dtype=float)
         if grid_step is None:
@@ -156,13 +156,13 @@ class DistributionForecast(abc.ABC):
     def integrate(self, edges_per_row) -> BracketForecast:
         """Project this distribution onto a per-row bracket grid.
 
-        ``edges_per_row`` may be:
+        ``edges_per_row`` may take three forms.
           - 1-D ``(B+1,)`` shared across all rows,
           - 2-D ``(N, B+1)`` dense per-row grid,
-          - sequence of length N with each entry a 1-D edge vector
-            (ragged; NaN-padded into a dense (N, B_max+1) array).
+          - a sequence of length N with each entry a 1-D edge vector. This is
+            ragged and is NaN-padded into a dense (N, B_max+1) array.
 
-        Default implementation: ``cdf_at_grid`` on the dense edges then
+        The default implementation calls ``cdf_at_grid`` on the dense edges then
         ``np.diff`` along the bin axis. Subclasses may override for a
         faster closed-form path.
         """

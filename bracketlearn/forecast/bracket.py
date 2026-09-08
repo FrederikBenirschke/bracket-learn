@@ -1,6 +1,6 @@
 """BracketForecast, per-row bracket-backed distribution.
 
-Storage is always 2-D with NaN padding for ragged rows; see the class
+Storage is always 2-D with NaN padding for ragged rows. See the class
 docstring for the exact (edges, probs) shape contract.
 """
 
@@ -19,17 +19,16 @@ from bracketlearn.forecast.base import DistributionForecast
 class BracketForecast(DistributionForecast):
     """Per-row bracket-backed distribution.
 
-    Storage is always 2-D:
-      ``edges``: (N, B_max + 1), row i's bracket boundaries live in
-        the first ``B_i + 1`` columns; trailing columns are NaN.
-      ``probs``: (N, B_max)     - row i's bracket probabilities live
-        in the first ``B_i`` columns; trailing columns are NaN.
+    Storage is always 2-D.
+      ``edges`` has shape (N, B_max + 1). Row i's bracket boundaries live in
+        the first ``B_i + 1`` columns, and trailing columns are NaN.
+      ``probs`` has shape (N, B_max). Row i's bracket probabilities live in
+        the first ``B_i`` columns, and trailing columns are NaN.
 
-    All math is per-row. Ragged-row support is via NaN padding: a row's
-    valid prefix is everything before the first NaN in ``edges`` (and
-    the matching one-shorter prefix in ``probs``). All accessor methods
-    mask NaN-padded positions out and return finite results for valid
-    rows.
+    All math is per-row. Ragged rows are supported by NaN padding. A row's
+    valid prefix is everything before the first NaN in ``edges``, with the
+    matching one-shorter prefix in ``probs``. All accessor methods mask
+    NaN-padded positions out and return finite results for valid rows.
     """
 
     edges: np.ndarray            # (N, B+1) with NaN padding for ragged rows
@@ -39,7 +38,7 @@ class BracketForecast(DistributionForecast):
     def from_arrays(
         cls,
         *,
-        edges: np.ndarray,           # 1-D (B+1,) broadcast to all rows, OR 2-D (N, B+1)
+        edges: np.ndarray,           # Either 1-D (B+1,) broadcast to all rows, or 2-D (N, B+1)
         probs: np.ndarray,           # (N, B)
         ids: np.ndarray,
         timestamps: np.ndarray,
@@ -69,7 +68,7 @@ class BracketForecast(DistributionForecast):
                 raise ValueError(
                     f"edges shape {edges_in.shape} incompatible with probs {probs.shape}"
                 )
-            # Per-row monotonicity check, NaN-tolerant: for each row, the
+            # Per-row monotonicity check, NaN-tolerant. For each row, the
             # finite prefix must be strictly increasing.
             edge_nan = np.isnan(edges_in)
             for i in range(N):
@@ -285,11 +284,11 @@ class BracketForecast(DistributionForecast):
         Under this backing's uniform-within-bin density an open tail bin has
         no finite mean, so ``0.5 * (-inf + 60.0)`` is not a midpoint to be
         salvaged. Computing it anyway produced ``0 * inf = nan``, which
-        ``nansum`` cannot recover: the resulting NaN propagated silently
-        through ``DistAsFeatures`` into a design matrix and past
-        ``BMAStacking``'s ``var <= 0`` guard. The ``±inf`` ladder is this
-        library's canonical encoding, so this path is reached by ordinary
-        use and has to fail loudly rather than return a number.
+        ``nansum`` cannot recover. The resulting NaN propagated through
+        ``DistAsFeatures`` into a design matrix and past ``BMAStacking``'s
+        ``var <= 0`` guard. The ``±inf`` ladder is this library's canonical
+        encoding, so this path is reached by ordinary use and must fail rather
+        than return a number.
 
         A bin whose edge is infinite but which carries no mass is fine, and
         its midpoint is zeroed so it contributes nothing to the sum.
@@ -353,12 +352,12 @@ class BracketForecast(DistributionForecast):
         if how not in ("mean", "median", "mode"):
             raise ValueError(f"how={how!r} not in 'mean'/'median'/'mode'")
         if how == "mean":
-            # Guarded: an open tail carrying mass has no finite mean.
+            # Guarded, since an open tail carrying mass has no finite mean.
             return np.nansum(self.probs * self._finite_mids(caller="to_point"), axis=1)
         if how == "mode":
-            # Unguarded on purpose: the mode is a bin choice, so it is
-            # well defined even when that bin is unbounded. It returns
-            # ±inf for an argmax tail bin, which is the honest answer.
+            # Unguarded on purpose. The mode is a bin choice, so it is well
+            # defined even when that bin is unbounded. It returns ±inf for an
+            # argmax tail bin, which is the correct answer.
             mids = 0.5 * (self.edges[:, :-1] + self.edges[:, 1:])
             p_clean = np.nan_to_num(self.probs, nan=-np.inf)
             top = np.argmax(p_clean, axis=1)

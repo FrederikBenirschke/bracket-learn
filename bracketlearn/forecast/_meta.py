@@ -1,8 +1,8 @@
 """Metadata + leaf data objects with no dependencies on forecast subclasses.
 
-Lives here so other modules in this package can import these without
-worrying about circulars: ``_meta`` is the bottom of the dependency
-graph. Contains:
+These live here so other modules in this package can import them without
+circular imports. ``_meta`` is the bottom of the dependency graph. It
+contains the following.
 
 - ``TailRule`` / ``TailPolicy`` / ``TailPolicyError``, tail extrapolation policy (§7).
 - ``ProvenanceMeta``, audit / reproducibility schema (§5.4).

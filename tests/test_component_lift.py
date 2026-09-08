@@ -1,8 +1,8 @@
-"""Tests for bracketlearn.component_lift: the paper's §4.2 step-0.
+"""Tests for bracketlearn.component_lift, the paper's §4.2 step 0.
 
-The substantive tests assert PARAMETER RECOVERY: given components built
-with known (a, b, σ), the fit must return them. A lift that cannot recover
-a planted slope cannot be trusted to report that a real vendor has one.
+The substantive tests assert parameter recovery. Given components built with
+known (a, b, σ), the fit must return them. A lift that cannot recover a
+planted slope cannot be trusted to report that a real vendor has one.
 """
 
 from __future__ import annotations
@@ -23,9 +23,9 @@ from bracketlearn.component_lift import (
 def planted():
     """Three components with deliberately different (a, b, σ).
 
-    Component 1 is unbiased and sharp; 2 has a shift; 3 OVER-REACTS
-    (b_true < 1 when regressing y on x), the failure an additive de-bias
-    cannot correct.
+    Component 1 is unbiased and sharp, component 2 has a shift, and component
+    3 over-reacts, giving b_true < 1 when regressing y on x. That last is the
+    failure an additive de-bias cannot correct.
     """
     rng = np.random.default_rng(17)
     n = 3000
@@ -37,18 +37,19 @@ def planted():
 
 
 def test_recovers_per_component_sigma(planted):
-    """The paper's Table 9: each member gets its OWN fitted scale."""
+    """The paper's Table 9, where each member gets its own fitted scale."""
     X, y, names = planted
     est = AffineNormal(bias="affine", scale="per_component").fit(X, y, names=names)
     sig = [f.sigma for f in est.fits_]
     assert sig[0] < sig[2] < sig[1], f"sigma ordering wrong: {sig}"
-    # Component 1: y = truth + noise(1.0), regressing y on x1 leaves ~1/sqrt(2)
-    # residual scale. Just assert the components are separated by >20%.
+    # Component 1 is y = truth + noise(1.0), and regressing y on x1 leaves a
+    # residual scale of ~1/sqrt(2). Assert only that the components are
+    # separated by >20%.
     assert max(sig) / min(sig) > 1.2
 
 
 def test_recovers_planted_slope(planted):
-    """A component that over-reacts must fit b < 1: the amplitude
+    """A component that over-reacts must fit b < 1. This is the amplitude
     miscalibration an additive shift is structurally blind to."""
     X, y, names = planted
     est = AffineNormal(bias="affine").fit(X, y, names=names)
@@ -72,9 +73,9 @@ def test_recovers_planted_intercept(planted):
 
 
 def test_shift_form_cannot_fix_amplitude(planted):
-    """bias='shift' is add_skill_blend's form. It must pin b=1, which is
-    exactly why it cannot correct the over-reacting component: the
-    comparison this module exists to make."""
+    """bias='shift' is add_skill_blend's form. It must pin b=1, and for that
+    reason it cannot correct the over-reacting component. This is the
+    comparison the module exists to make."""
     X, y, names = planted
     est = AffineNormal(bias="shift").fit(X, y, names=names)
     assert all(f.slope == 1.0 for f in est.fits_)
@@ -88,7 +89,7 @@ def test_shift_form_cannot_fix_amplitude(planted):
 
 
 def test_shared_scale_gives_every_component_the_same_sigma(planted):
-    """BMA / Raftery eq. (12): one common sigma across components."""
+    """BMA and Raftery eq. (12), with one common sigma across components."""
     X, y, names = planted
     est = AffineNormal(scale="shared").fit(X, y, names=names)
     sig = {f.sigma for f in est.fits_}
@@ -97,23 +98,23 @@ def test_shared_scale_gives_every_component_the_same_sigma(planted):
 
 
 def test_shared_sigma_is_the_slp_spread_ratio(planted):
-    """The paper's §4.2 identity: sigma_shared / sigma_i is SLP's c.
+    """The paper's §4.2 identity, that sigma_shared / sigma_i is SLP's c.
 
-    Their BMA fits 1.566 against members 1.958-2.214, a ratio of
-    0.707-0.800, bracketing SLP's fitted c = 0.768.
+    Their BMA fits 1.566 against members 1.958-2.214, a ratio of 0.707-0.800
+    that brackets SLP's fitted c = 0.768.
     """
     X, y, names = planted
     per = AffineNormal(scale="per_component").fit(X, y, names=names)
     sha = AffineNormal(scale="shared").fit(X, y, names=names)
     ratios = [sha.shared_sigma_ / f.sigma for f in per.fits_]
     assert all(r > 0 for r in ratios)
-    # The shared sigma must sit inside the per-component spread, not outside.
+    # The shared sigma must sit inside the per-component spread.
     lo, hi = min(f.sigma for f in per.fits_), max(f.sigma for f in per.fits_)
     assert lo <= sha.shared_sigma_ <= hi
 
 
 def test_moments_are_nan_where_a_component_is_silent():
-    """A silent vendor must drop out, never be imputed (Rule #0.5)."""
+    """A silent vendor must drop out rather than be imputed (Rule #0.5)."""
     rng = np.random.default_rng(18)
     n = 500
     truth = rng.normal(70.0, 8.0, n)
@@ -128,7 +129,8 @@ def test_moments_are_nan_where_a_component_is_silent():
 
 
 def test_conditional_scale_widens_with_the_covariate():
-    """scale='conditional': spread varies by ROW, not only by component."""
+    """Under scale='conditional' the spread varies by row rather than only by
+    component."""
     rng = np.random.default_rng(19)
     n = 4000
     z = rng.uniform(0.0, 1.0, n)          # disagreement proxy
@@ -143,7 +145,7 @@ def test_conditional_scale_widens_with_the_covariate():
 
 
 def test_crps_scale_is_more_robust_than_mle_to_outliers():
-    """CRPS is offered instead of MLE precisely for heavy tails."""
+    """CRPS is offered instead of maximum likelihood for heavy tails."""
     rng = np.random.default_rng(20)
     n = 2000
     truth = rng.normal(70.0, 8.0, n)
@@ -184,18 +186,18 @@ def test_report_renders(planted):
     X, y, names = planted
     est = AffineNormal().fit(X, y, names=names)
     txt = est.report()
-    # "sd spread", not "sigma spread": for a Student-t fit the scale is not
-    # the SD, so the summary line reports the SD to stay comparable across
-    # dist families.
+    # "sd spread" rather than "sigma spread". For a Student-t fit the scale
+    # is not the standard deviation, so the summary line reports the standard
+    # deviation to stay comparable across dist families.
     assert "sd spread" in txt
     for nm in names:
         assert nm in txt
 
 
 def test_moments_feed_the_pool(planted):
-    """The point of the module: components become inputs to bracketlearn.pool,
-    which unlocks SLP and BMA: both need per-component moments and so cannot
-    run on PMF-only experts."""
+    """Components become inputs to bracketlearn.pool, which is the point of
+    the module. That unlocks SLP and BMA, both of which need per-component
+    moments and so cannot run on PMF-only experts."""
     from bracketlearn.pool import fit_pool, spread_adjusted_cdfs
 
     X, y, names = planted
@@ -213,17 +215,18 @@ def test_moments_feed_the_pool(planted):
 # ---------------------------------------------------------------------------
 # Student-t scale family
 #
-# The paper fits a Gaussian at step 0 because its 8 components were members of
-# ONE ensemble, near-exchangeable and homogeneous. Vendor residuals here mix
-# provider outages, station siting and gross errors, which is the generating
-# story that produces heavy tails, so the t is offered alongside the normal.
-# These tests pin that the fitter RESOLVES nu rather than defaulting to a
-# convenient value, which is what makes a measured nu evidence about tails.
+# The paper fits a Gaussian at step 0 because its 8 components were members
+# of a single ensemble, near-exchangeable and homogeneous. Vendor residuals
+# here mix provider outages, station siting and gross errors, which is the
+# generating story that produces heavy tails, so the t is offered alongside
+# the normal. These tests pin that the fitter resolves nu rather than
+# defaulting to a convenient value. That is what makes a measured nu evidence
+# about tails.
 # ---------------------------------------------------------------------------
 
 
 def test_student_t_recovers_planted_degrees_of_freedom():
-    """A planted nu must come back off the grid, not a grid endpoint.
+    """A planted nu must come back off the grid rather than at an endpoint.
 
     Without this, "every vendor fits nu=4" could equally mean the fitter
     always says 4.
@@ -244,11 +247,11 @@ def test_student_t_recovers_planted_degrees_of_freedom():
 
 
 def test_gaussian_data_lands_at_the_flat_top_of_the_nu_grid():
-    """Normally distributed residuals must NOT be reported as heavy-tailed.
+    """Normally distributed residuals must not be reported as heavy-tailed.
 
-    The t nests the normal as nu -> inf, so a t fit on Gaussian data should
-    pick the largest nu on the grid and reproduce the normal's sigma. This is
-    the false-positive guard on is_heavy_tailed.
+    The t nests the normal as nu tends to infinity, so a t fit on Gaussian
+    data should pick the largest nu on the grid and reproduce the normal's
+    sigma. This is the false-positive guard on is_heavy_tailed.
     """
     rng = np.random.default_rng(1)
     n = 20000
@@ -260,16 +263,17 @@ def test_gaussian_data_lands_at_the_flat_top_of_the_nu_grid():
 
     assert t_fit.nu == max(_NU_GRID)
     assert not t_fit.is_heavy_tailed
-    # The t's SD, not its scale, is what compares to the normal's sigma.
+    # The t's standard deviation, not its scale, is what compares to the
+    # normal's sigma.
     assert abs(t_fit.sd - n_fit.sigma) < 0.02
 
 
 def test_student_t_scale_is_not_the_standard_deviation():
-    """sigma is the SCALE; sd inflates it by sqrt(nu/(nu-2)).
+    """sigma is the scale, and sd inflates it by sqrt(nu/(nu-2)).
 
-    Reading .sigma across families is the trap this property exists to stop:
-    a t_3 with scale 2.0 has SD 3.46, so a scale-based dispersion comparison
-    would call it much sharper than an equivalent normal.
+    This property exists to stop .sigma being read across families. A t_3
+    with scale 2.0 has standard deviation 3.46, so a scale-based dispersion
+    comparison would call it much sharper than an equivalent normal.
     """
     f = ComponentFit(
         name="v", intercept=0.0, slope=1.0, sigma=2.0,
@@ -278,7 +282,7 @@ def test_student_t_scale_is_not_the_standard_deviation():
     assert abs(f.sd - 2.0 * math.sqrt(3.0)) < 1e-12
     assert f.sd > f.sigma
 
-    # A normal's sd IS its sigma: the property must not inflate it.
+    # A normal's sd is its sigma, and the property must not inflate it.
     g = ComponentFit(
         name="v", intercept=0.0, slope=1.0, sigma=2.0,
         n_rows=100, coverage=1.0,
@@ -287,7 +291,7 @@ def test_student_t_scale_is_not_the_standard_deviation():
 
 
 def test_student_t_sd_is_infinite_at_nu_two():
-    """t_2 has no finite variance. Report inf, never a silently finite number."""
+    """t_2 has no finite variance. Report inf rather than a finite number."""
     f = ComponentFit(
         name="v", intercept=0.0, slope=1.0, sigma=2.0,
         n_rows=100, coverage=1.0, nu=2.0, dist="student_t",
@@ -296,10 +300,11 @@ def test_student_t_sd_is_infinite_at_nu_two():
 
 
 def test_cdf_dispatches_on_the_fitted_family():
-    """A t fit scored against a normal CDF is a silent dispersion bug.
+    """A t fit scored against a normal CDF is a dispersion bug that raises no
+    error.
 
-    est.cdf exists so no call site hard-codes norm.cdf; this pins that it
-    actually differs between the two families in the tails.
+    est.cdf exists so that no call site hard-codes norm.cdf. This test pins
+    that it does differ between the two families in the tails.
     """
     from scipy.stats import norm
     from scipy.stats import t as student_t
@@ -321,6 +326,6 @@ def test_cdf_dispatches_on_the_fitted_family():
     assert not np.allclose(t_vals, norm.cdf(thr)), (
         "student_t fit returned the normal CDF: dispatch is broken"
     )
-    # A t has fatter tails: more mass beyond +3 and below -3.
+    # A t has fatter tails, with more mass beyond +3 and below -3.
     assert t_vals[0] < norm.cdf(3.0)
     assert t_vals[1] > norm.cdf(-3.0)

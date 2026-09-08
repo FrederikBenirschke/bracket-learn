@@ -1,44 +1,44 @@
 """Hourly bike-sharing demand as a probabilistic-forecasting and pricing problem.
 
-Dataset: OpenML "Bike_Sharing_Demand" (17 379 hourly rows from a DC bike-share
-system, 2011–2012, in chronological order). The raw target is the hourly rental
-count. Features: ``season, year, month, hour, holiday, weekday, workingday,
-weather, temp, feel_temp, humidity, windspeed``.
+The dataset is OpenML "Bike_Sharing_Demand", 17 379 hourly rows from a DC
+bike-share system over 2011-2012 in chronological order. The raw target is the
+hourly rental count. The features are ``season, year, month, hour, holiday,
+weekday, workingday, weather, temp, feel_temp, humidity, windspeed``.
 
 Turning a regression target into a market problem
 -------------------------------------------------
-Predicting "how many bikes this hour" is a plain point-regression task: one
-number per row. A prediction market never trades the exact number. It trades
-ranges, and "will this hour's count land in 200-350?" pays $1 if it does. So
-the script reframes the count three ways:
+Predicting how many bikes this hour is a plain point-regression task, giving
+one number per row. A prediction market never trades the exact number. It
+trades ranges, and "will this hour's count land in 200-350?" pays $1 if it
+does. The script therefore reframes the count in three ways.
 
 1. The hourly count becomes the continuous underlying.
-2. In place of a single predicted number, we model a full predictive
-   distribution over the count. QuantileReg and a lifted LightGBM point model
-   each produce one; the two baselines give floors to beat.
-3. We lay a bracket ladder over the count axis (0 to 1000 in 7 brackets). Each
+2. In place of a single predicted number, a full predictive distribution over
+   the count is modelled. QuantileReg and a lifted LightGBM point model each
+   produce one, and the two baselines give floors to beat.
+3. A bracket ladder is laid over the count axis, 0 to 1000 in 7 brackets. Each
    bracket is one YES/NO contract, and its fair price is the distribution's
    mass in that range, ``P(lo <= count < hi)``.
 
-From there the run follows the standard three steps: forecast the distribution,
-price the brackets, score both the distribution (CRPS, log-score, PIT) and the
-contracts (bracket Brier, log-loss).
+The run then follows the standard three steps. Forecast the distribution, price
+the brackets, then score both the distribution, by CRPS, log-score and PIT, and
+the contracts, by bracket Brier and log-loss.
 
 Run::
 
     conda run -n weathermarkets python -m bracketlearn.examples.bike_sharing_timeseries
 
-What this script demonstrates:
+This script demonstrates the following.
 
-- ``cv="expanding-window"`` on a genuine time series: train always precedes
-  test in calendar time, no look-ahead.
-- Two learned models on the real feature matrix: ``QuantileReg`` (quantile
-  functions, which capture the heteroscedastic spread of demand) and a LightGBM
-  point model lifted to a Normal by ``GlobalResidual``.
-- Two baselines: the marginal ``EmpiricalDistribution`` and a lag-24
-  ``Persistence`` (same hour yesterday). The diurnal cycle dominates hourly
+- ``cv="expanding-window"`` on a genuine time series, where train always
+  precedes test in calendar time, with no look-ahead.
+- Two learned models on the real feature matrix. ``QuantileReg`` gives quantile
+  functions, which capture the heteroscedastic spread of demand, and a LightGBM
+  point model is lifted to a Normal by ``GlobalResidual``.
+- Two baselines, the marginal ``EmpiricalDistribution`` and a lag-24
+  ``Persistence``, the same hour yesterday. The diurnal cycle dominates hourly
   demand, so lag-24 persistence is a real bar to clear.
-- A bracket ladder over realistic demand levels (0 to 1000 bikes/hour).
+- A bracket ladder over realistic demand levels, 0 to 1000 bikes per hour.
 - ``result.score(y)`` aligns OOF coverage internally, so you never touch
   ``dist.ids``.
 """
@@ -67,9 +67,10 @@ from bracketlearn.trainers import QuantileReg, SklearnPoint
 
 
 def _prepare(df: pd.DataFrame) -> np.ndarray:
-    """One-hot encode every categorical column; return a dense float matrix.
+    """One-hot encode every categorical column and return a dense float matrix.
 
-    Keeping it ~simple/single-file: pandas get_dummies, then to_numpy.
+    This is kept simple and single-file, using pandas get_dummies followed by
+    to_numpy.
     """
     df = df.copy()
     cat_cols = [c for c in df.columns if str(df[c].dtype) == "category"]
@@ -84,9 +85,9 @@ def main() -> None:
     ds = fetch_openml("Bike_Sharing_Demand", version=2,
                       as_frame=True, parser="pandas")
     # The dataset ships in chronological (hourly) order, and there is no
-    # day-of-month column to re-sort on, so keep the rows as-loaded: the row
-    # index is the time index. Sorting on (year, month, hour) would group all
-    # same-hour rows together and destroy that order.
+    # day-of-month column to re-sort on, so the rows are kept as loaded and the
+    # row index is the time index. Sorting on (year, month, hour) would group
+    # all same-hour rows together and destroy that order.
     df: pd.DataFrame = ds.data.reset_index(drop=True)
     y = ds.target.to_numpy(dtype=float)
     X = _prepare(df)
@@ -95,30 +96,31 @@ def main() -> None:
     ts = ids.astype(float)        # monotone synthetic timestamp == row order
     print(f"  rows={n}  features={X.shape[1]}  y in [{y.min():.0f}, {y.max():.0f}]")
 
-    # The bracket ladder over the count axis. These 7 brackets ARE the
-    # tradeable contracts: each is a YES/NO on "this hour's count lands in
-    # [lo, hi)", priced as the forecast distribution's mass in that range.
-    # The edges span the observed range, 0 to 1000 bikes/hour.
+    # The bracket ladder over the count axis. These 7 brackets are the
+    # tradeable contracts. Each is a YES/NO on whether this hour's count lands
+    # in [lo, hi), priced as the forecast distribution's mass in that range.
+    # The edges span the observed range, 0 to 1000 bikes per hour.
     edges = np.array([0., 50., 100., 200., 350., 500., 750., 1000.])
     print(f"ladder: {len(edges)-1} brackets covering {edges[0]:.0f}–{edges[-1]:.0f} bikes/hour")
 
     print("\nfitting (expanding-window, 5 folds) …")
     model = [
-        # Baseline 1: marginal-y distribution, ignores the features.
+        # Baseline 1, the marginal-y distribution, which ignores the features.
         Pipeline([EmpiricalDistribution()], name="emp"),
-        # Baseline 2: same hour yesterday + a global residual σ. The diurnal
-        # cycle is the dominant signal on hourly demand, so lag-24 persistence
-        # is a non-trivial bar to clear.
+        # Baseline 2, the same hour yesterday plus a global residual σ. The
+        # diurnal cycle is the dominant signal on hourly demand, so lag-24
+        # persistence is a non-trivial bar to clear.
         Pipeline([Persistence(lag=24), GlobalResidual()], name="persist24"),
-        # Learned model 1: quantile regression. Emits quantile functions, so it
-        # captures demand's heteroscedastic spread (busy hours vary far more
-        # than quiet ones).
+        # Learned model 1, quantile regression. It emits quantile functions,
+        # so it captures demand's heteroscedastic spread, since busy hours vary
+        # far more than quiet ones.
         Pipeline(
             [QuantileReg(n_estimators=200, learning_rate=0.05, random_seed=0)],
             name="qreg",
         ),
-        # Learned model 2: a LightGBM point model lifted to a Normal by one
-        # residual σ. Sharp mean, but a single σ can't widen on busy hours.
+        # Learned model 2, a LightGBM point model lifted to a Normal by one
+        # residual σ. The mean is sharp, but a single σ cannot widen on busy
+        # hours.
         Pipeline(
             [SklearnPoint(LGBMRegressor(n_estimators=200, learning_rate=0.05,
                                         verbose=-1, random_state=0)),
@@ -128,7 +130,7 @@ def main() -> None:
     ]
     wf = WalkForward(
         cv="expanding-window", n_folds=5, embargo=24,
-        refit_on_full=False,    # demo: only OOF metrics, no retrain.
+        refit_on_full=False,    # demo, OOF metrics only, no retrain.
     )
     # Every model reads the same real feature matrix X. The baselines ignore
     # most of it (emp uses none, persist uses the lag), and the learned models
@@ -143,10 +145,10 @@ def main() -> None:
         y, metrics=["log_loss_bracket", "brier_bracket"], edges=edges,
     ))
 
-    # Skill scores vs each baseline. Two anchors are useful here: the
-    # marginal-y "emp" baseline, and the seasonal lag-24 "persist24"
-    # baseline. Beating "emp" only means "you learned the marginal";
-    # beating "persist24" means "you learned more than the diurnal cycle".
+    # Skill scores against each baseline. Two anchors are useful here, the
+    # marginal-y "emp" baseline and the seasonal lag-24 "persist24" baseline.
+    # Beating "emp" means only that the marginal was learned. Beating
+    # "persist24" means more than the diurnal cycle was learned.
     print("\n=== skill scores (1 - CRPS / CRPS_baseline) ===")
     crps = result.score(y, metrics=["crps"])
     for ref in ("emp", "persist24"):

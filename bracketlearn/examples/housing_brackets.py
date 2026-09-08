@@ -1,40 +1,40 @@
 """California housing as a probabilistic-forecasting and pricing problem.
 
-Dataset: sklearn's ``fetch_california_housing`` (20 640 rows, 8 numeric
-features). The raw target is the median house value in units of $100k (so
-2.5 = $250k).
+The dataset is sklearn's ``fetch_california_housing``, with 20 640 rows and 8
+numeric features. The raw target is the median house value in units of $100k,
+so 2.5 means $250k.
 
 Turning a regression target into a market problem
 -------------------------------------------------
-Predicting a house value is a plain point-regression task: one number per row.
-To price contracts on it you trade ranges instead, and "will this house sell
-between $300k and $400k?" pays $1 if it does. So the script reframes the value
-three ways:
+Predicting a house value is a plain point-regression task, giving one number
+per row. To price contracts on it, ranges are traded instead, and "will this
+house sell between $300k and $400k?" pays $1 if it does. The script therefore
+reframes the value in three ways.
 
 1. The house value becomes the continuous underlying.
-2. In place of a single predicted number, we model a full predictive
-   distribution over the value. A lifted ridge model and QuantileReg each
-   produce one; an EmpiricalDistribution baseline gives a floor.
-3. We lay a bracket ladder over the price axis ($0 to $500k). Each bracket is
-   one YES/NO contract, priced as the distribution's mass in that range.
+2. In place of a single predicted number, a full predictive distribution over
+   the value is modelled. A lifted ridge model and QuantileReg each produce
+   one, and an EmpiricalDistribution baseline gives a floor.
+3. A bracket ladder is laid over the price axis, from $0 to $500k. Each bracket
+   is one YES/NO contract, priced as the distribution's mass in that range.
 
-From there the standard three steps: forecast the distribution, price the
-brackets, score both the distribution (CRPS, log-score) and the contracts
-(bracket log-loss, Brier).
+The standard three steps follow. Forecast the distribution, price the brackets,
+then score both the distribution, by CRPS and log-score, and the contracts, by
+bracket log-loss and Brier.
 
 Run::
 
     conda run -n weathermarkets python -m bracketlearn.examples.housing_brackets
 
-What this script demonstrates:
+This script demonstrates the following.
 
-- ``Pipeline([SklearnPoint(RidgeCV()), GlobalResidual()])``: a sklearn
+- ``Pipeline([SklearnPoint(RidgeCV()), GlobalResidual()])``, a sklearn
   regressor lifted to a parametric-normal distribution.
-- ``QuantileReg``: LightGBM per-τ heads, a quantile-backed distribution that
-  captures the heteroscedasticity ridge cannot.
+- ``QuantileReg``, LightGBM per-τ heads giving a quantile-backed distribution
+  that captures the heteroscedasticity ridge cannot.
 - ``BracketLadder`` prices each distribution on a $0 to $500k ladder.
-- ``PipelineResult.score`` reports distribution-level metrics (CRPS, log-score)
-  and bracket-contract metrics (log-loss, Brier) side by side.
+- ``PipelineResult.score`` reports distribution-level metrics, CRPS and
+  log-score, alongside bracket-contract metrics, log-loss and Brier.
 """
 
 from __future__ import annotations
@@ -71,12 +71,12 @@ def main() -> None:
     ids = np.arange(X.shape[0])
     ts = ids.astype(float)                          # synthetic ordering, k-fold
 
-    # Bracket ladder over the realistic price range. Outer edges set wide
-    # (-100 and 100) so the ladder covers the full distribution support
-    # for every row, including the high-end tail where qreg's stored
-    # quantiles plateau at ~5.0 (the California housing target is capped)
-    # AND the occasional pathological RidgeCV prediction in the deep
-    # negative range. Inner bins are 0.5-wide from $50k → $500k.
+    # Bracket ladder over the realistic price range. The outer edges are set
+    # wide, at -100 and 100, so the ladder covers the full distribution support
+    # for every row. That includes the high-end tail where qreg's stored
+    # quantiles plateau at about 5.0, since the California housing target is
+    # capped, and the occasional pathological RidgeCV prediction in the deep
+    # negative range. Inner bins are 0.5-wide from $50k to $500k.
     edges = np.array(
         [-100.0, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 100.0]
     )
@@ -86,7 +86,7 @@ def main() -> None:
 
     print("fitting (kfold, 5 folds) …")
     model = [
-        # Baseline: marginal-y distribution, ignores X.
+        # Baseline, the marginal-y distribution, which ignores X.
         Pipeline([EmpiricalDistribution()], name="emp"),
         Pipeline([SklearnPoint(RidgeCV()), GlobalResidual()], name="ridge"),
         Pipeline(
@@ -107,8 +107,9 @@ def main() -> None:
         y, metrics=["log_loss_bracket", "brier_bracket"], edges=edges,
     ))
 
-    # Skill score vs the EmpiricalDistribution baseline. CRPSS = 1 - CRPS/CRPS_emp;
-    # 0 = matches baseline, positive = beats it, negative = worse.
+    # Skill score against the EmpiricalDistribution baseline, where
+    # CRPSS = 1 - CRPS/CRPS_emp. Zero matches the baseline, positive beats it,
+    # and negative is worse.
     print("\n=== skill vs EmpiricalDistribution baseline ===")
     crps_scores = result.score(y, metrics=["crps"])
     base = crps_scores["emp"]["crps"]

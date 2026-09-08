@@ -1,21 +1,22 @@
 """Trivial baselines.
 
-Every probabilistic-forecasting paper compares against a baseline that
-ignores most of the signal. These two are the floors a real model should
-clear by a wide margin, if your fancy quantile-regression-stacked-ensemble
-ties ``EmpiricalDistribution``, the features aren't predictive.
+Every probabilistic-forecasting paper compares against a baseline that ignores
+most of the signal. These two are the floors a real model should clear by a
+wide margin. A quantile-regression-stacked-ensemble that ties
+``EmpiricalDistribution`` indicates the features are not predictive.
 
-- ``EmpiricalDistribution``: emits the marginal distribution of training
-  ``y`` as a fixed quantile-backed forecast. Ignores ``X`` completely.
-  The "you should always beat this" floor for distributional skill.
+- ``EmpiricalDistribution`` emits the marginal distribution of training ``y``
+  as a fixed quantile-backed forecast. It ignores ``X`` completely and is the
+  floor for distributional skill.
 
-- ``Persistence``: ``mu_t = y_{t - lag}`` (defaults to lag=1). Point-only;
-  pair with ``GlobalResidual`` (or another ``Lifter``) for distributional
-  output. Trivial on i.i.d. data, surprisingly strong on autocorrelated
-  series, use it to spot autocorrelation you weren't modelling.
+- ``Persistence`` sets ``mu_t = y_{t - lag}``, with lag=1 by default. It is
+  point-only, so pair it with ``GlobalResidual``, or another ``Lifter``, for
+  distributional output. It is trivial on i.i.d. data and strong on
+  autocorrelated series, which makes it useful for spotting unmodelled
+  autocorrelation.
 
-Both inherit ``BaseEstimator`` so they slot into a ``Pipeline`` (run under
-``WalkForward``) unchanged.
+Both inherit ``BaseEstimator``, so they slot unchanged into a ``Pipeline`` run
+under ``WalkForward``.
 """
 
 from __future__ import annotations
@@ -35,18 +36,19 @@ _DEFAULT_TAUS: tuple[float, ...] = (
 
 @dataclass(repr=False)
 class EmpiricalDistribution(BaseEstimator):
-    """Marginal-y baseline: ignore X, emit the empirical CDF of training y.
+    """Marginal-y baseline. X is ignored and the empirical CDF of training y
+    is emitted.
 
-    Stores ``np.quantile(y_train, taus)`` once at fit time; ``predict_dist``
-    broadcasts that quantile vector across every row of the inference X.
-    No regression, no calibration, no per-row variation.
+    Stores ``np.quantile(y_train, taus)`` once at fit time. ``predict_dist``
+    broadcasts that quantile vector across every row of the inference X. There
+    is no regression, no calibration, and no per-row variation.
 
-    Despite being trivial, this is the standard CRPS floor in weather and
-    forecasting literature ("climatology"). A model that doesn't beat it
-    has zero distributional skill.
+    Despite being trivial, this is the standard CRPS floor in the weather and
+    forecasting literature, where it is called climatology. A model that does
+    not beat it has no distributional skill.
 
-    Output: quantile-backed ``DistributionForecast`` with the configured
-    tail policy (clip by default).
+    The output is a quantile-backed ``DistributionForecast`` with the
+    configured tail policy, which is clip by default.
     """
 
     taus: tuple[float, ...] = _DEFAULT_TAUS
@@ -102,19 +104,19 @@ class EmpiricalDistribution(BaseEstimator):
 class Persistence(BaseEstimator):
     """``mu_t = y_{t - lag}``. PointForecaster, wrap with a Lifter for σ.
 
-    At fit time we record the *last* ``lag`` training ``y`` values. At
-    predict time we tile that vector across the inference horizon:
-    inference row ``i`` gets ``tail_y_[i mod lag]``. This means:
+    At fit time the last ``lag`` training ``y`` values are recorded. At predict
+    time that vector is tiled across the inference horizon, so inference row
+    ``i`` gets ``tail_y_[i mod lag]``. Two cases follow.
 
-    - lag=1 collapses to "predict the last training y everywhere" (the
-      classical random-walk baseline).
+    - lag=1 collapses to predicting the last training y everywhere, the
+      classical random-walk baseline.
     - lag=24 on hourly data emits ``[y_{T-24}, y_{T-23}, ..., y_{T-1},
-      y_{T-24}, y_{T-23}, ...]``, the last full day repeated, which is
-      the standard "yesterday's diurnal cycle" baseline used in
-      bike-share / load-forecasting benchmarks.
+      y_{T-24}, y_{T-23}, ...]``, the last full day repeated. This is the
+      standard yesterday's-diurnal-cycle baseline used in bike-share and
+      load-forecasting benchmarks.
 
-    The cycle is deterministic and ignores any inference y (the model
-    sees only X and timestamps). For a strictly causal autoregressive
+    The cycle is deterministic and ignores any inference y, since the model
+    sees only X and timestamps. For a strictly causal autoregressive
     forecaster, pair this with ``cv="expanding-window"`` or
     ``"rolling-window"``, ``"kfold"`` on shuffled rows makes the "last
     y" meaningless.
@@ -168,17 +170,18 @@ class Persistence(BaseEstimator):
 
 @dataclass(repr=False)
 class PersistenceDist(BaseEstimator):
-    """Distributional persistence: ``y_t ~ N(y_{t-lag}, σ̂²)``.
+    """Distributional persistence, ``y_t ~ N(y_{t-lag}, σ̂²)``.
 
-    Same μ rule as ``Persistence``, tiles the last ``lag`` training y's
-    across the inference horizon. σ̂ is the std of in-sample
-    persistence residuals ``y_t − y_{t-lag}`` over the training window,
-    so it captures the empirical scale of single-lag innovations.
+    The μ rule matches ``Persistence``, tiling the last ``lag`` training y
+    values across the inference horizon. σ̂ is the standard deviation of the
+    in-sample persistence residuals ``y_t − y_{t-lag}`` over the training
+    window, so it captures the empirical scale of single-lag innovations.
 
-    Use when you need a distributional baseline (CRPS, bracket-prob
-    eval) and the series is autocorrelated. For i.i.d. data, σ̂ collapses
-    to ``std(y)`` and this becomes a constant-Normal climatology, use
-    ``EmpiricalDistribution`` instead, which doesn't pretend symmetry.
+    Use this when a distributional baseline is needed, for CRPS or
+    bracket-probability evaluation, and the series is autocorrelated. On
+    i.i.d. data σ̂ collapses to ``std(y)`` and this becomes a constant-Normal
+    climatology. ``EmpiricalDistribution`` is preferable there, since it does
+    not assume symmetry.
 
     Lag=24 on hourly data gives "yesterday's diurnal + Gaussian noise"
     a strong baseline for load/temperature forecasting.

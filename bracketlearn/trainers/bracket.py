@@ -1,16 +1,16 @@
 """Bracket-native DistForecaster.
 
-CumulativeBinary fits binary cutpoint classifiers directly on each row's
-own bracket grid. The bracket-emitting *combiners* that consume upstream
-forecasts (TailSpecialist, CDFBoostBracket, LinearPoolDist) now live in
+CumulativeBinary fits binary cutpoint classifiers directly on each row's own
+bracket grid. The bracket-emitting combiners that consume upstream forecasts,
+namely TailSpecialist, CDFBoostBracket and LinearPoolDist, now live in
 ``bracketlearn.trainers.combiners``.
 
-The old ``BracketClassifier`` / ``BracketRegressor`` classes were
-removed in v0.5.0: they conflated per-row -> per-(row, bracket)
-expansion with model fitting and hardcoded the target as a bracket-hit
-indicator. The two concerns now live separately: callers compose
-``bracketlearn.transformers.BracketExpander`` with any sklearn-style
-estimator they like. See ``BracketExpander`` for the migration recipe.
+The old ``BracketClassifier`` and ``BracketRegressor`` classes were removed in
+v0.5.0. They conflated the per-row to per-(row, bracket) expansion with model
+fitting, and hardcoded the target as a bracket-hit indicator. The two concerns
+now live separately, and callers compose
+``bracketlearn.transformers.BracketExpander`` with any sklearn-style estimator.
+See ``BracketExpander`` for the migration recipe.
 """
 
 from __future__ import annotations
@@ -84,8 +84,8 @@ class CumulativeBinary(BaseEstimator):
     ----------------------------------------------------
     Each market/event has its own cutpoint grid (the interior bracket
     edges) and its own outer-edge pair (left/right boundaries
-    absorbing tail mass). Both are passed as id-keyed dicts **at call
-    time** (alongside ``X`` / ``y``), not at construction::
+    absorbing tail mass). Both are passed as id-keyed dicts at call time,
+    alongside ``X`` and ``y``, rather than at construction::
 
         fit(X, y, *, ids, cutpoints_by_id, outer_edges_by_id, sample_weight=None)
         predict_dist(X, *, ids, timestamps, cutpoints_by_id, outer_edges_by_id)
@@ -179,12 +179,12 @@ class CumulativeBinary(BaseEstimator):
             sl = slice(offsets[i], offsets[i + 1])
             # Strict `<`, so the target is P(y < cut) and a realized value
             # sitting exactly on a cutpoint is labelled into the bracket
-            # ABOVE it. That matches the half-open [lo, hi) membership every
-            # other site uses (realized_bin, score._onehot, Isotonic), which
-            # is searchsorted(side="right") - 1. Training `<=` here priced
-            # every on-edge outcome one bracket low, and on an integer-valued
-            # settlement against an integer ladder that is roughly half of
-            # all rows.
+            # above it. That matches the half-open [lo, hi) membership every
+            # other site uses, in realized_bin, score._onehot and Isotonic,
+            # which is searchsorted(side="right") - 1. Training with `<=` here
+            # priced every on-edge outcome one bracket low. On an
+            # integer-valued settlement against an integer ladder that is
+            # roughly half of all rows.
             y_aug[sl] = (y[i] < per_row_cuts[i]).astype(int)
         n_feat = X_aug.shape[1]
         monotone = [0] * (n_feat - 1) + [1] if self.monotone else None
@@ -230,7 +230,8 @@ class CumulativeBinary(BaseEstimator):
         # Rows can have different K_i, collect into a padded 2-D
         # BracketForecast (NaN-padded ragged columns).
         K_per_row = np.array([c.size for c in per_row_cuts], dtype=int)
-        # Row ladder is [lo, cutpoints..., hi]: K_i + 2 edges, K_i + 1 bins.
+        # Row ladder is [lo, cutpoints..., hi], with K_i + 2 edges and
+        # K_i + 1 bins.
         B_per_row = K_per_row + 1
         B_max = int(B_per_row.max())
         edges = np.full((N, B_max + 1), np.nan, dtype=float)

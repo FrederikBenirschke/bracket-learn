@@ -14,12 +14,12 @@ class ContractSpec:
     """Typed serialisable spec for an adapter.
 
     ``edges_per_row`` is set by ladder adapters and carries the exact grid each
-    entity was priced on. It exists so a scorer can VERIFY the edges it is
-    handed rather than trust them: ``brier_bracket``/``log_loss_bracket`` use
-    ``edges`` to decide which bracket the outcome fell in, and on a rotating
-    ladder (Kalshi relists daily) a caller passing one row's vector for all
-    rows used to get a wrong number back with no error, because the shapes
-    still lined up. Left ``None`` by non-ladder adapters.
+    entity was priced on. It exists so a scorer can verify the edges it is
+    handed rather than trust them. ``brier_bracket`` and ``log_loss_bracket``
+    use ``edges`` to decide which bracket the outcome fell in. On a rotating
+    ladder, as when Kalshi relists daily, a caller passing one row's vector for
+    all rows previously got a wrong number back with no error, because the
+    shapes still lined up. It is left ``None`` by non-ladder adapters.
     """
 
     kind: str

@@ -1,10 +1,10 @@
 """Shared array / numeric helpers used across DistributionForecast subclasses.
 
-Pure functions, no class state, no behaviour changes from the v0.2
-inlined versions. Lives below the subclass modules in the dependency
-graph: ``_quantile_via_brentq`` does isinstance checks against
-``BracketForecast`` and ``MixtureNormalForecast`` via local imports to
-keep this module circular-free.
+These are pure functions with no class state and no behaviour changes from
+the v0.2 inlined versions. The module lives below the subclass modules in the
+dependency graph. ``_quantile_via_brentq`` does isinstance checks against
+``BracketForecast`` and ``MixtureNormalForecast`` via local imports, which
+keeps this module free of circular imports.
 """
 
 from __future__ import annotations
@@ -92,8 +92,8 @@ def _to_dense_2d(edges_per_row, *, n_rows: int) -> np.ndarray:
     """Normalise heterogeneous edge inputs to a dense (N, B_max+1) array
     with NaN padding for ragged rows.
 
-    Accepts: 1-D shared (B+1,), 2-D dense (N, B+1), or a length-N
-    sequence of 1-D arrays.
+    Accepts a 1-D shared (B+1,), a 2-D dense (N, B+1), or a length-N sequence
+    of 1-D arrays.
     """
     if isinstance(edges_per_row, np.ndarray):
         if edges_per_row.ndim == 1:

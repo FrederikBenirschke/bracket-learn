@@ -1,21 +1,22 @@
 """Input/target standardizers, the `Transformer` stage of a `Pipeline`.
 
 `GroupByZScore` is the per-group standardized-anomaly transform behind the
-weather normalization win: each row is mapped by a per-row affine
-``v ↦ (v − center) / scale`` where ``center`` is a per-row anchor (e.g.
-seasonal climatology) threaded in by the Pipeline and ``scale`` is a
-per-group (e.g. per-station) constant learned at fit as ``std(y − center)``.
+weather normalization gain. Each row is mapped by a per-row affine
+``v ↦ (v − center) / scale``. Here ``center`` is a per-row anchor, such as a
+seasonal climatology, threaded in by the Pipeline, and ``scale`` is a
+per-group constant, per station for instance, learned at fit as
+``std(y − center)``.
 
-It implements the `Transformer` protocol (``fit`` / ``transform`` /
-``transform_target`` / ``inverse_dist``): features go to z-space, the target
+It implements the `Transformer` protocol, comprising ``fit``, ``transform``,
+``transform_target`` and ``inverse_dist``. Features go to z-space, the target
 goes to z-space at fit, and the forecaster's predicted distribution is mapped
-back to the original scale via ``DistributionForecast.affine``, so a
-forecaster never sees normalization and downstream bracket integration is
+back to the original scale via ``DistributionForecast.affine``. A forecaster
+therefore never sees normalization, and downstream bracket integration is
 unchanged.
 
-Per Rule #0.5: a group with too few observations falls back to the global
-scale **explicitly**; scale is never a silent 1.0, and a non-positive global
-scale raises.
+Under Rule #0.5, a group with too few observations falls back to the global
+scale explicitly. The scale is never set to 1.0 by default, and a non-positive
+global scale raises.
 """
 
 from __future__ import annotations
@@ -26,10 +27,10 @@ _MIN_GROUP_OBS = 5
 
 
 class IdentityTransformer:
-    """No-op `Transformer`: passes features/target through unchanged and
-    leaves the forecast unchanged. The degenerate transformer, also the
-    shim shape for composing a plain sklearn X-only transformer (override
-    ``transform``; target + inverse stay identity)."""
+    """No-op `Transformer`. Features and target pass through unchanged and the
+    forecast is left unchanged. This is the degenerate transformer, and also
+    the shim shape for composing a plain sklearn X-only transformer. Override
+    ``transform``, and leave the target and inverse as the identity."""
 
     def fit(self, X, y=None, *, ids=None, center=None, **kwargs):
         return self
@@ -50,31 +51,34 @@ class GroupByZScore:
     Parameters
     ----------
     spread_cols
-        Column indices that are *spreads* (e.g. an ensemble std): mapped
-        ``v → v / scale`` (divide only, no centering). A negative/zero or
-        NaN spread is left to the estimator's own validation.
+        Column indices that are spreads, such as an ensemble standard
+        deviation. These are mapped by ``v → v / scale``, dividing only with
+        no centering. A negative, zero or NaN spread is left to the
+        estimator's own validation.
     passthrough_cols
         Column indices left untouched (e.g. binary missing-indicator flags
         that must not be centered by a temperature climatology).
     level_cols
-        Explicit *level* column indices: ``v → (v − center) / scale``. When
-        ``None`` (default) every column that is neither a spread nor an
-        explicit passthrough is treated as a level. When given, ONLY these
-        indices are levels and all other (non-spread) columns pass through,
-        so ``level_cols=()`` normalizes nothing on the feature side and the
-        transform reduces to **target-only** standardization (``transform``
-        passes X through, but ``transform_target`` / ``inverse_dist`` still
-        z-score the target and map the forecast back). Target-only is the
-        right mode when X carries heterogeneous columns (mixed vendor temps
-        + non-temperature features) whose roles aren't known by index, the
-        location confound lives in the *target*, and a tree/boosting model's
-        feature splits are scale-invariant anyway.
+        Explicit level column indices, mapped by ``v → (v − center) / scale``.
+        When ``None``, the default, every column that is neither a spread nor
+        an explicit passthrough is treated as a level. When given, only these
+        indices are levels and all other non-spread columns pass through.
+        Setting ``level_cols=()`` therefore normalizes nothing on the feature
+        side, and the transform reduces to target-only standardization.
+        ``transform`` then passes X through, while ``transform_target`` and
+        ``inverse_dist`` still z-score the target and map the forecast back.
+        Target-only is the right mode when X carries heterogeneous columns,
+        such as mixed vendor temperatures alongside non-temperature features,
+        whose roles are not known by index. The location confound then lives
+        in the target, and a tree or boosting model's feature splits are
+        scale-invariant in any case.
     min_group
-        Minimum per-group observations to trust a learned per-group scale;
-        smaller groups use the global scale.
+        Minimum per-group observations required to trust a learned per-group
+        scale. Smaller groups use the global scale.
 
-    ``center`` is the per-row anchor passed to ``fit``/``transform`` (default
-    0 when absent); ``scale`` is learned per group from ``std(y − center)``.
+    ``center`` is the per-row anchor passed to ``fit`` and ``transform``, and
+    defaults to 0 when absent. ``scale`` is learned per group from
+    ``std(y − center)``.
     """
 
     def __init__(
@@ -143,7 +147,7 @@ class GroupByZScore:
                 out[:, j] = X[:, j] / s
             elif j in passth:
                 out[:, j] = X[:, j]
-            elif level is None or j in level:                      # default: level = complement
+            elif level is None or j in level:                      # default, level is the complement
                 out[:, j] = (X[:, j] - c) / s
             else:                                    # explicit levels given, j not one → passthrough
                 out[:, j] = X[:, j]

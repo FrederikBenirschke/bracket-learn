@@ -1,40 +1,43 @@
-"""End-to-end PoC: tier-1 + tier-2 trainers on synthetic weather-like data.
+"""End-to-end proof of concept, running tier-1 and tier-2 trainers on
+synthetic weather-like data.
 
 The synthetic target is a continuous, temperature-like quantity. As in every
-example here, we treat it as a prediction-market underlying: model its full
-predictive distribution rather than a point estimate, then price a bracket
-ladder over it, where each bracket is a YES/NO contract on "the value lands in
-this range". This script's job is breadth, exercising most trainers and
-backings in one run.
+example here it is treated as a prediction-market underlying. Its full
+predictive distribution is modelled rather than a point estimate, and a bracket
+ladder is then priced over it, where each bracket is a YES/NO contract on the
+value landing in that range. This script's job is breadth, exercising most
+trainers and backings in one run.
 
-Run:
+Run::
+
     conda run -n weathermarkets python -m bracketlearn.examples.weather_e2e
 
-Composition is the native surface: each model is a `Pipeline` (chain) or a
-`Stacker` (parallel combiner over upstream objects); the whole list runs under
-one `WalkForward` (the CV/OOF driver). Names are leaderboard labels only.
+Composition is the native surface. Each model is a `Pipeline`, a chain, or a
+`Stacker`, a parallel combiner over upstream objects. The whole list runs under
+one `WalkForward`, the CV and OOF driver. Names are leaderboard labels only.
 
-Tier 1 (parametric / mixture backings):
+Tier 1, parametric and mixture backings:
   - ridge:            Pipeline([SklearnPoint(RidgeCV), GlobalResidual])
   - lin_ols:          Pipeline([SklearnPoint(LinearRegression), GlobalResidual]),
                       the same shape as ridge with α=0, written out explicitly.
   - emos:             native parametric-normal DistForecaster
   - emos_calibrated:  Pipeline([EMOS, Isotonic(edges)])
-  - ngboost:          non-linear EMOS via NGBoost (native parametric normal)
-  - mixture:          per-vendor Gaussian mixture (native parametric mixture)
+  - ngboost:          non-linear EMOS via NGBoost, native parametric normal
+  - mixture:          per-vendor Gaussian mixture, native parametric mixture
   - stack:            Stacker([ridge, emos], StackedParametric())
 
-Tier 2 (quantile / bracket backings, conformal calibration, tail specialist):
-  - qreg:             LightGBM per-τ quantile heads (quantile-backed)
+Tier 2, quantile and bracket backings, conformal calibration, tail specialist:
+  - qreg:             LightGBM per-τ quantile heads, quantile-backed
   - qreg_conformal:   Pipeline([QuantileReg, ConformalCalibrate])
-  - qforest:          Random Forest quantile regression (quantile-backed)
-  - cumbin:           cumulative-binary classifier (bracket-backed)
-  - tail_specialist:  Stacker([emos], TailSpecialist()): EMOS body + LightGBM tails
+  - qforest:          Random Forest quantile regression, quantile-backed
+  - cumbin:           cumulative-binary classifier, bracket-backed
+  - tail_specialist:  Stacker([emos], TailSpecialist()), an EMOS body with
+                      LightGBM tails
 
-Tier 3 (online aggregation):
+Tier 3, online aggregation:
   - online_agg:       sleeping-experts AdaHedge over the K columns of X, lifted
-                      to parametric normal via GlobalResidual. (RNNHourly needs
-                      3-D X; see weather_rnn_e2e.py.)
+                      to parametric normal via GlobalResidual. RNNHourly needs
+                      3-D X, for which see weather_rnn_e2e.py.
 
 PipelineResult.score() owns OOF alignment, so you never touch dist.ids.
 """
@@ -45,8 +48,8 @@ import warnings
 
 import numpy as np
 
-# Quiet the LightGBM "X does not have valid feature names" warning, we
-# feed numpy arrays everywhere by design.
+# Quiet the LightGBM "X does not have valid feature names" warning. Numpy
+# arrays are fed everywhere by design.
 warnings.filterwarnings(
     "ignore",
     message="X does not have valid feature names.*",
@@ -108,16 +111,17 @@ def main() -> None:
     edges = np.linspace(3.0, 28.0, 11)   # 10 brackets; outer ones cover ~10% each
     inner_cutpoints = edges[1:-1]        # interior cutpoints for CumulativeBinary
 
-    # v0.3 per-row brackets: the example uses a shared ladder across
-    # rows; broadcast it into id-keyed dicts so the trainers can look
-    # each row up.
+    # Under v0.3 per-row brackets, this example uses a ladder shared across
+    # rows. It is broadcast into id-keyed dicts so the trainers can look each
+    # row up.
     cutpoints_by_id = {int(i): inner_cutpoints for i in ids}
     outer_edges_by_id = {int(i): (float(edges[0]), float(edges[-1])) for i in ids}
     brackets_by_id = {int(i): edges for i in ids}
 
-    # Tier 1, names are leaderboard labels; ``ridge()`` / ``emos_calibrated()``
-    # already return named Pipelines. ``emos`` is reused by two combiners
-    # (stack, tail_specialist), the SAME object, so it is fit once per fold.
+    # Tier 1. Names are leaderboard labels, and ``ridge()`` and
+    # ``emos_calibrated()`` already return named Pipelines. ``emos`` is reused
+    # by two combiners, stack and tail_specialist, as the same object, so it is
+    # fit once per fold.
     ridge_node = ridge()
     lin_ols = Pipeline(
         [SklearnPoint(LinearRegression()), GlobalResidual()], name="lin_ols",

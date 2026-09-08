@@ -1,10 +1,10 @@
 """bracketlearn, sklearn-style probabilistic-forecasting and bracket-contract pricing.
 
-Most probabilistic-forecasting libraries stop at "predict a distribution."
-bracketlearn keeps going: every forecast is a typed `DistributionForecast`
-that converts to a bracket ladder and prices the resulting contracts.
-Calibration, conformal correction, and tail specialisation are first-class
-transformer stages.
+Most probabilistic-forecasting libraries stop at predicting a distribution.
+bracketlearn continues from there. Every forecast is a typed
+`DistributionForecast` that converts to a bracket ladder and prices the
+resulting contracts. Calibration, conformal correction, and tail specialisation
+are first-class transformer stages.
 
 Quick start::
 
@@ -13,9 +13,10 @@ Quick start::
         EMOS, QuantileReg, SklearnPoint, GlobalResidual,
     )
 
-Less commonly used symbols live in their submodules:
+Less commonly used symbols live in their submodules.
+
 - ``bracketlearn.protocols``. Forecaster, PointForecaster, DistForecaster,
-  Lifter, Calibrator (for users writing custom stages).
+  Lifter and Calibrator, for users writing custom stages.
 - ``bracketlearn.adapters.ContractAdapter``, the contract-pricing protocol.
 - ``bracketlearn.forecast``. ContractSpec, ProvenanceMeta, TailPolicyError.
 - ``bracketlearn.trainers``, ``ridge``, ``emos_calibrated`` convenience
