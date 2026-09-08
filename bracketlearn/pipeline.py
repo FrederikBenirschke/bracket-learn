@@ -54,7 +54,7 @@ def _slice_edges(edges: Any, idx: np.ndarray) -> Any:
 
 
 def _compute_metric(
-    metric: str, dist, y, *, edges, scoremod,
+    metric: str, dist, y, *, edges, scoremod, grid_step=None,
 ) -> dict[str, float]:
     """Dispatch one (metric, distribution) pair to a scalar value, or to
     a small dict (PIT contributes both mean and std).
@@ -69,9 +69,37 @@ def _compute_metric(
         return {"crps": float(dist.crps(y).mean())}
     if metric == "log_score":
         return {"log_score": float(dist.log_score(y).mean())}
-    if metric in ("pit", "pit_mean", "pit_std"):
-        pits = dist.pit(y)
-        return {"pit_mean": float(pits.mean()), "pit_std": float(pits.std())}
+    if metric == "pit_std":
+        raise ValueError(
+            "metric 'pit_std' was replaced by 'pit_var', so that the pipeline "
+            "and calibration_suite report the same quantity on the same scale. "
+            "Ask for 'pit'; it returns pit_mean, pit_var, pit_var_neutral and "
+            "pit_var_excess. Note var, not std: the neutral reference is a "
+            "variance and the two are not comparable by eye."
+        )
+    if metric in ("pit", "pit_mean", "pit_var"):
+        from bracketlearn.calibration import neutral_pit_var
+
+        pits = dist.pit(y, grid_step=grid_step)
+        if not np.isfinite(pits).all():
+            n_bad = int((~np.isfinite(pits)).sum())
+            raise ValueError(
+                f"pit: {n_bad} of {pits.size} PIT values are non-finite. A NaN "
+                f"in y, or a CDF returning NaN, would otherwise NaN the whole "
+                f"column silently. Drop those rows before scoring."
+            )
+        out = {"pit_mean": float(pits.mean()), "pit_var": float(pits.var())}
+        if grid_step is None:
+            out["pit_var_neutral"] = neutral_pit_var()
+        else:
+            # Var[PIT_mid] = 1/12 - E[p^2]/12, so the reference needs the
+            # probability each row's forecast put on the cell that settled.
+            h = grid_step / 2.0
+            y_a = np.asarray(y, dtype=float)
+            cell = dist.cdf_at(y_a + h) - dist.cdf_at(y_a - h)
+            out["pit_var_neutral"] = neutral_pit_var(cell)
+        out["pit_var_excess"] = out["pit_var"] - out["pit_var_neutral"]
+        return out
     if metric in ("log_loss_bracket", "brier_bracket"):
         from bracketlearn.adapters import BracketLadder
 
@@ -138,6 +166,7 @@ class PipelineResult:
         *,
         metrics: Sequence[str] = ("crps", "log_score", "pit"),
         edges: Any | None = None,
+        grid_step: float | None = None,
     ) -> dict[str, dict[str, float]]:
         """Return {stage_name: {metric_name: value}}.
 
@@ -145,7 +174,7 @@ class PipelineResult:
           - "crps"             - mean CRPS for Gaussian backing
           - "log_score"        - mean predictive negative log-likelihood
           - "pit_mean"         - mean PIT (≈ 0.5 if calibrated)
-          - "pit_std"          - std of PIT
+          - "pit"              - mean, variance, and the neutral reference
           - "log_loss_bracket", requires ``edges`` (any ladder shape)
           - "brier_bracket", requires ``edges`` (any ladder shape)
 
@@ -185,7 +214,7 @@ class PipelineResult:
             for m in metrics:
                 row.update(
                     _compute_metric(m, dist, y_oof, edges=edges_oof,
-                                    scoremod=scoremod))
+                                    scoremod=scoremod, grid_step=grid_step))
             out[name] = row
         return out
 
@@ -195,27 +224,29 @@ class PipelineResult:
         *,
         metrics: Sequence[str] = ("crps", "log_score", "pit"),
         edges: Any | None = None,
+        grid_step: float | None = None,
     ) -> str:
         """Render score() output as an aligned text table."""
-        scores = self.score(y, metrics=metrics, edges=edges)
+        scores = self.score(y, metrics=metrics, edges=edges, grid_step=grid_step)
         # Collect columns by union across stages, preserving insertion order.
         cols: list[str] = []
         for row in scores.values():
             for k in row:
                 if k not in cols:
                     cols.append(k)
-        header = f"{'stage':<10}" + "".join(f"{c:>14}" for c in cols)
+        width = max(14, max((len(c) for c in cols), default=0) + 2)
+        header = f"{'stage':<10}" + "".join(f"{c:>{width}}" for c in cols)
         lines = [header, "-" * len(header)]
         for name, row in scores.items():
             line = f"{name:<10}"
             for c in cols:
                 v = row.get(c)
                 if v is None:
-                    line += f"{'-':>14}"
+                    line += f"{'-':>{width}}"
                 elif isinstance(v, int):
-                    line += f"{v:>14d}"
+                    line += f"{v:>{width}d}"
                 else:
-                    line += f"{v:>14.4f}"
+                    line += f"{v:>{width}.4f}"
             lines.append(line)
         return "\n".join(lines)
 

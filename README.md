@@ -281,6 +281,65 @@ mixture, quantile, or bracket, and every backing answers `cdf`, `crps`,
 `pit`, `integrate` and `log_score`. Which trainers emit which backing, what
 each is for, and when to prefer one over another: **[Catalog](docs/guides/catalog.md)**.
 
+### Combining several forecasts
+
+`bracketlearn.pool` implements the four aggregation families of Gneiting &
+Ranjan, [*Combining Predictive
+Distributions*](https://arxiv.org/abs/1106.1638) (EJS 7:1747-1782, 2013),
+behind one interface:
+
+| Formula | Form | Fitted parameters |
+|---|---|---|
+| **TLP** | `Σ wᵢFᵢ(y)` | weights |
+| **SLP** | `Σ wᵢFᵢ⁰((y − μᵢ)/c)` | weights + one spread `c` |
+| **BLP** | `B_{α,β}(Σ wᵢFᵢ(y))` | weights + `(α, β)` |
+| **GLP** | `h⁻¹(Σ wᵢ h(Fᵢ(y)))` | weights, under a link `h` |
+| **BMA** | `Σ wᵢ N(y; μᵢ, σ²)` | weights + a common `σ`, fitted jointly |
+
+The choice matters because of Theorem 3.1. A linear pool's PIT is
+`Z = Σ wᵢZᵢ`, so `var(Z) ≤ max var(Zᵢ)`: the pool is at least as dispersed as
+its least-dispersed component, and pooling neutrally-dispersed components
+makes the result strictly *over*dispersed. Theorem 3.3 says no weight vector
+fixes this, because the defect is in the functional form rather than the fit.
+So a well-fitted pool of well-fitted models can be worse-calibrated than any
+member alone. BLP is *exchangeably flexibly dispersive* (Thm 3.9) and reaches
+any `var(PIT)` in `(0, ¼)`; SLP cannot, but suffices when the components are
+neutrally dispersed or underdispersed.
+
+BLP is also *local*: `G(y)` depends on the components only through
+`F₁(y), …, F_k(y)` at that same `y`. On a bracket ladder those values are
+exactly the cumulative mass at each edge, so BLP is an exact pointwise map on
+edge CDFs, with no resampling, no interpolation, and no assumption about
+within-bracket shape. That is what makes it the natural combiner for this
+library's contracts.
+
+Pooling assumes its inputs are *distributions*. A raw point forecast is the
+most extreme form of an underdispersed density, so §4.2 of the paper first
+fits each component a predictive density of its own, with an intercept, a
+slope, and that component's own scale. `AffineNormal` is that step. Fitting a
+slope is what an additive de-bias cannot do: it corrects a component whose
+*amplitude* is miscalibrated, not just its level.
+
+```python
+from bracketlearn import AffineNormal, fit_pool
+
+# step 0: lift k raw point forecasts into per-component distributions.
+# X_points is (k, N): component axis FIRST, as everywhere in this module.
+lift = AffineNormal(bias="affine").fit(X_points, y)   # per component: a, b, sigma
+mu, sd = lift.moments(X_points)                       # (k, N) each; NaN where silent
+
+# step 1: combine them. BLP can reach neutral dispersion, TLP cannot.
+fit = fit_pool(component_cdfs, realized_idx, formula="blp",
+               holdout=(cdfs_test, idx_test))
+
+fit.weights              # a redundant component can be driven to 0
+fit.dispersion_verdict   # "overdispersed" / "neutral" / "underdispersed"
+fit.pit_var_holdout      # measured out of sample, not on the fit rows
+```
+
+A component is fitted only on the rows where it actually reported, and a
+silent component yields NaN moments rather than an imputed value.
+
 ## Step 2: price the contracts
 
 You have a `DistributionForecast`. A `ContractAdapter` reads fair prices off it
@@ -363,6 +422,95 @@ The standalone `score.brier_bracket` and `score.log_loss_bracket` helpers, used
 in the [Quickstart](#quickstart-the-three-steps-end-to-end), score a single
 `ContractForecast` directly. The docs cover the per-backing scoring math.
 
+### Metrics disagree, and that is not a bug
+
+Evaluating a distributional forecast is harder than evaluating a point one,
+because there is no single number that says "better". A forecast is judged on
+three axes that trade off against each other, and a model can win on one while
+losing on another:
+
+1. **Calibration.** Are the stated probabilities honest? Measured by the
+   `pit_*` columns, `reliability_mae` and `coverage_*`. A climatological
+   forecast is perfectly calibrated and worthless, so this is necessary and
+   nowhere near sufficient.
+2. **Sharpness.** How concentrated is the distribution? Measured by `rmv` and
+   `sharpness_iqr`, *without reference to the outcome*. It is a property of
+   the forecast alone, which is why it cannot be optimised on its own: the
+   sharpest forecast is a point mass.
+3. **Accuracy.** Proper scores (`crps`, `log_score`) that reward calibration
+   and sharpness jointly. Report these as the summary and the diagnostics
+   above to explain *why* a score moved.
+
+Three disagreements show up often enough to be worth naming.
+
+**CRPS against log score.** Both are proper, and they still rank differently
+when models differ in tail weight, because the log score is unbounded and
+punishes a thin tail over a realized outlier without limit, while CRPS is in
+the units of the outcome and does not. Fit a Normal to a `t₃` truth and sweep
+its σ: the log score is minimised at σ = √3 ≈ 1.73 (its optimum is `√E[Y²]`,
+in closed form), while CRPS settles near σ ≈ 1.25. Neither is wrong. They ask
+different questions about the same misspecification, so a model selected on
+one is not the model selected on the other. Pick the metric before the run,
+not after seeing which flatters the model.
+
+**Accuracy against value.** A more accurate price can be worth less than a
+less accurate one. That is the next section, and it is the one that decides
+whether a forecast is tradeable.
+
+**Calibration against sharpness.** Widening a forecast improves its coverage
+and worsens its sharpness. A calibration fix that only widens has not made the
+forecast more useful, so read `pit_var_excess` and `rmv` together rather than
+chasing either alone.
+
+### Diagnosing calibration: var(PIT) is not enough
+
+`pit` gives you a number; it does not tell you what went wrong.
+`calibration_suite` reports calibration, sharpness and accuracy together
+against a family-agnostic interface, so Normal, Student-t and mixture
+forecasts all return the same columns:
+
+```python
+from bracketlearn import calibration_suite
+
+s = calibration_suite(cdf, y, sd=sd, quantile=q, grid_step=1.0)
+s["pit_mean"], s["pit_var_excess"], s["pit_skew"]     # calibration
+s["rmv"], s["sharpness_iqr"]                          # sharpness
+s["log_score"]                                        # accuracy
+```
+
+Optional columns are the ones needing an optional argument, and they are
+omitted rather than approximated: `rmv` needs `sd=`, coverage, reliability and
+`sharpness_iqr` need `quantile=`, and `crps` needs a per-row `crps=` array
+from the caller's own closed form. A Gaussian-shaped guess at a Student-t's
+quantiles would be a silent fallback, so absence is the honest answer.
+
+var(PIT) is one summary of a whole histogram, and it is blind to most ways a
+forecast fails. A model biased 3°F warm with the right spread can sit near the
+neutral variance while every interval is centred wrong; only `pit_mean` sees
+it. Two models, one too heavy left and one too heavy right, share a var(PIT),
+and `pit_skew` with `tail_left`/`tail_right` separates them. A mixture too wide
+in the body and too narrow in the tails averages out to neutral while fitting
+neither, which `pit_ks` and the reliability curve catch.
+
+Settlement on a grid needs care, and it changes the reference value rather
+than just the number. An integer outcome means a continuous CDF evaluated at
+the realized value is not the Rosenblatt PIT. Pass `grid_step` and the
+mid-interval continuity-corrected form is used instead, the deterministic
+analogue of the randomised PIT: no RNG, so it cannot smear an outcome across
+its cell. Discretisation then compresses the PIT's spread, so a calibrated
+forecast attains
+
+    var(PIT_mid) = 1/12 - E[p²]/12
+
+where `p` is the probability the forecast put on the cell that settled. That
+is strictly below 1/12, so judging a corrected variance against 1/12 reports a
+calibrated model as underdispersed. Both `calibration_suite` and
+`result.score(..., grid_step=...)` return `pit_var_neutral` and
+`pit_var_excess` alongside `pit_var` for this reason: **read the excess**. The
+corrected reference is a property of the panel, not of `grid_step`, since it
+depends on how wide the forecast is relative to the grid. That is why it is
+returned per run rather than written down here.
+
 ### Accuracy is not value
 
 The metrics above ask "are my prices **calibrated**?": close to the realized
@@ -415,9 +563,10 @@ You write the trading layer.
 
 ## Status and test suite
 
-Version 0.8.0, pre-PyPI. 12,355 lines across the package, 472 tests in 37
-files, `mypy --strict` on the gated modules, and a CI job that installs the
-built wheel into a clean virtualenv and imports it.
+Version 0.8.0, [on PyPI](https://pypi.org/project/bracketlearn/). 14,248 lines
+across the package, 639 tests in 44 files, `mypy --strict` on the gated
+modules, and a CI job that installs the built wheel into a clean virtualenv
+and imports it.
 
 The suite is written against past defects rather than for coverage. Several
 tests exist because the corresponding bug shipped:

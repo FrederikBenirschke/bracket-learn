@@ -87,9 +87,50 @@ class DistributionForecast(abc.ABC):
     @abc.abstractmethod
     def to_point(self, *, how: str = "mean") -> np.ndarray: ...
 
-    def pit(self, y: np.ndarray) -> np.ndarray:
-        """Probability Integral Transform: F(y) per row. Uniform if calibrated."""
-        return self.cdf_at(np.asarray(y, dtype=float))
+    def pit(self, y: np.ndarray, *, grid_step: float | None = None) -> np.ndarray:
+        """Probability Integral Transform per row. Uniform if calibrated.
+
+        ``grid_step`` is the resolution the outcome settles on: 1.0 when y is
+        an integer, ``None`` when y is genuinely continuous. It is NOT
+        optional cosmetics on a discrete outcome. The plain ``F(y)`` is
+        uniform only when Y is continuous, so on a grid it is not the
+        Rosenblatt PIT and a correctly-specified forecast still fails a
+        uniformity check.
+
+        With ``grid_step`` the mid-interval (continuity-corrected) form
+
+            F(y - h) + 1/2 * [F(y + h) - F(y - h)],   h = grid_step/2
+
+        is used instead. That is the DETERMINISTIC analogue of the randomised
+        PIT, not the randomised PIT: no RNG, so it cannot smear one outcome
+        across its cell.
+
+        The correction is a no-op wherever the backing's own CDF is already
+        linear across ``[y-h, y+h]``. ``BracketForecast`` interpolates
+        uniformly within a bin, so on a bracket ladder this returns ``F(y)``
+        unchanged for every row interior to a bracket: that backing is
+        already discrete, and ``grid_step`` cannot add resolution the
+        forecast does not carry. The reference value below still moves, which
+        is the part that matters for the verdict.
+
+        Note that discretisation compresses the PIT's spread: the calibrated
+        var(PIT) is then strictly BELOW the continuous 1/12, by an amount that
+        depends on ``grid_step`` relative to the predictive width. Judge it
+        against :func:`bracketlearn.calibration.neutral_pit_var`, never
+        against 1/12.
+        """
+        y_arr = np.asarray(y, dtype=float)
+        if grid_step is None:
+            return self.cdf_at(y_arr)
+        if not np.isfinite(grid_step) or grid_step <= 0:
+            raise ValueError(
+                f"pit: grid_step must be a positive finite number or None; "
+                f"got {grid_step!r}"
+            )
+        h = grid_step / 2.0
+        lo = self.cdf_at(y_arr - h)
+        hi = self.cdf_at(y_arr + h)
+        return lo + 0.5 * (hi - lo)
 
     @classmethod
     @abc.abstractmethod
