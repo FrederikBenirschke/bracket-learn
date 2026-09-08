@@ -32,6 +32,35 @@ def _readme_high_rows() -> dict[str, tuple[float, float]]:
     return rows
 
 
+def test_the_summary_excerpt_agrees_with_the_full_table():
+    """The README quotes the result twice, and both copies must agree.
+
+    The overview near the top carries an abridged three-row version of the
+    HIGH table. It has no "===== HIGH" marker, so the parser above does not
+    see it, and a number could drift there while the guarded table stayed
+    right. This pins the excerpt to the table it summarises.
+    """
+    rows = _readme_high_rows()
+    text = README.read_text()
+    # The excerpt is the first fenced block containing the header line.
+    head = text.index("forecast                        Brier   EA x100")
+    open_ = text.rindex("```", 0, head)
+    block = text[open_:text.index("```", head)]
+    seen = 0
+    for line in block.splitlines():
+        m = re.match(r"\s{2}(\S.*?)\s{2,}([\d.]+)\s+([+-][\d.]+|0\.0000)", line)
+        if not m:
+            continue
+        label = m.group(1).strip()
+        assert label in rows, f"excerpt row {label!r} is not in the full table"
+        assert rows[label] == (float(m.group(2)), float(m.group(3))), (
+            f"excerpt disagrees with the full table for {label!r}: "
+            f"{(float(m.group(2)), float(m.group(3)))} vs {rows[label]}"
+        )
+        seen += 1
+    assert seen >= 3, f"parsed only {seen} rows from the summary excerpt"
+
+
 def test_readme_quotes_some_numbers():
     """Guard the guard: a regex that matches nothing passes vacuously."""
     rows = _readme_high_rows()

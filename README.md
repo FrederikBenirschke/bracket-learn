@@ -11,7 +11,8 @@
 forecasts, and the prediction-market contracts written on them.**
 
 ```bash
-pip install -e ".[demo]"
+git clone https://github.com/FrederikBenirschke/bracket-learn
+pip install -e "./bracket-learn[demo]"
 python -m bracketlearn.examples.value_vs_accuracy_weather
 ```
 
@@ -28,8 +29,8 @@ contract shape off that one distribution. Most forecasting libraries provide
 the first and stop. This package does both, then scores the result.
 
 Formally, let `Y` be a continuous outcome (tomorrow's high temperature, a
-game's final margin, the next GDP print) with features `X`. A prediction-market contract
-pays a known function `g(Y) ∈ {0, 1}` of that outcome. Its risk-neutral fair
+game's final margin, the next GDP print) with features `X`. A prediction-market
+contract pays a known function `g(Y) ∈ {0, 1}` of that outcome. Its risk-neutral fair
 price is therefore the conditional expectation `E[g(Y) | X]`, a functional of
 the conditional predictive distribution `F(y | X) = P(Y ≤ y | X)`. Every
 contract a venue lists reduces to one such functional.
@@ -49,15 +50,27 @@ scoring rules.
 
 ## Does it work
 
-The bundled example fits a temperature model, prices it onto Kalshi's weather
-contracts, and scores the prices against what actually happened. It runs on
-5,429 station-days across 18 stations, with the model fitted on the first 60%
-of the period and scored on the last 40%.
+The command above runs `value_vs_accuracy_weather`, the bundled example. It
+fits a temperature model, prices it onto Kalshi's weather contracts, and scores
+the prices against what actually happened, on 5,429 station-days across 18
+stations. The model is fitted on the first 60% of the period and scored on the
+last 40%.
 
-The prices are scored two ways: against the outcome, and against the market's
-own price. The example reports both, and on this sample they rank the models
-differently. The numbers are in
-[Accuracy and value](#accuracy-and-value-are-different-questions).
+```
+  forecast                        Brier   EA x100
+  reference (market)             0.1066    0.0000
+  EMOS (raw)                     0.1257   -0.0487
+  EMOS + edge-recal              0.1069   +0.0042
+```
+
+Each row is a way of pricing the same contracts. `Brier` scores the prices
+against the outcome, lower being better. `EA` scores them against the market's
+own price instead, asking whether the model's disagreements with the quote point
+the right way. The market is the reference, so its `EA` is zero by construction.
+
+The two columns do not have to agree. The example therefore reports both.
+[Accuracy and value](#accuracy-and-value-are-different-questions) gives the full
+table, the confidence interval, and what the result does and does not support.
 
 ## Install
 
