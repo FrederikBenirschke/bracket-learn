@@ -15,14 +15,50 @@ pip install -e ".[demo]"
 python -m bracketlearn.examples.value_vs_accuracy_weather
 ```
 
-## Worked result
+## Problem statement
+
+A prediction market lists contracts that pay $1 if some event happens and $0
+otherwise, so a contract's price reads as a probability. The events are
+usually statements about one underlying number: tomorrow's high temperature
+falls in [70, 72), or above 75, or a game's final margin exceeds 3.5.
+
+Pricing them takes two things. The first is a probability distribution over
+that underlying number. The second is a way to read a fair price for each
+contract shape off that one distribution. Most forecasting libraries provide
+the first and stop. This package does both, then scores the result.
+
+Formally, let `Y` be a continuous outcome (tomorrow's high temperature, a
+game's final margin, the next GDP print) with features `X`. A prediction-market contract
+pays a known function `g(Y) ∈ {0, 1}` of that outcome. Its risk-neutral fair
+price is therefore the conditional expectation `E[g(Y) | X]`, a functional of
+the conditional predictive distribution `F(y | X) = P(Y ≤ y | X)`. Every
+contract a venue lists reduces to one such functional.
+
+| Contract | Payoff `g(Y)` | Fair price as a functional of `F` |
+|---|---|---|
+| Bracket `[a, b)` | `1[a ≤ Y < b]` | `F(b) − F(a)` |
+| Threshold above `k` | `1[Y > k]` | `1 − F(k)` |
+| Threshold below `k` | `1[Y ≤ k]` | `F(k)` |
+| Twin (paired) at `k` | `(1[Y ≤ k], 1[Y > k])` | `(F(k), 1 − F(k))` |
+
+Pricing a venue therefore decomposes into two estimands. The first is the
+predictive distribution `F(· | X)`. The second is the collection of functionals
+of `F` that the listed contracts select. bracketlearn estimates the first and
+evaluates the second, then scores both against realized outcomes with proper
+scoring rules.
+
+## A worked result
 
 The package fits a distributional model, prices it onto a venue's bracket
-ladder, and scores the resulting prices two ways. Accuracy is the distance from
-the realized outcome. Value is whether the deviations from the quoted price are
-directionally correct. The bundled example runs this on 5,429 station-days of
-Kalshi weather contracts, covering 2026-03-17 to 2026-09-03, 18 stations, and a
-chronological 60/40 split.
+ladder, and scores the resulting prices two ways. **Brier** measures accuracy,
+the distance from the realized outcome, and lower is better. **Edge-Alignment
+(EA)** measures value, scoring against the market's price rather than against
+truth, and asks whether the model's deviations from the quote point the right
+way.
+
+The bundled example runs on 5,429 station-days of Kalshi weather contracts,
+covering 2026-03-17 to 2026-09-03, 18 stations, and a chronological 60/40
+split.
 
 ```
 ===== HIGH  (train 1737, test 1158) =====
@@ -48,54 +84,6 @@ gives the decomposition. It also corrects an earlier result computed against a
 fixture whose bracket edges were wrong.
 
 ![CRPS leaderboard](docs/_static/leaderboard_crps.png)
-
-## Problem statement
-
-Let `Y` be a continuous outcome (tomorrow's high temperature, a game's final
-margin, the next GDP print) with features `X`. A prediction-market contract
-pays a known function `g(Y) ∈ {0, 1}` of that outcome. Its risk-neutral fair
-price is therefore the conditional expectation `E[g(Y) | X]`, a functional of
-the conditional predictive distribution `F(y | X) = P(Y ≤ y | X)`. Every
-contract a venue lists reduces to one such functional.
-
-| Contract | Payoff `g(Y)` | Fair price as a functional of `F` |
-|---|---|---|
-| Bracket `[a, b)` | `1[a ≤ Y < b]` | `F(b) − F(a)` |
-| Threshold above `k` | `1[Y > k]` | `1 − F(k)` |
-| Threshold below `k` | `1[Y ≤ k]` | `F(k)` |
-| Twin (paired) at `k` | `(1[Y ≤ k], 1[Y > k])` | `(F(k), 1 − F(k))` |
-
-Pricing a venue therefore decomposes into two estimands. The first is the
-predictive distribution `F(· | X)`. The second is the collection of functionals
-of `F` that the listed contracts select. bracketlearn estimates the first and
-evaluates the second, then scores both against realized outcomes with proper
-scoring rules.
-
-## Relation to existing libraries
-
-The first estimand above is well served. The second is not. This package
-exists to close that gap.
-
-| Library | Provides | Does not provide |
-|---|---|---|
-| NGBoost, `sklearn.QuantileRegressor`, quantile-forest | a conditional distribution or its quantiles | contract pricing, or scoring against a reference price |
-| `properscoring`, `scoringrules` | CRPS, log score, Brier on arrays | a typed distribution object, or per-row contract ladders |
-| statsmodels | inference for parametric models | distributional CV, bracket adapters |
-| MAPIE, crepes | conformal prediction intervals | full `F`, and the functionals a venue lists |
-
-Composing those covers the forecasting half. What remains is specific to
-prediction markets. It has two parts. The first is mapping `F(· | X)` onto a
-venue's listed contracts, including the per-row rotating ladders Kalshi relists
-daily. The second is scoring the resulting prices both for accuracy against the
-outcome and for value against the quoted price. A distribution that is closer
-to the truth is not always the one with more edge over the market. The two
-orderings can disagree, and §5 of the
-[value guide](docs/guides/value_vs_accuracy.md) constructs a case where they
-do.
-
-If the goal is a predictive distribution and nothing else, NGBoost or
-quantile-forest is the shorter path. This package will call them for you as
-`SklearnPoint`, `NGBoostNormal` and `QuantileForest` stages.
 
 ## Install
 
@@ -565,6 +553,32 @@ across a bracket, fee schedules, and queue assumptions. A shipped default would
 either land wrong for the next user or leak the edge of the one who had it. The
 package supplies the calibrated fair price. The trading layer is yours to
 write.
+
+## Relation to existing libraries
+
+The first estimand above is well served. The second is not. This package
+exists to close that gap.
+
+| Library | Provides | Does not provide |
+|---|---|---|
+| NGBoost, `sklearn.QuantileRegressor`, quantile-forest | a conditional distribution or its quantiles | contract pricing, or scoring against a reference price |
+| `properscoring`, `scoringrules` | CRPS, log score, Brier on arrays | a typed distribution object, or per-row contract ladders |
+| statsmodels | inference for parametric models | distributional CV, bracket adapters |
+| MAPIE, crepes | conformal prediction intervals | full `F`, and the functionals a venue lists |
+
+Composing those covers the forecasting half. What remains is specific to
+prediction markets. It has two parts. The first is mapping `F(· | X)` onto a
+venue's listed contracts, including the per-row rotating ladders Kalshi relists
+daily. The second is scoring the resulting prices both for accuracy against the
+outcome and for value against the quoted price. A distribution that is closer
+to the truth is not always the one with more edge over the market. The two
+orderings can disagree, and §5 of the
+[value guide](docs/guides/value_vs_accuracy.md) constructs a case where they
+do.
+
+If the goal is a predictive distribution and nothing else, NGBoost or
+quantile-forest is the shorter path. This package will call them for you as
+`SklearnPoint`, `NGBoostNormal` and `QuantileForest` stages.
 
 ## Status and test suite
 
