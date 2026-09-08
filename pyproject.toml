@@ -145,7 +145,12 @@ ignore = [
 known-first-party = ["bracketlearn"]
 
 [tool.mypy]
-python_version = "3.11"
+# No python_version pin. It set the LANGUAGE LEVEL mypy parses with, including
+# third-party stubs, so pinning 3.11 made mypy reject numpy >= 2.5, whose
+# stubs use PEP 695 `type` statements (3.12+). That failed the 3.12 CI leg
+# while 3.11 passed, since the older numpy there had no such syntax. Unpinned,
+# mypy uses the running interpreter, which is what each matrix leg is testing.
+# requires-python >= 3.11 is what actually declares the floor.
 strict_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
