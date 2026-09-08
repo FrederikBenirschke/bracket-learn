@@ -47,43 +47,22 @@ of `F` that the listed contracts select. bracketlearn estimates the first and
 evaluates the second, then scores both against realized outcomes with proper
 scoring rules.
 
-## A worked result
+## Does it work
 
-The package fits a distributional model, prices it onto a venue's bracket
-ladder, and scores the resulting prices two ways. **Brier** measures accuracy,
-the distance from the realized outcome, and lower is better. **Edge-Alignment
-(EA)** measures value, scoring against the market's price rather than against
-truth, and asks whether the model's deviations from the quote point the right
-way.
-
-The bundled example runs on 5,429 station-days of Kalshi weather contracts,
-covering 2026-03-17 to 2026-09-03, 18 stations, and a chronological 60/40
-split.
-
-```
-===== HIGH  (train 1737, test 1158) =====
-  forecast                        Brier   EA x100
-  reference (market)             0.1066    0.0000
-  EMOS (raw)                     0.1257   -0.0487   <- less accurate than market
-  EMOS + mean de-bias            0.1256   -0.0588   <- Brier falls, EA falls
-  EMOS + edge-recal              0.1069   +0.0042   <- Brier falls, EA rises
-  EA 95% CI (clustered by station-day): [-0.1708, +0.0779]  (crosses zero)
-```
-
-The two calibration adjustments move Brier and Edge-Alignment in opposite
-directions. The mean de-bias leaves Brier essentially unchanged while lowering
-EA. The edge recalibration improves both. Accuracy and value are therefore
-distinct orderings over the same forecasts. That property is what the
-[Edge-Alignment metric](docs/guides/value_vs_accuracy.md) is constructed to
-measure. A leaderboard ranked by Brier can accordingly select the wrong model
-for a trading application.
-
-On this sample EMOS is less accurate than the market and its EA is negative,
-with a bootstrap interval that contains zero. Section 5b of the value guide
-gives the decomposition. It also corrects an earlier result computed against a
-fixture whose bracket edges were wrong.
+The bundled example fits a temperature model, prices it onto Kalshi's weather
+contracts, and scores the prices against what actually happened. It runs on
+5,429 station-days across 18 stations, with the model fitted on the first 60%
+of the period and scored on the last 40%.
 
 ![CRPS leaderboard](docs/_static/leaderboard_crps.png)
+
+Two scores are reported, and the interesting result is that they disagree. One
+measures how close the prices are to the outcome. The other measures whether
+the prices are better than the market's. A model can improve on one and get
+worse on the other, so ranking models by accuracy alone can pick the wrong one
+for trading. The numbers are in
+[Accuracy and value are different questions](#accuracy-and-value-are-different-questions),
+after the vocabulary is in place.
 
 ## Install
 
@@ -525,6 +504,41 @@ fee-free EA over-tilts. See the
 [value-with-fees](docs/guides/value_with_fees.md) and
 [value-trainers](docs/guides/value_trainers.md) guides. The output is still a
 price rather than a position. The trade layer remains yours.
+
+## Accuracy and value are different questions
+
+This is the result the package is built around. **Brier** measures accuracy,
+the distance from the realized outcome, and lower is better. **Edge-Alignment
+(EA)** measures value, scoring against the market's price rather than against
+truth, and asks whether the model's deviations from the quote point the right
+way.
+
+The bundled example runs on 5,429 station-days of Kalshi weather contracts,
+covering 2026-03-17 to 2026-09-03, 18 stations, and a chronological 60/40
+split.
+
+```
+===== HIGH  (train 1737, test 1158) =====
+  forecast                        Brier   EA x100
+  reference (market)             0.1066    0.0000
+  EMOS (raw)                     0.1257   -0.0487   <- less accurate than market
+  EMOS + mean de-bias            0.1256   -0.0588   <- Brier falls, EA falls
+  EMOS + edge-recal              0.1069   +0.0042   <- Brier falls, EA rises
+  EA 95% CI (clustered by station-day): [-0.1708, +0.0779]  (crosses zero)
+```
+
+The two calibration adjustments move Brier and Edge-Alignment in opposite
+directions. The mean de-bias leaves Brier essentially unchanged while lowering
+EA. The edge recalibration improves both. Accuracy and value are therefore
+distinct orderings over the same forecasts. That property is what the
+[Edge-Alignment metric](docs/guides/value_vs_accuracy.md) is constructed to
+measure. A leaderboard ranked by Brier can accordingly select the wrong model
+for a trading application.
+
+On this sample EMOS is less accurate than the market and its EA is negative,
+with a bootstrap interval that contains zero. Section 5b of the value guide
+gives the decomposition. It also corrects an earlier result computed against a
+fixture whose bracket edges were wrong.
 
 ## Operating the pipeline
 
