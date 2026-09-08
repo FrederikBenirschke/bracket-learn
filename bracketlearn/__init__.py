@@ -35,6 +35,8 @@ from bracketlearn.adapters import (
 )
 from bracketlearn.base import BaseEstimator, clone
 from bracketlearn.baselines import EmpiricalDistribution, Persistence, PersistenceDist
+from bracketlearn.calibration import calibration_suite, neutral_pit_var, pit_values
+from bracketlearn.component_lift import AffineNormal, ComponentFit
 from bracketlearn.compose import Stacker, WalkForward
 from bracketlearn.forecast import (
     BracketForecast,
@@ -64,6 +66,13 @@ from bracketlearn.multitarget import (
 from bracketlearn.pipeline import (
     Pipeline,
     PipelineResult,
+)
+from bracketlearn.pool import (
+    PoolFit,
+    fit_bma,
+    fit_pool,
+    pool_cdf,
+    spread_adjusted_cdfs,
 )
 from bracketlearn.restrict import BracketMask
 from bracketlearn.search import GridSearch
@@ -159,4 +168,17 @@ __all__ = [
     "GridSearch",
     "MultiOutput",
     "MultiOutputResult",
+    # combination formulas (Gneiting & Ranjan 2013)
+    "PoolFit",
+    "fit_bma",
+    "fit_pool",
+    "pool_cdf",
+    "spread_adjusted_cdfs",
+    # per-component lift (the paper's step 0)
+    "AffineNormal",
+    "ComponentFit",
+    # calibration diagnostics
+    "calibration_suite",
+    "neutral_pit_var",
+    "pit_values",
 ]

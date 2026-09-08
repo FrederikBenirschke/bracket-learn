@@ -55,6 +55,9 @@ api/adapters
 api/transformers
 api/score
 api/value
+api/pool
+api/component_lift
+api/calibration
 api/multitarget
 api/search
 api/persistence
