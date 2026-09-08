@@ -54,8 +54,6 @@ contracts, and scores the prices against what actually happened. It runs on
 5,429 station-days across 18 stations, with the model fitted on the first 60%
 of the period and scored on the last 40%.
 
-![CRPS leaderboard](docs/_static/leaderboard_crps.png)
-
 The prices are scored two ways: against the outcome, and against the market's
 own price. The example reports both, and on this sample they rank the models
 differently. The numbers are in
@@ -247,6 +245,13 @@ mixture, quantile, or bracket. Every backing answers `cdf`, `crps`, `pit`,
 `integrate` and `log_score`. The **[Catalog](docs/guides/catalog.md)** records
 which trainers emit which backing, what each is for, and when to prefer one
 over another.
+
+Every applicable trainer, benchmarked on California housing. The score is CRPS
+skill against the empirical-distribution baseline, so higher is better and 0
+means no improvement on that baseline. Produced by
+`notebooks/leaderboard_zoo.ipynb`.
+
+![CRPS skill by trainer on California housing](docs/_static/leaderboard_crps.png)
 
 ### Combining several forecasts
 
