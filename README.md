@@ -56,13 +56,10 @@ of the period and scored on the last 40%.
 
 ![CRPS leaderboard](docs/_static/leaderboard_crps.png)
 
-Two scores are reported, and the interesting result is that they disagree. One
-measures how close the prices are to the outcome. The other measures whether
-the prices are better than the market's. A model can improve on one and get
-worse on the other, so ranking models by accuracy alone can pick the wrong one
-for trading. The numbers are in
-[Accuracy and value are different questions](#accuracy-and-value-are-different-questions),
-after the vocabulary is in place.
+The prices are scored two ways: against the outcome, and against the market's
+own price. The example reports both, and on this sample they rank the models
+differently. The numbers are in
+[Accuracy and value](#accuracy-and-value-are-different-questions).
 
 ## Install
 
@@ -527,18 +524,18 @@ split.
   EA 95% CI (clustered by station-day): [-0.1708, +0.0779]  (crosses zero)
 ```
 
-The two calibration adjustments move Brier and Edge-Alignment in opposite
-directions. The mean de-bias leaves Brier essentially unchanged while lowering
-EA. The edge recalibration improves both. Accuracy and value are therefore
-distinct orderings over the same forecasts. That property is what the
-[Edge-Alignment metric](docs/guides/value_vs_accuracy.md) is constructed to
-measure. A leaderboard ranked by Brier can accordingly select the wrong model
-for a trading application.
+The two calibration adjustments move the scores in opposite directions here.
+The mean de-bias leaves Brier essentially unchanged while lowering EA, and the
+edge recalibration improves both. The two scores need not agree on which model
+is better. The package therefore reports both rather than ranking on accuracy
+alone.
 
-On this sample EMOS is less accurate than the market and its EA is negative,
-with a bootstrap interval that contains zero. Section 5b of the value guide
-gives the decomposition. It also corrects an earlier result computed against a
-fixture whose bracket edges were wrong.
+The result is weak evidence on its own. EMOS is less accurate than the market
+on this sample, its EA is negative, and the bootstrap interval contains zero,
+so the ordering is one sample rather than an established effect. Section 5b of
+the [value guide](docs/guides/value_vs_accuracy.md) gives the decomposition and
+corrects an earlier version of this result computed against a fixture whose
+bracket edges were wrong.
 
 ## Operating the pipeline
 
