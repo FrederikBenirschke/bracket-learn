@@ -7,8 +7,8 @@
 ![Type checked: mypy](https://img.shields.io/badge/types-mypy-2A6DB2.svg)
 ![Tests: pytest](https://img.shields.io/badge/tests-pytest-0A9EDC.svg)
 
-**A scikit-learn-style toolkit for estimating the predictive distribution of a
-scalar outcome and pricing the prediction-market contracts written on it.**
+**A scikit-learn-style toolkit for fitting, pricing and scoring distributional
+forecasts, and the prediction-market contracts written on them.**
 
 ```bash
 pip install -e ".[demo]"

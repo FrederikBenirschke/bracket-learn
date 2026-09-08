@@ -1,4 +1,4 @@
-"""Tests for bracketlearn.component_lift — the paper's §4.2 step-0.
+"""Tests for bracketlearn.component_lift: the paper's §4.2 step-0.
 
 The substantive tests assert PARAMETER RECOVERY: given components built
 with known (a, b, σ), the fit must return them. A lift that cannot recover
@@ -48,7 +48,7 @@ def test_recovers_per_component_sigma(planted):
 
 
 def test_recovers_planted_slope(planted):
-    """A component that over-reacts must fit b < 1 — the amplitude
+    """A component that over-reacts must fit b < 1: the amplitude
     miscalibration an additive shift is structurally blind to."""
     X, y, names = planted
     est = AffineNormal(bias="affine").fit(X, y, names=names)
@@ -73,7 +73,7 @@ def test_recovers_planted_intercept(planted):
 
 def test_shift_form_cannot_fix_amplitude(planted):
     """bias='shift' is add_skill_blend's form. It must pin b=1, which is
-    exactly why it cannot correct the over-reacting component — the
+    exactly why it cannot correct the over-reacting component: the
     comparison this module exists to make."""
     X, y, names = planted
     est = AffineNormal(bias="shift").fit(X, y, names=names)
@@ -194,7 +194,7 @@ def test_report_renders(planted):
 
 def test_moments_feed_the_pool(planted):
     """The point of the module: components become inputs to bracketlearn.pool,
-    which unlocks SLP and BMA — both need per-component moments and so cannot
+    which unlocks SLP and BMA: both need per-component moments and so cannot
     run on PMF-only experts."""
     from bracketlearn.pool import fit_pool, spread_adjusted_cdfs
 
@@ -216,7 +216,7 @@ def test_moments_feed_the_pool(planted):
 # The paper fits a Gaussian at step 0 because its 8 components were members of
 # ONE ensemble, near-exchangeable and homogeneous. Vendor residuals here mix
 # provider outages, station siting and gross errors, which is the generating
-# story that produces heavy tails — so the t is offered alongside the normal.
+# story that produces heavy tails, so the t is offered alongside the normal.
 # These tests pin that the fitter RESOLVES nu rather than defaulting to a
 # convenient value, which is what makes a measured nu evidence about tails.
 # ---------------------------------------------------------------------------
@@ -267,7 +267,7 @@ def test_gaussian_data_lands_at_the_flat_top_of_the_nu_grid():
 def test_student_t_scale_is_not_the_standard_deviation():
     """sigma is the SCALE; sd inflates it by sqrt(nu/(nu-2)).
 
-    Reading .sigma across families is the trap this property exists to stop —
+    Reading .sigma across families is the trap this property exists to stop:
     a t_3 with scale 2.0 has SD 3.46, so a scale-based dispersion comparison
     would call it much sharper than an equivalent normal.
     """
@@ -278,7 +278,7 @@ def test_student_t_scale_is_not_the_standard_deviation():
     assert abs(f.sd - 2.0 * math.sqrt(3.0)) < 1e-12
     assert f.sd > f.sigma
 
-    # A normal's sd IS its sigma — the property must not inflate it.
+    # A normal's sd IS its sigma: the property must not inflate it.
     g = ComponentFit(
         name="v", intercept=0.0, slope=1.0, sigma=2.0,
         n_rows=100, coverage=1.0,
@@ -319,7 +319,7 @@ def test_cdf_dispatches_on_the_fitted_family():
     assert np.allclose(n_est.cdf(thr, mu, sig), norm.cdf(thr))
     t_vals = t_est.cdf(thr, mu, sig)
     assert not np.allclose(t_vals, norm.cdf(thr)), (
-        "student_t fit returned the normal CDF — dispatch is broken"
+        "student_t fit returned the normal CDF: dispatch is broken"
     )
     # A t has fatter tails: more mass beyond +3 and below -3.
     assert t_vals[0] < norm.cdf(3.0)

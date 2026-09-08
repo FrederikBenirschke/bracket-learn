@@ -1,7 +1,7 @@
 """Turn raw point forecasts into per-component predictive distributions.
 
 This is step 0 of Gneiting & Ranjan, "Combining Predictive Distributions"
-(EJS 7:1747-1782, 2013), §4.2 — the step that happens BEFORE any pooling
+(EJS 7:1747-1782, 2013), §4.2: the step that happens BEFORE any pooling
 formula runs, and the step this repo currently skips.
 
 Their procedure, verbatim from §4.2:
@@ -14,8 +14,8 @@ Their procedure, verbatim from §4.2:
     predictive density of the form  f_i = N(a_i + b_i x_ij, σ_i²).
 
 Three fitted parameters per member: intercept a_i, SLOPE b_i, and the
-member's OWN scale σ_i. On their data σ̂_i ranged 1.958–2.214 — a 13%
-spread — and those differences survive into the pool, because every
+member's OWN scale σ_i. On their data σ̂_i ranged 1.958–2.214: a 13%
+spread, and those differences survive into the pool, because every
 combination formula (TLP/SLP/BLP/BMA) reads the component CDFs F_i.
 
 Why this matters here, and how it differs from what the repo does
@@ -32,7 +32,7 @@ distribution existing, and three things are structurally unreachable:
 
 1. **Slope.** The de-bias is additive, so a vendor whose forecast
    AMPLITUDE is miscalibrated (systematically over- or under-reacting)
-   cannot be corrected — only shifted.
+   cannot be corrected: only shifted.
 
 2. **Per-vendor scale.** ``recent_var_v`` IS a per-vendor variance
    estimate, already computed per station and EWMA'd. It is spent
@@ -41,7 +41,7 @@ distribution existing, and three things are structurally unreachable:
    HRRR is sharp and GEFS diffuse on a given row.
 
 3. **Correlated vendors.** ``1/recent_var²`` is computed per vendor in
-   ISOLATION — there is no covariance term, so it cannot down-weight a
+   ISOLATION: there is no covariance term, so it cannot down-weight a
    redundant vendor. The paper's Table 10 zeroes ETA (w = 0.000) precisely
    because it shares an institutional origin with GFS. The same structure
    exists here: nws_hourly/nbm are both NWS, hrrr/gefs_p50 both NCEP. A
@@ -52,7 +52,7 @@ None of that makes precision weighting wrong. For unbiased, independent
 estimators with known variances, w ∝ 1/σ² IS the efficient linear
 combination, and the registry records that it beat AdaHedge/Hedge here
 with a stated mechanism (vendors are correlated stochastic estimators, not
-adversarial experts). This module does not replace it — it enables the
+adversarial experts). This module does not replace it: it enables the
 comparison the repo cannot currently make.
 
 Relation to the rest of bracketlearn
@@ -60,7 +60,7 @@ Relation to the rest of bracketlearn
 ``AffineNormal`` implements the ``Lifter`` protocol shape (point → dist)
 but fits MANY components at once, so it takes arrays rather than a single
 ``PointForecast``. Its output feeds ``bracketlearn.pool``: once each
-vendor is an N(μ_v, σ_v), every formula there applies — including SLP and
+vendor is an N(μ_v, σ_v), every formula there applies: including SLP and
 BMA, which need per-component moments and therefore cannot run on the
 PMF-only experts the repo currently pools.
 
@@ -68,7 +68,7 @@ Note which Pipeline branch this belongs to: the LIFTER path is the one
 that is genuinely out-of-fold (fit on ``[:half]``, predict ``[half:]``,
 then refit). The CALIBRATOR path calls ``_core_predict_dist`` on rows the
 core model was already fitted on. A component lift is a Lifter, so it does
-not inherit that problem — but callers still own the split, and ``fit``
+not inherit that problem, but callers still own the split, and ``fit``
 must be handed rows the components did not train on.
 """
 
@@ -90,8 +90,8 @@ FitMethod = Literal["mle", "ols_resid", "crps"]
 DistForm = Literal["normal", "student_t"]
 
 # Student-t degrees of freedom are searched on this grid rather than
-# optimised continuously. The log-likelihood in nu is very flat above ~15 —
-# t_30 and t_60 are visually indistinguishable from a normal — so a fitted
+# optimised continuously. The log-likelihood in nu is very flat above ~15:
+# t_30 and t_60 are visually indistinguishable from a normal, so a fitted
 # real-valued nu reports spurious precision. The grid ends at 60 and the
 # fitter reports "normal-like" there rather than pretending to resolve it.
 _NU_GRID = (2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 15.0, 20.0, 30.0, 60.0)
@@ -125,7 +125,7 @@ class ComponentFit:
 
     @property
     def sd(self) -> float:
-        """Predictive standard deviation — comparable across dist families."""
+        """Predictive standard deviation: comparable across dist families."""
         if self.dist == "normal":
             return self.sigma
         if self.nu is None:
@@ -146,7 +146,7 @@ class ComponentFit:
 
     @property
     def is_amplitude_miscalibrated(self) -> bool:
-        """Slope far from 1 — the failure an additive de-bias cannot fix.
+        """Slope far from 1: the failure an additive de-bias cannot fix.
 
         b < 1 means the component over-reacts (its deviations from the mean
         are too large and get shrunk); b > 1 means it under-reacts.
@@ -163,19 +163,19 @@ class AffineNormal(BaseEstimator):
     ensemble members always report, whereas vendor coverage here ranges
     from 3% to 93% missing. A component is fitted on its own finite rows and
     carries its ``coverage``; rows where it is silent yield NaN moments and
-    the caller (or the pool) drops it for that row — never an imputed value
+    the caller (or the pool) drops it for that row: never an imputed value
     standing in for a forecast (Rule #0.5).
 
     Parameters
     ----------
     bias
         ``"affine"`` fits intercept and slope (the paper). ``"shift"`` fits
-        intercept only with slope pinned at 1 — the form
+        intercept only with slope pinned at 1: the form
         ``add_skill_blend`` currently uses, kept so the two are comparable
         under one estimator. ``"none"`` passes the raw point through.
     scale
         ``"per_component"`` gives each component its own σ_i (the paper).
-        ``"shared"`` fits one σ across all components — Raftery et al.
+        ``"shared"`` fits one σ across all components: Raftery et al.
         (2005) / BMA eq. (12), and the reason BMA and SLP coincide: the
         ratio σ_shared/σ_i is SLP's spread adjustment c by another route.
         ``"conditional"`` regresses log σ on a supplied per-row covariate,
@@ -183,9 +183,9 @@ class AffineNormal(BaseEstimator):
     dist
         ``"normal"`` is the paper's step 0. ``"student_t"`` replaces the
         Gaussian with a scaled t_ν, fitting ν jointly with the scale on
-        ``_NU_GRID``. The paper had no reason to reach for it — their
+        ``_NU_GRID``. The paper had no reason to reach for it: their
         components were members of ONE ensemble over 8 near-exchangeable
-        NWP runs — but vendor residuals here mix provider outages, station
+        NWP runs, but vendor residuals here mix provider outages, station
         siting and occasional gross errors, which is exactly the generating
         story that produces heavy tails. Note ``sigma`` is then the SCALE,
         not the SD; use ``ComponentFit.sd`` to compare dispersion across
@@ -194,7 +194,7 @@ class AffineNormal(BaseEstimator):
         ``"mle"`` is the paper's (for a Gaussian with fixed mean form this
         coincides with least squares plus the ML residual scale).
         ``"ols_resid"`` fits the mean by OLS then takes the residual SD
-        with n-2 dof — the same point estimate, an unbiased scale.
+        with n-2 dof: the same point estimate, an unbiased scale.
         ``"crps"`` minimises the closed-form Gaussian CRPS, which is less
         sensitive to a few large residuals than the log score.
     """
@@ -333,7 +333,7 @@ class AffineNormal(BaseEstimator):
         of the grid, so a continuous optimiser would return a precise-looking
         number that the data does not support.
 
-        The EM step is the standard Gaussian-scale-mixture one — t_ν is
+        The EM step is the standard Gaussian-scale-mixture one: t_ν is
         N(0, σ²/w) with w ~ Gamma(ν/2, ν/2), so
 
             E[w_i | r_i] = (ν + 1) / (ν + r_i²/σ²)
@@ -372,7 +372,7 @@ class AffineNormal(BaseEstimator):
         if best is None:
             raise ValueError(
                 "AffineNormal: no Student-t (scale, ν) on the grid produced a "
-                "finite log-likelihood — the residuals are degenerate."
+                "finite log-likelihood: the residuals are degenerate."
             )
         return max(best[1], self.sigma_floor), best[2]
 
@@ -388,7 +388,7 @@ class AffineNormal(BaseEstimator):
             s = float(np.sqrt(np.mean(resid**2)))
         if not math.isfinite(s) or s <= 0:
             raise ValueError(
-                "AffineNormal: fitted σ is non-positive — the component fits "
+                "AffineNormal: fitted σ is non-positive: the component fits "
                 "its training rows exactly, which means the inputs are "
                 "in-sample."
             )
@@ -417,7 +417,7 @@ class AffineNormal(BaseEstimator):
         s0 = math.log(max(float(np.sqrt(np.mean(resid**2))), self.sigma_floor))
         # Bounded, not bracketed: a bracket triple has to satisfy
         # f(xb) < f(xa) and f(xb) < f(xc), which fails whenever the MLE start
-        # already sits at or beyond the CRPS optimum — and that is the common
+        # already sits at or beyond the CRPS optimum, and that is the common
         # case, since CRPS wants a SMALLER sigma than MLE on heavy tails.
         res = minimize_scalar(
             mean_crps, bounds=(s0 - 3.0, s0 + 3.0), method="bounded",

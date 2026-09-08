@@ -2,7 +2,7 @@
 
 Each test in the first block PLANTS a specific miscalibration, asserts that
 var(PIT) is blind to it, and asserts that some other column in the suite
-catches it. That pairing is the argument for the suite existing — without
+catches it. That pairing is the argument for the suite existing: without
 the "var(PIT) is blind" half, the extra columns are just more numbers.
 """
 
@@ -38,8 +38,8 @@ def test_bias_is_MISREAD_by_var_pit_as_overdispersion():
 
     A forecast that is 3°F warm with a PERFECTLY CORRECT spread has its PIT
     mass pushed toward one end, which SHRINKS the variance: 0.0835 -> 0.0558
-    here. On the documented reading rule that is "overdispersed" — the
-    intervals are too wide — which is precisely the wrong diagnosis. The
+    here. On the documented reading rule that is "overdispersed": the
+    intervals are too wide, which is precisely the wrong diagnosis. The
     spread needs no change at all; the centre does.
 
     So var(PIT) is not merely blind to bias, it MISLABELS it. Two failures
@@ -121,7 +121,7 @@ def test_heavy_tails_and_a_narrow_body_are_one_verdict_on_var_pit():
 
     Outcomes from a t_3 scored under a normal of the SAME SCALE: the body is
     too narrow AND both tails are too heavy. var(PIT) reports 0.1004, i.e.
-    "underdispersed — widen the intervals". But widening makes the body worse;
+    "underdispersed: widen the intervals". But widening makes the body worse;
     the fault is the family, not the scale.
 
     Measured, t_3 outcomes under a normal, 400k rows:
@@ -135,7 +135,7 @@ def test_heavy_tails_and_a_narrow_body_are_one_verdict_on_var_pit():
     The two ways of matching a normal to the same data give OPPOSITE
     dispersion verdicts. That is the argument against a single dispersion
     number: what it reports depends on a modelling choice it does not show
-    you. The tail masses do show it — 0.05/0.05 is the calibrated value, and
+    you. The tail masses do show it: 0.05/0.05 is the calibrated value, and
     both rows are wrong on both sides simultaneously, which a scale change
     cannot repair in either direction.
     """
@@ -216,7 +216,7 @@ def test_sharpness_is_measured_without_the_outcome():
     """Sharpness is a property of the forecast alone.
 
     Two runs with identical forecasts but different outcomes must report the
-    same sharpness — otherwise it is an accuracy metric in disguise, and
+    same sharpness: otherwise it is an accuracy metric in disguise, and
     "sharp subject to calibrated" stops meaning anything.
     """
     rng = np.random.default_rng(5)
@@ -250,8 +250,8 @@ def test_discrete_pit_needs_its_own_neutral_reference():
     which is strictly below 1/12. Comparing a discrete PIT against 1/12
     therefore manufactures an "overdispersed" verdict out of the grid alone.
 
-    This test pins the identity, and pins that the naive PIT — which happens
-    to sit numerically closer to 1/12 — is nonetheless the wrong quantity.
+    This test pins the identity, and pins that the naive PIT, which happens
+    to sit numerically closer to 1/12: is nonetheless the wrong quantity.
     """
     rng = np.random.default_rng(6)
     n = 400_000
@@ -264,7 +264,7 @@ def test_discrete_pit_needs_its_own_neutral_reference():
         s = calibration_suite(_normal_cdf(mu, sd), y, grid_step=1.0)
 
         # The forecast IS calibrated, so the excess over the correct target
-        # must be ~0 — even though pit_var itself is well below 1/12.
+        # must be ~0: even though pit_var itself is well below 1/12.
         assert abs(s["pit_var_excess"]) < 0.002, (
             f"sigma={sigma}: calibrated forecast must show ~zero excess"
         )

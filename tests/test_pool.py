@@ -1,4 +1,4 @@
-"""Tests for bracketlearn.pool — the combination formulas.
+"""Tests for bracketlearn.pool: the combination formulas.
 
 The substantive tests here assert the *theorems* of Gneiting & Ranjan
 (2013), not just the plumbing. If the arithmetic drifts, Theorem 3.1 stops
@@ -79,7 +79,7 @@ def _pit(edge_cdfs, r_idx):
 
 def test_theorem_3_1_linear_pool_increases_dispersion(synthetic):
     """Thm 3.1(a)/(b): the linear pool is MORE dispersed than its least-
-    dispersed component — i.e. its var(PIT) is strictly LOWER.
+    dispersed component: i.e. its var(PIT) is strictly LOWER.
 
     Lower var(PIT) means more dispersed (Definition 2.7(d)); neutral is 1/12.
     This is the defect that motivates the whole module, so assert it directly.
@@ -99,7 +99,7 @@ def test_theorem_3_1_linear_pool_increases_dispersion(synthetic):
 
 def test_theorem_3_1_pool_of_neutral_components_is_overdispersed(synthetic):
     """Thm 3.1(c): neutrally dispersed components pool to an OVERdispersed
-    forecast — var(PIT) below the neutral 1/12."""
+    forecast: var(PIT) below the neutral 1/12."""
     F, r_idx, _ = synthetic
     for i in range(F.shape[0]):
         v = pit_variance(_pit(F[i], r_idx))
@@ -112,7 +112,7 @@ def test_theorem_3_1_pool_of_neutral_components_is_overdispersed(synthetic):
 
 
 def test_theorem_3_9_blp_reaches_neutral_dispersion(synthetic):
-    """Thm 3.9: BLP is flexibly dispersive — some (α, β) restores neutrality.
+    """Thm 3.9: BLP is flexibly dispersive: some (α, β) restores neutrality.
 
     The linear pool of these components cannot (Thm 3.3). Sharpening with
     α = β > 1 should pull var(PIT) back up toward 1/12.
@@ -249,7 +249,7 @@ def test_pool_cdf_accepts_every_formula_fit_pool_accepts(parametric):
 
     The regression: fit_pool accepted 'bma' but pool_cdf raised
     unknown-formula on it, so a model fitted with BMA blew up on the PREDICT
-    path only — after a full training run, on every fold.
+    path only: after a full training run, on every fold.
     """
     mu, sigma, y, edges, r_idx = parametric
     F = spread_adjusted_cdfs(mu, sigma, edges, spread_c=1.0)
@@ -267,7 +267,7 @@ def test_pool_cdf_rejects_unknown_formula(synthetic):
 
 
 # ---------------------------------------------------------------------------
-# SLP and BMA — the two routes to the same spread adjustment.
+# SLP and BMA: the two routes to the same spread adjustment.
 # ---------------------------------------------------------------------------
 
 
@@ -277,7 +277,7 @@ def parametric():
 
     Components are deliberately OVERDISPERSED (sigma inflated 1.35x), which
     is the regime where SLP's c < 1 and BMA's shrink both have something to
-    do — and is what a linear pool of neutral components produces (Thm 3.1c).
+    do, and is what a linear pool of neutral components produces (Thm 3.1c).
     """
     rng = np.random.default_rng(23)
     n = 3000
@@ -343,7 +343,7 @@ def test_bma_implied_spread_ratio_tracks_slp_c(parametric):
     assert bma.spread_c < 1.0
     assert abs(bma.spread_c - slp.spread_c) < 0.15, (
         f"BMA implied ratio {bma.spread_c:.3f} should track SLP c "
-        f"{slp.spread_c:.3f} — they are the same shrink (paper §4.2)"
+        f"{slp.spread_c:.3f}: they are the same shrink (paper §4.2)"
     )
 
 
@@ -380,7 +380,7 @@ def test_spread_adjusted_cdfs_rejects_bad_c(parametric):
 
 
 def test_pooled_cdf_stays_monotone_across_edges(synthetic):
-    """A pooled CDF must remain a CDF — non-decreasing along the edge axis."""
+    """A pooled CDF must remain a CDF: non-decreasing along the edge axis."""
     F, _, _ = synthetic
     w = np.array([0.4, 0.6])
     for kwargs in [
@@ -400,8 +400,8 @@ def test_pooled_cdf_stays_monotone_across_edges(synthetic):
 #
 # AffineNormal(dist="student_t") produces components whose sigma is a SCALE,
 # not an SD, and whose tails are heavier than a Gaussian's. Pooling them
-# through the Gaussian path is SILENT — it yields plausible bracket
-# probabilities with the wrong tails — so these tests pin that the family
+# through the Gaussian path is SILENT: it yields plausible bracket
+# probabilities with the wrong tails, so these tests pin that the family
 # travels with the moments and that omitting it is an error, not a default.
 # ---------------------------------------------------------------------------
 
@@ -458,7 +458,7 @@ def test_student_t_components_still_carry_full_mass_over_the_ladder():
                              dist="student_t", nu=2.5)
     assert np.allclose(t[:, :, 0], 0.0)
     assert np.allclose(t[:, :, -1], 1.0)
-    # Monotone in the threshold — a CDF, per component and row.
+    # Monotone in the threshold: a CDF, per component and row.
     assert np.all(np.diff(t, axis=2) >= -1e-12)
 
 

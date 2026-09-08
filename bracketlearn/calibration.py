@@ -15,7 +15,7 @@ failures it cannot see:
   ``pit_ks`` and the reliability curve catch it; the variance does not.
 
 So var(PIT) belongs in a suite, never on its own. This module computes the
-suite on a family-agnostic interface — the caller supplies a CDF, so a
+suite on a family-agnostic interface: the caller supplies a CDF, so a
 Gaussian, Student-t or mixture forecast all report the same columns.
 
 The three axes, and why all three are needed
@@ -27,7 +27,7 @@ these trade off:
    the stated probabilities honest? A climatological forecast is perfectly
    calibrated and worthless.
 2. **Sharpness** (``rmv``, ``sharpness_iqr``): how concentrated is the
-   distribution? Measured WITHOUT reference to the outcome — sharpness is a
+   distribution? Measured WITHOUT reference to the outcome: sharpness is a
    property of the forecast alone, which is why it cannot be optimised on
    its own.
 3. **Accuracy** (``crps``, ``log_score``): proper scores, which reward
@@ -38,14 +38,14 @@ Discrete outcomes
 -----------------
 ``grid_step`` handles settlement on a grid. NWS CLI reports an integer °F,
 so a continuous CDF evaluated at the realized value is not the Rosenblatt
-PIT — uniformity needs a continuous Y as well as a continuous F. Passing
+PIT: uniformity needs a continuous Y as well as a continuous F. Passing
 ``grid_step=1.0`` switches to the mid-interval (continuity-corrected) form
 
     F(y − h) + ½·[F(y + h) − F(y − h)],   h = grid_step/2
 
 which is the DETERMINISTIC analogue of the randomised PIT, not the
 randomised PIT itself: no RNG, so it cannot smear an outcome across its
-cell. That distinction is load-bearing here — the randomised form shifted
+cell. That distinction is load-bearing here: the randomised form shifted
 the mean +0.093…+0.111 on every model over 85,250 forecasts (2026-09-02),
 which is why this repo bans it.
 
@@ -63,7 +63,7 @@ Reading the numbers
                   narrow, U-shaped). ``pit_var_excess`` is the signed gap
                   and is the column to read.
     pit_skew      0 neutral. Signs which tail carries the excess.
-    pit_ks        0 is perfect. KS distance of the PIT from uniform — an
+    pit_ks        0 is perfect. KS distance of the PIT from uniform: an
                   omnibus check that catches shapes the moments miss.
     reliability_mae
                   0 is perfect. Mean abs(empirical - nominal) coverage over
@@ -149,7 +149,7 @@ def pit_values(
     """PIT values, continuity-corrected when the outcome lives on a grid.
 
     ``cdf`` maps thresholds to P(Y <= threshold) under the row's predictive
-    distribution — the caller closes over μ, σ and the family, so this works
+    distribution: the caller closes over μ, σ and the family, so this works
     for any distribution without a family switch here.
 
     ``grid_step`` is the outcome's resolution (1.0 for integer °F). ``None``
@@ -197,7 +197,7 @@ def calibration_suite(
         Realized outcomes.
     sd
         Per-row predictive standard deviation, for sharpness. For a
-        Student-t this must be σ√(ν/(ν−2)), NOT the scale — passing the
+        Student-t this must be σ√(ν/(ν−2)), NOT the scale: passing the
         scale understates dispersion and is the trap this argument is named
         ``sd`` to avoid.
     quantile
@@ -241,7 +241,7 @@ def calibration_suite(
         u = pit_values(cdf, y, grid_step=None)
     if not np.all(np.isfinite(u)):
         raise ValueError(
-            "calibration_suite: the CDF returned non-finite PIT values — "
+            "calibration_suite: the CDF returned non-finite PIT values: "
             "check for sigma<=0 or NaN moments before calling."
         )
     n = int(u.size)
@@ -290,7 +290,7 @@ def calibration_suite(
             )
         if not np.all(np.isfinite(s)) or np.any(s <= 0):
             raise ValueError("calibration_suite: sd must be finite and positive")
-        # Root mean variance — the paper's sharpness column (Table 11).
+        # Root mean variance: the paper's sharpness column (Table 11).
         out["rmv"] = float(np.sqrt(np.mean(s ** 2)))
 
     if quantile is not None:

@@ -15,7 +15,7 @@ positive weights, the PIT is ``Z = Σ wᵢZᵢ`` and therefore
 with strict inequality unless the component PITs are perfectly correlated.
 So a linear pool is **at least as dispersed as its least-dispersed
 component**, and if the components are neutrally dispersed and regular the
-pool is strictly *over*dispersed. Theorem 3.3: no weight vector fixes this —
+pool is strictly *over*dispersed. Theorem 3.3: no weight vector fixes this:
 the linear pool is not *flexibly dispersive*, i.e. its reachable set of
 var(PIT) does not include the neutral value 1/12.
 
@@ -35,7 +35,7 @@ The remedies, in ascending parameter count:
 
 BMA and SLP are the same object reached by different estimators, and the
 paper's own numbers say so: on Seattle-Tacoma, SLP fits ĉ = 0.768 while
-BMA's common σ̂ = 1.566 against member σᵢ ∈ [1.958, 2.214] — a ratio of
+BMA's common σ̂ = 1.566 against member σᵢ ∈ [1.958, 2.214]: a ratio of
 0.707–0.800, bracketing ĉ. The fitted densities lie on top of each other
 (§4.2) and the log scores differ by 0.002. The difference is *where* the
 shrink is estimated: SLP fits c with the components held fixed (two-stage),
@@ -48,7 +48,7 @@ the positive quadrant it attains any var(PIT) in (0, 1/4). SLP is not
 (Thm 3.7) but is adequate whenever the components are neutrally dispersed
 or underdispersed, which is the common case. GLP with weights summing to
 at most 1 is incoherent (Thm 3.4), but the probit link with weights > 1 is
-coherent for Bernoulli (Example 3.5) — that is the "extremization" case,
+coherent for Bernoulli (Example 3.5), that is the "extremization" case,
 and it is the reason ``weight_sum_max`` is a parameter rather than 1.
 
 Locality, and why BLP is the natural fit for bracket ladders
@@ -56,7 +56,7 @@ Locality, and why BLP is the natural fit for bracket ladders
 BLP is *local*: ``G(y)`` depends on the components only through the values
 ``F₁(y), …, F_k(y)`` at that same ``y``. On a bracket ladder the cumulative
 mass at each edge is exactly those values, so BLP is an exact pointwise map
-on edge CDFs — no resampling, no interpolation, no assumption about within-
+on edge CDFs: no resampling, no interpolation, no assumption about within-
 bracket shape.
 
 SLP is *not* local: it needs each component's median ``μᵢ`` and evaluates a
@@ -82,8 +82,8 @@ how often the realized value lands in the tails. If the component
 predictions were produced by models that had already seen these ``y``, their
 residuals are too small, the pooled distribution looks too wide relative to
 them, and the fit picks parameters that *sharpen*. Applied to genuine
-forecasts, that is systematic overconfidence — narrow intervals, U-shaped
-PIT — and the fitted diagnostics will not show it. ``fit`` therefore
+forecasts, that is systematic overconfidence: narrow intervals, U-shaped
+PIT, and the fitted diagnostics will not show it. ``fit`` therefore
 computes a held-out dispersion check when given ``holdout=``, and
 ``leak_warning_`` records the verdict. See ``PoolFit.leak_warning_``.
 
@@ -92,8 +92,8 @@ The repo's own history on this: ``prediction_market_weather.ml.trainers``
 ``run_trainer``, fit rows and apply rows disjoint); the deleted snowflake
 ``emos_calibrated.py`` was the incorrect one (single time split, isotonic
 fit on the first 60% of days and applied to all of them). ``Pipeline``'s
-calibrator branch is still the incorrect shape — it calls
-``_core_predict_dist`` on rows the core model was fitted on — so do not
+calibrator branch is still the incorrect shape: it calls
+``_core_predict_dist`` on rows the core model was fitted on, so do not
 route a pool through it.
 """
 
@@ -146,11 +146,11 @@ def _init_links() -> None:
 
     _LINKS.update(
         {
-            # Type C, h(x) = log x — the geometric pool.
+            # Type C, h(x) = log x: the geometric pool.
             "log": (np.log, np.exp),
-            # Type B, h(x) = 1/x — the harmonic pool. Range (1, ∞).
+            # Type B, h(x) = 1/x: the harmonic pool. Range (1, ∞).
             "harmonic": (lambda x: 1.0 / x, lambda z: 1.0 / z),
-            # Type D, h(x) = Φ⁻¹(x) — the probit pool. This is the one that
+            # Type D, h(x) = Φ⁻¹(x): the probit pool. This is the one that
             # admits a coherent formula when weights exceed 1 (Example 3.5).
             "probit": (norm.ppf, norm.cdf),
         }
@@ -179,7 +179,7 @@ def pit_variance(u: np.ndarray) -> float:
 
 
 def beta_warp(p: np.ndarray, alpha: float, beta: float) -> np.ndarray:
-    """``B_{α,β}(p)`` — the beta CDF applied pointwise to pooled CDF values.
+    """``B_{α,β}(p)``: the beta CDF applied pointwise to pooled CDF values.
 
     This is the whole of BLP's nonlinearity (eq. 8). ``α = β = 1`` is the
     identity, recovering the traditional linear pool.
@@ -201,7 +201,7 @@ def pool_cdf(
 ) -> np.ndarray:
     """Combine component CDF values into one pooled CDF value.
 
-    ``component_cdfs`` is ``(k, ...)`` — component axis first, any trailing
+    ``component_cdfs`` is ``(k, ...)``: component axis first, any trailing
     shape (rows, edges). Returns the pooled values with the component axis
     removed.
 
@@ -212,7 +212,7 @@ def pool_cdf(
     w = np.asarray(weights, dtype=float)
     if F.ndim < 1 or F.shape[0] != w.shape[0]:
         raise ValueError(
-            f"pool_cdf: component axis mismatch — component_cdfs has "
+            f"pool_cdf: component axis mismatch: component_cdfs has "
             f"k={F.shape[0] if F.ndim else 0}, weights has k={w.shape[0]}."
         )
     w_shaped = w.reshape((-1,) + (1,) * (F.ndim - 1))
@@ -220,13 +220,13 @@ def pool_cdf(
     if formula in ("tlp", "slp", "bma"):
         # All three pool LINEARLY at this point; they differ only in how the
         # component CDFs handed in were built.
-        #   tlp — components as given.
-        #   slp — components already rescaled by c (spread_adjusted_cdfs).
-        #   bma — components already rebuilt at the fitted COMMON sigma.
+        #   tlp: components as given.
+        #   slp: components already rescaled by c (spread_adjusted_cdfs).
+        #   bma: components already rebuilt at the fitted COMMON sigma.
         # Keeping bma here rather than raising matters: fit_pool accepts it,
         # so a caller that fits with formula='bma' and then predicts through
         # pool_cdf would otherwise hit an unknown-formula error on the
-        # predict path only — which is exactly how it failed first.
+        # predict path only, which is exactly how it failed first.
         return np.sum(w_shaped * F, axis=0)
 
     if formula == "blp":
@@ -265,7 +265,7 @@ def spread_adjusted_cdfs(
 ) -> np.ndarray:
     """Component CDFs at bracket edges under SLP's spread adjustment, eq. (6).
 
-    ``Gc(y) = Σ wᵢ Fᵢ⁰((y − μᵢ)/c)`` — each component is recentred on its own
+    ``Gc(y) = Σ wᵢ Fᵢ⁰((y − μᵢ)/c)``: each component is recentred on its own
     median and rescaled by ``c`` *before* the linear pool. For Gaussian
     components that is exactly ``N(μᵢ, (c·σᵢ)²)``, so this path is exact and
     needs no within-bracket interpolation.
@@ -286,8 +286,8 @@ def spread_adjusted_cdfs(
         degrees of freedom ``nu`` supports components lifted by
         ``AffineNormal(dist="student_t")``, where ``sigma`` is the SCALE and
         the SD is ``sigma*sqrt(nu/(nu-2))``. Passing t components through the
-        Gaussian path is silent — it produces plausible bracket probabilities
-        with the wrong tails — so the family travels with the moments.
+        Gaussian path is silent: it produces plausible bracket probabilities
+        with the wrong tails, so the family travels with the moments.
 
     Returns
     -------
@@ -327,7 +327,7 @@ def spread_adjusted_cdfs(
     if dist == "student_t":
         if nu is None:
             raise ValueError(
-                "spread_adjusted_cdfs: dist='student_t' needs nu — without it "
+                "spread_adjusted_cdfs: dist='student_t' needs nu: without it "
                 "the components would be silently pooled as Gaussians."
             )
         if nu <= 1.0:
@@ -339,7 +339,7 @@ def spread_adjusted_cdfs(
         (e[None, :, :] - mu[:, :, None]) / scaled[:, :, None]
     )
     # Pin the outer edges so every component carries full mass over the
-    # ladder — otherwise the tails leak and the pooled row no longer sums
+    # ladder: otherwise the tails leak and the pooled row no longer sums
     # to 1 after differencing.
     out[:, :, 0] = 0.0
     out[:, :, -1] = 1.0
@@ -358,7 +358,7 @@ def fit_bma(
     """Bayesian model averaging: joint EM fit of weights and a common σ.
 
     Wraps the EM in :class:`bracketlearn.trainers.combiners.BMAStacking`
-    rather than reimplementing it — that implementation already handles
+    rather than reimplementing it: that implementation already handles
     log-sum-exp stability, the Dirichlet prior, and raises on
     non-convergence (Rule #0.5).
 
@@ -366,7 +366,7 @@ def fit_bma(
     having it here: Raftery et al. (2005), and the paper's eq. (12), fit a
     **common** spread parameter σ shared across components, rather than
     keeping each component's native σᵢ. That common σ is what makes BMA
-    comparable to SLP's ``c`` — the ratio σ̂/σᵢ is SLP's spread adjustment
+    comparable to SLP's ``c``, the ratio σ̂/σᵢ is SLP's spread adjustment
     by another name. ``BMAStacking`` uses per-component σ, so it cannot
     produce that number.
 
@@ -404,7 +404,7 @@ def fit_bma(
         denom = num.sum(axis=0, keepdims=True)
         if np.any(denom <= 0):
             raise ValueError(
-                "fit_bma: row likelihood is zero under all components — the "
+                "fit_bma: row likelihood is zero under all components: the "
                 "component means sit too far from y. Check upstream fit."
             )
         ll = float(np.sum(np.log(denom[0]) + log_L_max[0]))
@@ -418,7 +418,7 @@ def fit_bma(
         sig = float(np.sqrt(np.sum(gamma * sq) / max(np.sum(gamma), _EPS)))
         if not math.isfinite(sig) or sig <= 0:
             raise ValueError(
-                "fit_bma: common sigma collapsed to a non-positive value — "
+                "fit_bma: common sigma collapsed to a non-positive value: "
                 "component means fit y exactly, which means the inputs are "
                 "in-sample."
             )
@@ -492,7 +492,7 @@ def _check_leakage(
         return None
     if pit_var_fit <= 0:
         return (
-            "fit-row var(PIT) is 0 — the component distributions place all "
+            "fit-row var(PIT) is 0: the component distributions place all "
             "mass at the realized values. This is the signature of fitting "
             "on in-sample component predictions."
         )
@@ -512,7 +512,7 @@ def _mean_log_score(
     *,
     source: str,
 ) -> float:
-    """Mean log score, eq. (10). Positively oriented — higher is better."""
+    """Mean log score, eq. (10). Positively oriented: higher is better."""
     pdf = np.asarray(pooled_pdf, dtype=float)
     if np.any(pdf < 0):
         raise ValueError(f"{source}: negative density in log-score input.")
@@ -527,7 +527,7 @@ def _bracket_pdf_at_realized(
 
     ``edge_cdfs`` is (N, B+1) cumulative mass at bracket edges; the density
     of the realized bracket is the difference across it. On a bracket ladder
-    the log score is the log of this mass — the discrete analogue of eq. (10).
+    the log score is the log of this mass: the discrete analogue of eq. (10).
     """
     n = edge_cdfs.shape[0]
     rows = np.arange(n)
@@ -555,10 +555,10 @@ def fit_pool(
     Parameters
     ----------
     component_cdfs
-        ``(k, N, B+1)`` — cumulative mass at bracket edges, per component,
+        ``(k, N, B+1)``: cumulative mass at bracket edges, per component,
         per row. Component axis first. Each row's last edge value must be
         1.0 (full mass); rows whose realized value falls in an open tail
-        have no well-defined density and must be excluded by the caller —
+        have no well-defined density and must be excluded by the caller:
         see ``n_excluded_open_tail``.
     realized_idx
         ``(N,)`` index of the bracket containing each row's realized value.
@@ -586,7 +586,7 @@ def fit_pool(
 
     SLP on bracket-only components
     ------------------------------
-    SLP is not local — it evaluates each component's CDF at rescaled points
+    SLP is not local: it evaluates each component's CDF at rescaled points
     that are generally not bracket edges. With ``moments`` it is exact. Given
     only ``component_cdfs``, computing it would require interpolating within
     brackets, which imposes a within-bracket shape the data never specified;
@@ -646,7 +646,7 @@ def fit_pool(
         rows = np.arange(n_rows)
         pit_fit = edge_cdfs[rows, r_idx] + 0.5 * pdf_fit
         pit_var_fit = pit_variance(pit_fit)
-        # sigma_common / sigma_i is BMA's implied spread adjustment — the
+        # sigma_common / sigma_i is BMA's implied spread adjustment: the
         # quantity directly comparable to SLP's fitted c (paper §4.2).
         ratio = sigma_common / np.asarray(sigma_a, dtype=float)
         return PoolFit(
@@ -747,7 +747,7 @@ def fit_pool(
         alpha=alpha_hat, beta=beta_hat, link=link,
     )
     pdf_fit = _bracket_pdf_at_realized(edge_cdfs, r_idx)
-    # PIT at the realized value, interpolated within the realized bracket —
+    # PIT at the realized value, interpolated within the realized bracket:
     # never randomized. A randomized PIT smears the outcome uniformly across
     # its bracket and shifts the mean; measured in this repo at +0.093..+0.111
     # on every model over 85,250 forecasts (2026-09-02). See
